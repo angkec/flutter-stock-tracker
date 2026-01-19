@@ -4,7 +4,20 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
+import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/utils/volume_decoder.dart';
+
+/// K-line type constants
+const int klineType5Min = 0;
+const int klineType15Min = 1;
+const int klineType30Min = 2;
+const int klineType1Hour = 3;
+const int klineTypeDaily = 4;
+const int klineTypeWeekly = 5;
+const int klineTypeMonthly = 6;
+const int klineType1Min = 7;
+const int klineTypeQuarterly = 10;
+const int klineTypeYearly = 11;
 
 /// TDX 协议客户端
 class TdxClient {
@@ -397,5 +410,144 @@ class TdxClient {
 
     if (isNegative) intData = -intData;
     return (intData, pos);
+  }
+
+  /// 获取K线数据
+  /// [market] 市场代码 (0=深市, 1=沪市)
+  /// [code] 股票代码
+  /// [category] K线类型 (0=5分钟, 1=15分钟, 2=30分钟, 3=1小时, 4=日线, 5=周线, 6=月线, 7=1分钟, 8=1分钟, 10=季线, 11=年线)
+  /// [start] 起始位置 (0=最新)
+  /// [count] 获取数量
+  Future<List<KLine>> getSecurityBars({
+    required int market,
+    required String code,
+    required int category,
+    required int start,
+    required int count,
+  }) async {
+    final pkg = BytesBuilder();
+
+    // Build header: struct.pack("<HIHHHH6sHHHHIIH", ...)
+    // 0x10c(2) + 0x01016408(4) + 0x1c(2) + 0x1c(2) + 0x052d(2) = 12 bytes
+    final header = ByteData(12);
+    header.setUint16(0, 0x10c, Endian.little);
+    header.setUint32(2, 0x01016408, Endian.little);
+    header.setUint16(6, 0x1c, Endian.little);
+    header.setUint16(8, 0x1c, Endian.little);
+    header.setUint16(10, 0x052d, Endian.little);
+    pkg.add(header.buffer.asUint8List());
+
+    // market(2) + code(6) + category(2) + 1(2) + start(2) + count(2) + 0(4) + 0(4) + 0(2) = 26 bytes
+    final params = ByteData(26);
+    params.setUint16(0, market, Endian.little);
+
+    // Write code (6 bytes, padded with nulls)
+    final codeBytes = code.padRight(6, '\x00').codeUnits;
+    for (var i = 0; i < 6; i++) {
+      params.setUint8(2 + i, codeBytes[i]);
+    }
+
+    params.setUint16(8, category, Endian.little);
+    params.setUint16(10, 1, Endian.little); // unknown field, always 1
+    params.setUint16(12, start, Endian.little);
+    params.setUint16(14, count, Endian.little);
+    params.setUint32(16, 0, Endian.little);
+    params.setUint32(20, 0, Endian.little);
+    params.setUint16(24, 0, Endian.little);
+    pkg.add(params.buffer.asUint8List());
+
+    final body = await sendCommand(pkg.toBytes());
+    return _parseSecurityBars(body, category);
+  }
+
+  /// 解析K线数据
+  List<KLine> _parseSecurityBars(Uint8List body, int category) {
+    if (body.length < 2) {
+      return [];
+    }
+
+    final byteData = ByteData.sublistView(body);
+    final count = byteData.getUint16(0, Endian.little);
+    var pos = 2;
+
+    final bars = <KLine>[];
+    int priceBase = 0; // For differential encoding
+
+    for (var i = 0; i < count; i++) {
+      if (pos + 4 > body.length) break;
+
+      // Parse datetime based on category
+      final yearOrDate = byteData.getUint16(pos, Endian.little);
+      final minOrTime = byteData.getUint16(pos + 2, Endian.little);
+      pos += 4;
+
+      final datetime = _parseDateTime(yearOrDate, minOrTime, category);
+
+      // Parse prices using differential encoding
+      final (openDiff, pos1) = _decodePrice(body, pos);
+      final (closeDiff, pos2) = _decodePrice(body, pos1);
+      final (highDiff, pos3) = _decodePrice(body, pos2);
+      final (lowDiff, pos4) = _decodePrice(body, pos3);
+
+      // Open is diff from previous close (priceBase)
+      final openRaw = priceBase + openDiff;
+      // Close/High/Low are diffs from current open
+      final closeRaw = openRaw + closeDiff;
+      final highRaw = openRaw + highDiff;
+      final lowRaw = openRaw + lowDiff;
+
+      // Update priceBase for next bar
+      priceBase = closeRaw;
+
+      // Parse volume and amount
+      if (pos4 + 8 > body.length) break;
+      final volRaw = byteData.getUint32(pos4, Endian.little);
+      final amountRaw = byteData.getUint32(pos4 + 4, Endian.little);
+      pos = pos4 + 8;
+
+      final volume = decodeVolume(volRaw);
+      final amount = decodeVolume(amountRaw);
+
+      bars.add(KLine(
+        datetime: datetime,
+        open: openRaw / 100.0,
+        close: closeRaw / 100.0,
+        high: highRaw / 100.0,
+        low: lowRaw / 100.0,
+        volume: volume,
+        amount: amount,
+      ));
+    }
+
+    return bars;
+  }
+
+  /// 解析日期时间
+  /// For minute bars (category < 4 or 7 or 8): yearOrDate contains date, minOrTime contains minutes
+  /// For day bars (category >= 4 except 7,8): yearOrDate contains year*10000+month*100+day
+  DateTime _parseDateTime(int yearOrDate, int minOrTime, int category) {
+    // Minute bars: category 0,1,2,3,7,8
+    final isMinuteBar = category < 4 || category == 7 || category == 8;
+
+    if (isMinuteBar) {
+      // yearOrDate format: (year-2004)*2048 + month*100 + day
+      final year = (yearOrDate ~/ 2048) + 2004;
+      final monthDay = yearOrDate % 2048;
+      final month = monthDay ~/ 100;
+      final day = monthDay % 100;
+
+      // minOrTime is minutes from midnight
+      final hour = minOrTime ~/ 60;
+      final minute = minOrTime % 60;
+
+      return DateTime(year, month, day, hour, minute);
+    } else {
+      // Day bars: yearOrDate format is yyyymmdd
+      final year = yearOrDate ~/ 10000;
+      final month = (yearOrDate % 10000) ~/ 100;
+      final day = yearOrDate % 100;
+
+      return DateTime(year, month, day);
+    }
   }
 }
