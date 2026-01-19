@@ -140,4 +140,42 @@ class TdxPool {
     await Future.wait(futures);
     return results;
   }
+
+  /// 并行批量获取K线数据 (流式回调)
+  /// [onStockBars] 每获取到一只股票的数据就立即回调
+  Future<void> batchGetSecurityBarsStreaming({
+    required List<Stock> stocks,
+    required int category,
+    required int start,
+    required int count,
+    required void Function(int stockIndex, List<KLine> bars) onStockBars,
+  }) async {
+    if (_clients.isEmpty) throw StateError('Not connected');
+
+    final futures = <Future<void>>[];
+
+    for (var i = 0; i < stocks.length; i++) {
+      final stockIndex = i;
+      final client = _clients[i % _clients.length];
+      final stock = stocks[i];
+
+      futures.add(
+        client
+            .getSecurityBars(
+              market: stock.market,
+              code: stock.code,
+              category: category,
+              start: start,
+              count: count,
+            )
+            .then((bars) {
+          onStockBars(stockIndex, bars);
+        }).catchError((_) {
+          onStockBars(stockIndex, []);
+        }),
+      );
+    }
+
+    await Future.wait(futures);
+  }
 }

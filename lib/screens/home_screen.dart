@@ -121,7 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final service = context.read<StockService>();
 
     try {
-      final data = await service.batchGetMonitorData(
+      await service.batchGetMonitorData(
         _allStocks,
         onProgress: (current, total) {
           setState(() {
@@ -129,16 +129,14 @@ class _HomeScreenState extends State<HomeScreen> {
             _total = total;
           });
         },
+        onData: (results) {
+          // 实时更新显示数据 (取前N个)
+          setState(() {
+            _monitorData = results.take(_displayCount).toList();
+            _updateTime = _formatCurrentTime();
+          });
+        },
       );
-
-      // 按涨跌量比排序，取前N个
-      data.sort((a, b) => b.ratio.compareTo(a.ratio));
-      final topData = data.take(_displayCount).toList();
-
-      setState(() {
-        _monitorData = topData;
-        _updateTime = _formatCurrentTime();
-      });
     } catch (e) {
       setState(() {
         _errorMessage = '获取监控数据失败: $e';

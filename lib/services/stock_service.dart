@@ -91,26 +91,26 @@ class StockService {
     return stocks;
   }
 
-  /// 批量获取股票监控数据 (并行)
+  /// 批量获取股票监控数据 (并行，流式返回)
+  /// [onData] 当有新的有效数据时回调，返回当前所有有效结果
   Future<List<StockMonitorData>> batchGetMonitorData(
     List<Stock> stocks, {
     void Function(int current, int total)? onProgress,
+    void Function(List<StockMonitorData> results)? onData,
   }) async {
-    // 并行获取所有股票的1分钟K线
-    final allBars = await _pool.batchGetSecurityBars(
-      stocks: stocks,
-      category: klineType1Min,
-      start: 0,
-      count: 240, // 一天最多240根1分钟K线
-      onProgress: onProgress,
-    );
-
-    // 过滤当日数据并计算量比
     final today = DateTime.now();
     final results = <StockMonitorData>[];
+    var completed = 0;
+    final total = stocks.length;
 
-    for (var i = 0; i < stocks.length; i++) {
-      final bars = allBars[i];
+    // 用于跟踪上次回调的结果数量
+    var lastReportedCount = 0;
+    const reportThreshold = 50; // 每增加50个有效结果就回调一次
+
+    // 处理单个股票的K线数据
+    void processStockBars(int index, List<KLine> bars) {
+      completed++;
+      onProgress?.call(completed, total);
 
       // 只保留当日的K线
       final todayBars = bars.where((bar) =>
@@ -118,17 +118,41 @@ class StockService {
           bar.datetime.month == today.month &&
           bar.datetime.day == today.day).toList();
 
-      if (todayBars.isEmpty) continue;
+      if (todayBars.isEmpty) return;
 
       final ratio = calculateRatio(todayBars);
-
-      // 跳过无效数据 (涨停/跌停/停盘等)
-      if (ratio == null) continue;
+      if (ratio == null) return;
 
       results.add(StockMonitorData(
-        stock: stocks[i],
+        stock: stocks[index],
         ratio: ratio,
       ));
+
+      // 达到阈值时回调
+      if (results.length >= lastReportedCount + reportThreshold) {
+        lastReportedCount = results.length;
+        // 按量比排序后回调
+        final sorted = List<StockMonitorData>.from(results)
+          ..sort((a, b) => b.ratio.compareTo(a.ratio));
+        onData?.call(sorted);
+      }
+    }
+
+    // 并行获取所有股票的K线
+    await _pool.batchGetSecurityBarsStreaming(
+      stocks: stocks,
+      category: klineType1Min,
+      start: 0,
+      count: 240,
+      onStockBars: processStockBars,
+    );
+
+    // 最终结果排序
+    results.sort((a, b) => b.ratio.compareTo(a.ratio));
+
+    // 最后一次回调确保显示最终结果
+    if (results.length > lastReportedCount) {
+      onData?.call(results);
     }
 
     return results;
