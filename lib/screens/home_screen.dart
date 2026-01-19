@@ -181,24 +181,26 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
-        children: [
-          // 状态栏
-          StatusBar(
-            updateTime: _updateTime,
-            progress: _progress > 0 ? _progress : null,
-            total: _total > 0 ? _total : null,
-            isLoading: _isLoading,
-            errorMessage: _errorMessage,
-          ),
-          // 主内容区域
-          Expanded(
-            child: StockTable(
-              stocks: _monitorData,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // 状态栏
+            StatusBar(
+              updateTime: _updateTime,
+              progress: _progress > 0 ? _progress : null,
+              total: _total > 0 ? _total : null,
               isLoading: _isLoading,
+              errorMessage: _errorMessage,
             ),
-          ),
-        ],
+            // 主内容区域
+            Expanded(
+              child: StockTable(
+                stocks: _monitorData,
+                isLoading: _isLoading,
+              ),
+            ),
+          ],
+        ),
       ),
       // 刷新按钮
       floatingActionButton: FloatingActionButton(
