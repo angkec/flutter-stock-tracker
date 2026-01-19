@@ -17,8 +17,10 @@ class MarketScreen extends StatefulWidget {
 }
 
 class _MarketScreenState extends State<MarketScreen> {
+  final _searchController = TextEditingController();
   List<Stock> _allStocks = [];
   List<StockMonitorData> _monitorData = [];
+  String _searchQuery = '';
   String? _updateTime;
   int _progress = 0;
   int _total = 0;
@@ -34,7 +36,17 @@ class _MarketScreenState extends State<MarketScreen> {
 
   @override
   void dispose() {
+    _searchController.dispose();
     super.dispose();
+  }
+
+  List<StockMonitorData> get _filteredData {
+    if (_searchQuery.isEmpty) return _monitorData;
+    final query = _searchQuery.toLowerCase();
+    return _monitorData.where((data) {
+      return data.stock.code.contains(query) ||
+          data.stock.name.toLowerCase().contains(query);
+    }).toList();
   }
 
   Future<void> _connect() async {
@@ -150,6 +162,7 @@ class _MarketScreenState extends State<MarketScreen> {
   @override
   Widget build(BuildContext context) {
     final watchlistService = context.watch<WatchlistService>();
+    final filteredData = _filteredData;
 
     return Scaffold(
       body: SafeArea(
@@ -162,9 +175,34 @@ class _MarketScreenState extends State<MarketScreen> {
               isLoading: _isLoading,
               errorMessage: _errorMessage,
             ),
+            // 搜索框
+            if (_monitorData.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: '搜索代码或名称',
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 20),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          )
+                        : null,
+                  ),
+                  onChanged: (value) => setState(() => _searchQuery = value),
+                ),
+              ),
             Expanded(
               child: StockTable(
-                stocks: _monitorData,
+                stocks: filteredData,
                 isLoading: _isLoading,
                 highlightCodes: watchlistService.watchlist.toSet(),
               ),
