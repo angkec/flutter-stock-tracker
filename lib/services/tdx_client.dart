@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/utils/volume_decoder.dart';
 
 /// TDX 协议客户端
@@ -271,5 +272,126 @@ class TdxClient {
     } catch (e) {
       return '';
     }
+  }
+
+  /// 获取实时行情 (最多80只)
+  Future<List<Quote>> getSecurityQuotes(List<(int, String)> stocks) async {
+    if (stocks.isEmpty) return [];
+    if (stocks.length > 80) {
+      stocks = stocks.sublist(0, 80);
+    }
+
+    final stockLen = stocks.length;
+    final pkgDataLen = stockLen * 7 + 12;
+
+    final pkg = BytesBuilder();
+
+    // 包头 (20 bytes)
+    final header = ByteData(20);
+    header.setUint16(0, 0x10c, Endian.little);
+    header.setUint32(2, 0x02006320, Endian.little);
+    header.setUint16(6, pkgDataLen, Endian.little);
+    header.setUint16(8, pkgDataLen, Endian.little);
+    header.setUint32(10, 0x5053e, Endian.little);
+    header.setUint32(14, 0, Endian.little);
+    header.setUint16(18, stockLen, Endian.little);
+    pkg.add(header.buffer.asUint8List());
+
+    // 股票列表: market(1) + code(6) = 7 bytes per stock
+    for (final (market, code) in stocks) {
+      final stockData = ByteData(7);
+      stockData.setUint8(0, market);
+      final codeBytes = code.padRight(6).codeUnits;
+      for (var i = 0; i < 6; i++) {
+        stockData.setUint8(1 + i, codeBytes[i]);
+      }
+      pkg.add(stockData.buffer.asUint8List());
+    }
+
+    final body = await sendCommand(pkg.toBytes());
+    return _parseSecurityQuotes(body);
+  }
+
+  /// 解析实时行情
+  List<Quote> _parseSecurityQuotes(Uint8List body) {
+    var pos = 2; // skip 2 bytes
+    final byteData = ByteData.sublistView(body);
+    final count = byteData.getUint16(pos, Endian.little);
+    pos += 2;
+
+    final quotes = <Quote>[];
+
+    for (var i = 0; i < count; i++) {
+      if (pos + 9 > body.length) break; // bounds check
+
+      final market = body[pos];
+      final code = String.fromCharCodes(body.sublist(pos + 1, pos + 7));
+      pos += 9; // market(1) + code(6) + active1(2)
+
+      // 使用变长解码
+      final (price, pos1) = _decodePrice(body, pos);
+      final (lastCloseDiff, pos2) = _decodePrice(body, pos1);
+      final (openDiff, pos3) = _decodePrice(body, pos2);
+      final (highDiff, pos4) = _decodePrice(body, pos3);
+      final (lowDiff, pos5) = _decodePrice(body, pos4);
+
+      // 跳过保留字段
+      final (_, pos6) = _decodePrice(body, pos5);
+      final (_, pos7) = _decodePrice(body, pos6);
+
+      // 成交量和成交额
+      final (vol, pos8) = _decodePrice(body, pos7);
+      final (_, pos9) = _decodePrice(body, pos8); // cur_vol
+
+      final amountRaw = byteData.getUint32(pos9, Endian.little);
+      final amount = decodeVolume(amountRaw);
+      pos = pos9 + 4;
+
+      // 跳过剩余字段 (买卖盘等)
+      for (var j = 0; j < 30; j++) {
+        final (_, nextPos) = _decodePrice(body, pos);
+        pos = nextPos;
+      }
+      pos += 6; // 尾部固定字节
+
+      quotes.add(Quote(
+        market: market,
+        code: code.trim(),
+        price: price / 100.0,
+        lastClose: (price + lastCloseDiff) / 100.0,
+        open: (price + openDiff) / 100.0,
+        high: (price + highDiff) / 100.0,
+        low: (price + lowDiff) / 100.0,
+        volume: vol,
+        amount: amount,
+      ));
+    }
+
+    return quotes;
+  }
+
+  /// 解码价格 (变长编码)
+  (int, int) _decodePrice(Uint8List data, int pos) {
+    if (pos >= data.length) return (0, pos);
+
+    int positionBit = 6;
+    int byte = data[pos];
+    int intData = byte & 0x3F;
+    bool isNegative = (byte & 0x40) != 0;
+
+    if ((byte & 0x80) != 0) {
+      while (true) {
+        pos++;
+        if (pos >= data.length) break;
+        byte = data[pos];
+        intData += (byte & 0x7F) << positionBit;
+        positionBit += 7;
+        if ((byte & 0x80) == 0) break;
+      }
+    }
+    pos++;
+
+    if (isNegative) intData = -intData;
+    return (intData, pos);
   }
 }
