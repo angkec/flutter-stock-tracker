@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
@@ -32,10 +33,16 @@ class TdxClient {
 
   /// 服务器列表
   static const List<Map<String, dynamic>> servers = [
+    {'host': '119.147.212.81', 'port': 7709},
+    {'host': '112.95.140.74', 'port': 7709},
+    {'host': '114.80.63.12', 'port': 7709},
+    {'host': '221.194.181.176', 'port': 7709},
     {'host': '115.238.56.198', 'port': 7709},
     {'host': '115.238.90.165', 'port': 7709},
     {'host': '124.160.88.183', 'port': 7709},
     {'host': '218.108.98.244', 'port': 7709},
+    {'host': '60.12.136.250', 'port': 7709},
+    {'host': '218.75.126.9', 'port': 7709},
   ];
 
   /// Setup 命令 (握手)
@@ -47,8 +54,9 @@ class TdxClient {
   /// 连接到服务器
   Future<bool> connect(String host, int port) async {
     try {
+      developer.log(' Connecting to $host:$port...');
       _socket = await Socket.connect(host, port,
-          timeout: const Duration(seconds: 5));
+          timeout: const Duration(seconds: 10));
 
       // 设置数据监听
       _setupSocketListener();
@@ -57,8 +65,10 @@ class TdxClient {
       await _sendSetupCommands();
 
       _isConnected = true;
+      developer.log(' Connected to $host:$port successfully');
       return true;
     } catch (e) {
+      developer.log(' Failed to connect to $host:$port - $e');
       _isConnected = false;
       await _cleanup();
       return false;
@@ -86,11 +96,15 @@ class TdxClient {
 
   /// 自动连接到可用服务器
   Future<bool> autoConnect() async {
-    for (final server in servers) {
+    developer.log(' Starting autoConnect, trying ${servers.length} servers...');
+    for (var i = 0; i < servers.length; i++) {
+      final server = servers[i];
+      developer.log(' Trying server ${i + 1}/${servers.length}: ${server['host']}:${server['port']}');
       if (await connect(server['host'], server['port'])) {
         return true;
       }
     }
+    developer.log(' All servers failed to connect');
     return false;
   }
 
