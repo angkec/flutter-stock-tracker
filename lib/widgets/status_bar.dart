@@ -97,11 +97,10 @@ class StatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final marketStatus = getCurrentMarketStatus();
-    final statusText = getMarketStatusText(marketStatus);
     final statusColor = getMarketStatusColor(marketStatus);
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         border: Border(
@@ -110,96 +109,98 @@ class StatusBar extends StatelessWidget {
           ),
         ),
       ),
-      child: Row(
-        children: [
-          // 标题
-          Text(
-            'A股涨跌量比监控',
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-          const SizedBox(width: 16),
-          // 市场状态
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: statusColor,
-                    shape: BoxShape.circle,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 400;
+
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 第一行: 标题 + 状态 + 时间
+              Row(
+                children: [
+                  // 市场状态指示点
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  statusText,
-                  style: TextStyle(
-                    color: statusColor,
-                    fontWeight: FontWeight.w500,
+                  const SizedBox(width: 8),
+                  // 标题
+                  Text(
+                    isNarrow ? '涨跌量比' : 'A股涨跌量比监控',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                   ),
+                  const Spacer(),
+                  // 更新时间
+                  if (updateTime != null)
+                    Text(
+                      updateTime!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            fontFamily: 'monospace',
+                          ),
+                    ),
+                ],
+              ),
+              // 第二行: 进度条或错误信息
+              if (isLoading && progress != null && total != null) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: LinearProgressIndicator(
+                        value: total! > 0 ? progress! / total! : 0,
+                        backgroundColor:
+                            Theme.of(context).colorScheme.surface,
+                        minHeight: 3,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$progress/$total',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontFamily: 'monospace',
+                            fontSize: 11,
+                          ),
+                    ),
+                  ],
+                ),
+              ] else if (isLoading) ...[
+                const SizedBox(height: 6),
+                const LinearProgressIndicator(minHeight: 3),
+              ] else if (errorMessage != null) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      color: Theme.of(context).colorScheme.error,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 12,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
               ],
-            ),
-          ),
-          const Spacer(),
-          // 错误信息
-          if (errorMessage != null) ...[
-            Icon(
-              Icons.error_outline,
-              color: Theme.of(context).colorScheme.error,
-              size: 16,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              errorMessage!,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-                fontSize: 12,
-              ),
-            ),
-            const SizedBox(width: 16),
-          ],
-          // 加载进度
-          if (isLoading && progress != null && total != null) ...[
-            SizedBox(
-              width: 150,
-              child: LinearProgressIndicator(
-                value: total! > 0 ? progress! / total! : 0,
-                backgroundColor:
-                    Theme.of(context).colorScheme.surfaceContainerHighest,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '$progress / $total',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(width: 16),
-          ] else if (isLoading) ...[
-            const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            const SizedBox(width: 16),
-          ],
-          // 更新时间
-          if (updateTime != null)
-            Text(
-              '更新: $updateTime',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
