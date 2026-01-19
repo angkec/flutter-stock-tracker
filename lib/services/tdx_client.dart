@@ -208,13 +208,26 @@ class TdxClient {
 
   /// 解析股票列表
   List<Stock> _parseSecurityList(Uint8List body, int market) {
+    // Minimum body size: 2 bytes for count
+    if (body.length < 2) {
+      throw FormatException(
+          'Invalid security list response: buffer too small (${body.length} bytes, need at least 2)');
+    }
+
     final byteData = ByteData.sublistView(body);
     final count = byteData.getUint16(0, Endian.little);
 
     final stocks = <Stock>[];
     var pos = 2;
+    const recordSize = 29; // Each stock record is 29 bytes
 
     for (var i = 0; i < count; i++) {
+      // Check if buffer has enough data for this record
+      if (pos + recordSize > body.length) {
+        // Buffer exhausted before reading all expected records
+        break;
+      }
+
       // 每只股票 29 字节
       final codeBytes = body.sublist(pos, pos + 6);
       final code = String.fromCharCodes(codeBytes);
@@ -228,7 +241,7 @@ class TdxClient {
       final preCloseRaw = byteData.getUint32(pos + 21, Endian.little);
       final preClose = decodeVolume(preCloseRaw);
 
-      pos += 29;
+      pos += recordSize;
 
       stocks.add(Stock(
         code: code,
