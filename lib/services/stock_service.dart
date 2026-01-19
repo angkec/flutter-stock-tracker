@@ -1,16 +1,21 @@
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 /// 股票监控数据
 class StockMonitorData {
   final Stock stock;
-  final double ratio; // 当日涨跌量比
+  final double ratio;          // 涨跌量比
+  final double changePercent;  // 当日涨跌幅 (%)
+  final String? industry;      // 申万行业
 
   StockMonitorData({
     required this.stock,
     required this.ratio,
+    required this.changePercent,
+    this.industry,
   });
 }
 
@@ -70,6 +75,14 @@ class StockService {
     return ratio;
   }
 
+  /// 计算涨跌幅
+  /// 返回 (最新价 - 昨收价) / 昨收价 * 100
+  static double? calculateChangePercent(List<KLine> todayBars, double preClose) {
+    if (todayBars.isEmpty || preClose <= 0) return null;
+    final lastClose = todayBars.last.close;
+    return (lastClose - preClose) / preClose * 100;
+  }
+
   /// 获取所有A股股票
   Future<List<Stock>> getAllStocks() async {
     final stocks = <Stock>[];
@@ -95,6 +108,7 @@ class StockService {
   /// [onData] 当有新的有效数据时回调，返回当前所有有效结果
   Future<List<StockMonitorData>> batchGetMonitorData(
     List<Stock> stocks, {
+    IndustryService? industryService,
     void Function(int current, int total)? onProgress,
     void Function(List<StockMonitorData> results)? onData,
   }) async {
@@ -123,9 +137,13 @@ class StockService {
       final ratio = calculateRatio(todayBars);
       if (ratio == null) return;
 
+      final changePercent = calculateChangePercent(todayBars, stocks[index].preClose);
+
       results.add(StockMonitorData(
         stock: stocks[index],
         ratio: ratio,
+        changePercent: changePercent ?? 0.0,
+        industry: industryService?.getIndustry(stocks[index].code),
       ));
 
       // 达到阈值时回调
