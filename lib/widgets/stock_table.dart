@@ -16,11 +16,13 @@ String formatRatio(double ratio) {
 class StockTable extends StatelessWidget {
   final List<StockMonitorData> stocks;
   final bool isLoading;
+  final Set<String> highlightCodes;
 
   const StockTable({
     super.key,
     required this.stocks,
     this.isLoading = false,
+    this.highlightCodes = const {},
   });
 
   void _copyToClipboard(BuildContext context, String code, String name) {
@@ -100,6 +102,11 @@ class StockTable extends StatelessWidget {
 
           return DataRow(
             color: WidgetStateProperty.resolveWith<Color?>((states) {
+              // Watchlist highlight takes priority
+              if (highlightCodes.contains(data.stock.code)) {
+                return Colors.amber.withValues(alpha: 0.15);
+              }
+              // Alternating row colors
               if (index.isOdd) {
                 return Theme.of(context)
                     .colorScheme

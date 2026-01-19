@@ -1,13 +1,191 @@
 // lib/screens/market_screen.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/services/tdx_pool.dart';
+import 'package:stock_rtwatcher/services/watchlist_service.dart';
+import 'package:stock_rtwatcher/widgets/status_bar.dart';
+import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
-class MarketScreen extends StatelessWidget {
+class MarketScreen extends StatefulWidget {
   const MarketScreen({super.key});
 
   @override
+  State<MarketScreen> createState() => _MarketScreenState();
+}
+
+class _MarketScreenState extends State<MarketScreen> {
+  List<Stock> _allStocks = [];
+  List<StockMonitorData> _monitorData = [];
+  String? _updateTime;
+  int _progress = 0;
+  int _total = 0;
+  bool _isLoading = false;
+  bool _isConnected = false;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _connect();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    final pool = context.read<TdxPool>();
+    try {
+      final success = await pool.autoConnect();
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _isConnected = success;
+        if (!success) _errorMessage = '无法连接到服务器';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _isConnected = false;
+        _errorMessage = '连接失败: $e';
+      });
+    }
+  }
+
+  Future<void> _loadStocks() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    final service = context.read<StockService>();
+    try {
+      final stocks = await service.getAllStocks();
+      if (!mounted) return;
+      setState(() => _allStocks = stocks);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _errorMessage = '获取股票列表失败: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _fetchMonitorData() async {
+    if (_allStocks.isEmpty) return;
+
+    setState(() {
+      _isLoading = true;
+      _progress = 0;
+      _total = _allStocks.length;
+      _errorMessage = null;
+    });
+
+    final service = context.read<StockService>();
+    try {
+      await service.batchGetMonitorData(
+        _allStocks,
+        onProgress: (current, total) {
+          if (mounted) {
+            setState(() {
+              _progress = current;
+              _total = total;
+            });
+          }
+        },
+        onData: (results) {
+          if (mounted) {
+            setState(() {
+              _monitorData = results; // Show ALL stocks, no limit
+              _updateTime = _formatCurrentTime();
+            });
+          }
+        },
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _errorMessage = '获取监控数据失败: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _progress = 0;
+          _total = 0;
+        });
+      }
+    }
+  }
+
+  String _formatCurrentTime() {
+    final now = DateTime.now();
+    return '${now.hour.toString().padLeft(2, '0')}:'
+        '${now.minute.toString().padLeft(2, '0')}:'
+        '${now.second.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _refresh() async {
+    if (_isLoading) return;
+
+    if (!_isConnected) {
+      await _connect();
+    }
+    if (_isConnected) {
+      if (_allStocks.isEmpty) {
+        await _loadStocks();
+      }
+      await _fetchMonitorData();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const SafeArea(
-      child: Center(child: Text('全市场页面 (待实现)')),
+    final watchlistService = context.watch<WatchlistService>();
+
+    return Scaffold(
+      body: SafeArea(
+        child: Column(
+          children: [
+            StatusBar(
+              updateTime: _updateTime,
+              progress: _progress > 0 ? _progress : null,
+              total: _total > 0 ? _total : null,
+              isLoading: _isLoading,
+              errorMessage: _errorMessage,
+            ),
+            Expanded(
+              child: StockTable(
+                stocks: _monitorData,
+                isLoading: _isLoading,
+                highlightCodes: watchlistService.watchlist.toSet(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _isLoading ? null : _refresh,
+        tooltip: '刷新数据',
+        child: _isLoading
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : const Icon(Icons.refresh),
+      ),
     );
   }
 }
