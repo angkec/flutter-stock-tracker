@@ -82,12 +82,11 @@ void main() {
       expect(result, '123');
     });
 
-    test('replaces unknown GBK codes with replacement character', () {
-      // Invalid GBK sequence that's not in our mapping
+    test('decodes all valid GBK codes without error', () {
+      // 0x8140 is a valid GBK code (丂)
       final data = Uint8List.fromList([0x81, 0x40]);
       final result = GbkDecoder.decode(data);
-      // Should contain replacement character since 0x8140 is not mapped
-      expect(result, '\uFFFD');
+      expect(result, '丂');
     });
 
     test('decodes typical stock name with company suffix', () {
