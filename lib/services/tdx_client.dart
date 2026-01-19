@@ -314,6 +314,11 @@ class TdxClient {
 
   /// 解析实时行情
   List<Quote> _parseSecurityQuotes(Uint8List body) {
+    // Need at least 4 bytes: 2 bytes skip + 2 bytes count
+    if (body.length < 4) {
+      return [];
+    }
+
     var pos = 2; // skip 2 bytes
     final byteData = ByteData.sublistView(body);
     final count = byteData.getUint16(pos, Endian.little);
@@ -378,18 +383,17 @@ class TdxClient {
     int byte = data[pos];
     int intData = byte & 0x3F;
     bool isNegative = (byte & 0x40) != 0;
+    pos++;
 
     if ((byte & 0x80) != 0) {
-      while (true) {
-        pos++;
-        if (pos >= data.length) break;
+      while (pos < data.length) {
         byte = data[pos];
         intData += (byte & 0x7F) << positionBit;
         positionBit += 7;
+        pos++;
         if ((byte & 0x80) == 0) break;
       }
     }
-    pos++;
 
     if (isNegative) intData = -intData;
     return (intData, pos);

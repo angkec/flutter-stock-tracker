@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
-import 'package:stock_rtwatcher/models/quote.dart';
 
 void main() {
   group('TdxClient', () {
