@@ -88,24 +88,30 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
     });
 
     final stockService = context.read<StockService>();
-    final pool = context.read<TdxPool>();
 
     try {
-      // Cache security lists per market to avoid repeated API calls
-      final securityListCache = <int, List<Stock>>{};
-      final stocks = <Stock>[];
+      // Get all stocks to find names for watchlist codes
+      final allStocks = await stockService.getAllStocks();
+      if (!mounted) return;
 
-      for (final code in watchlistService.watchlist) {
-        final market = WatchlistService.getMarket(code);
-        if (!securityListCache.containsKey(market)) {
-          securityListCache[market] = await pool.getSecurityList(market, 0);
+      // Build stock list for watchlist codes
+      final watchlistCodes = watchlistService.watchlist.toSet();
+      final stocks = <Stock>[];
+      for (final stock in allStocks) {
+        if (watchlistCodes.contains(stock.code)) {
+          stocks.add(stock);
         }
-        final stockList = securityListCache[market]!;
-        final stock = stockList.firstWhere(
-          (s) => s.code == code,
-          orElse: () => Stock(code: code, name: code, market: market),
-        );
-        stocks.add(stock);
+      }
+
+      // Add any codes not found in allStocks (shouldn't happen normally)
+      for (final code in watchlistService.watchlist) {
+        if (!stocks.any((s) => s.code == code)) {
+          stocks.add(Stock(
+            code: code,
+            name: code,
+            market: WatchlistService.getMarket(code),
+          ));
+        }
       }
 
       if (!mounted) return;
