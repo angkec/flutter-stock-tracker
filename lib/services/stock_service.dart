@@ -76,11 +76,15 @@ class StockService {
   }
 
   /// 计算涨跌幅
-  /// 返回 (最新价 - 昨收价) / 昨收价 * 100
+  /// 返回 (最新价 - 参考价) / 参考价 * 100
+  /// 参考价优先使用昨收价，若无效则使用当日首根K线开盘价
   static double? calculateChangePercent(List<KLine> todayBars, double preClose) {
-    if (todayBars.isEmpty || preClose <= 0) return null;
+    if (todayBars.isEmpty) return null;
+    // 优先使用昨收价，若无效则使用当日首根K线开盘价
+    final reference = preClose > 0 ? preClose : todayBars.first.open;
+    if (reference <= 0) return null;
     final lastClose = todayBars.last.close;
-    return (lastClose - preClose) / preClose * 100;
+    return (lastClose - reference) / reference * 100;
   }
 
   /// 获取所有A股股票

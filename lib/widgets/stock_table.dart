@@ -31,12 +31,16 @@ class StockTable extends StatelessWidget {
   final List<StockMonitorData> stocks;
   final bool isLoading;
   final Set<String> highlightCodes;
+  final void Function(StockMonitorData data)? onLongPress;
+  final void Function(StockMonitorData data)? onTap;
 
   const StockTable({
     super.key,
     required this.stocks,
     this.isLoading = false,
     this.highlightCodes = const {},
+    this.onLongPress,
+    this.onTap,
   });
 
   void _copyToClipboard(BuildContext context, String code, String name) {
@@ -93,7 +97,10 @@ class StockTable extends StatelessWidget {
     final changeColor = data.changePercent >= 0 ? upColor : downColor;
     final isHighlighted = highlightCodes.contains(data.stock.code);
 
-    return Container(
+    return GestureDetector(
+      onLongPress: onLongPress != null ? () => onLongPress!(data) : null,
+      onTap: onTap != null ? () => onTap!(data) : null,
+      child: Container(
       height: _rowHeight,
       decoration: BoxDecoration(
         color: isHighlighted
@@ -190,6 +197,7 @@ class StockTable extends StatelessWidget {
             ),
           ),
         ],
+      ),
       ),
     );
   }

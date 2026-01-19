@@ -162,6 +162,30 @@ class _MarketScreenState extends State<MarketScreen> {
     }
   }
 
+  Future<void> _addToWatchlist(String code, String name) async {
+    final watchlistService = context.read<WatchlistService>();
+    if (watchlistService.contains(code)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$name 已在自选中'),
+          duration: const Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    await watchlistService.addStock(code);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已添加 $name 到自选'),
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final watchlistService = context.watch<WatchlistService>();
@@ -208,6 +232,7 @@ class _MarketScreenState extends State<MarketScreen> {
                 stocks: filteredData,
                 isLoading: _isLoading,
                 highlightCodes: watchlistService.watchlist.toSet(),
+                onTap: (data) => _addToWatchlist(data.stock.code, data.stock.name),
               ),
             ),
           ],

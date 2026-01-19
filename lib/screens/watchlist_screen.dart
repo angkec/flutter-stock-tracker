@@ -9,6 +9,7 @@ import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
+import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
 class WatchlistScreen extends StatefulWidget {
   const WatchlistScreen({super.key});
@@ -206,16 +207,6 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
     }
   }
 
-  void _copyCode(String code, String name) {
-    Clipboard.setData(ClipboardData(text: code));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('已复制: $code ($name)'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -298,42 +289,10 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
 
     return RefreshIndicator(
       onRefresh: _fetchData,
-      child: ListView.builder(
-        itemCount: _monitorData.length,
-        itemBuilder: (context, index) {
-          final data = _monitorData[index];
-          final ratioColor = data.ratio >= 1 ? const Color(0xFFFF4444) : const Color(0xFF00AA00);
-
-          return ListTile(
-            leading: GestureDetector(
-              onTap: () => _copyCode(data.stock.code, data.stock.name),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  data.stock.code,
-                  style: const TextStyle(fontFamily: 'monospace'),
-                ),
-              ),
-            ),
-            title: Text(
-              data.stock.name,
-              style: TextStyle(color: data.stock.isST ? Colors.orange : null),
-            ),
-            trailing: Text(
-              data.ratio.toStringAsFixed(2),
-              style: TextStyle(
-                color: ratioColor,
-                fontWeight: FontWeight.bold,
-                fontFamily: 'monospace',
-              ),
-            ),
-            onLongPress: () => _removeStock(data.stock.code, data.stock.name),
-          );
-        },
+      child: StockTable(
+        stocks: _monitorData,
+        isLoading: _isLoading,
+        onLongPress: (data) => _removeStock(data.stock.code, data.stock.name),
       ),
     );
   }
