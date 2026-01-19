@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 
 /// A股风格颜色 - 红涨绿跌
@@ -21,6 +22,17 @@ class StockTable extends StatelessWidget {
     required this.stocks,
     this.isLoading = false,
   });
+
+  void _copyToClipboard(BuildContext context, String code, String name) {
+    Clipboard.setData(ClipboardData(text: code));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已复制: $code ($name)'),
+        duration: const Duration(seconds: 1),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -98,9 +110,25 @@ class StockTable extends StatelessWidget {
             }),
             cells: [
               DataCell(
-                Text(
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      data.stock.code,
+                      style: const TextStyle(fontFamily: 'monospace'),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.copy,
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+                onTap: () => _copyToClipboard(
+                  context,
                   data.stock.code,
-                  style: const TextStyle(fontFamily: 'monospace'),
+                  data.stock.name,
                 ),
               ),
               DataCell(
