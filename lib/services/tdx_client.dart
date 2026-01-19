@@ -412,10 +412,13 @@ class TdxClient {
     return (intData, pos);
   }
 
+  /// Valid K-line category values
+  static const Set<int> _validCategories = {0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11};
+
   /// 获取K线数据
   /// [market] 市场代码 (0=深市, 1=沪市)
   /// [code] 股票代码
-  /// [category] K线类型 (0=5分钟, 1=15分钟, 2=30分钟, 3=1小时, 4=日线, 5=周线, 6=月线, 7=1分钟, 8=1分钟, 10=季线, 11=年线)
+  /// [category] K线类型 (0=5分钟, 1=15分钟, 2=30分钟, 3=1小时, 4=日线, 5=周线, 6=月线, 7=1分钟K线, 8=分时图, 10=季线, 11=年线)
   /// [start] 起始位置 (0=最新)
   /// [count] 获取数量
   Future<List<KLine>> getSecurityBars({
@@ -425,6 +428,13 @@ class TdxClient {
     required int start,
     required int count,
   }) async {
+    if (!_validCategories.contains(category)) {
+      throw ArgumentError.value(
+        category,
+        'category',
+        'Invalid K-line category. Valid values are: ${_validCategories.toList()..sort()}',
+      );
+    }
     final pkg = BytesBuilder();
 
     // Build header: struct.pack("<HIHHHH6sHHHHIIH", ...)
@@ -522,6 +532,9 @@ class TdxClient {
     return bars;
   }
 
+  /// Default DateTime used when parsing fails
+  static final DateTime _defaultDateTime = DateTime(2000, 1, 1);
+
   /// 解析日期时间
   /// For minute bars (category < 4 or 7 or 8): yearOrDate contains date, minOrTime contains minutes
   /// For day bars (category >= 4 except 7,8): yearOrDate contains year*10000+month*100+day
@@ -529,25 +542,32 @@ class TdxClient {
     // Minute bars: category 0,1,2,3,7,8
     final isMinuteBar = category < 4 || category == 7 || category == 8;
 
+    int year, month, day, hour, minute;
+
     if (isMinuteBar) {
       // yearOrDate format: (year-2004)*2048 + month*100 + day
-      final year = (yearOrDate ~/ 2048) + 2004;
+      year = (yearOrDate ~/ 2048) + 2004;
       final monthDay = yearOrDate % 2048;
-      final month = monthDay ~/ 100;
-      final day = monthDay % 100;
+      month = monthDay ~/ 100;
+      day = monthDay % 100;
 
       // minOrTime is minutes from midnight
-      final hour = minOrTime ~/ 60;
-      final minute = minOrTime % 60;
-
-      return DateTime(year, month, day, hour, minute);
+      hour = minOrTime ~/ 60;
+      minute = minOrTime % 60;
     } else {
       // Day bars: yearOrDate format is yyyymmdd
-      final year = yearOrDate ~/ 10000;
-      final month = (yearOrDate % 10000) ~/ 100;
-      final day = yearOrDate % 100;
-
-      return DateTime(year, month, day);
+      year = yearOrDate ~/ 10000;
+      month = (yearOrDate % 10000) ~/ 100;
+      day = yearOrDate % 100;
+      hour = 0;
+      minute = 0;
     }
+
+    // Validate month and day ranges
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+      return _defaultDateTime;
+    }
+
+    return DateTime(year, month, day, hour, minute);
   }
 }
