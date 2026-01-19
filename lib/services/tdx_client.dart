@@ -6,6 +6,7 @@ import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/utils/volume_decoder.dart';
+import 'package:stock_rtwatcher/utils/gbk_decoder.dart';
 
 /// K-line type constants
 const int klineType5Min = 0;
@@ -249,7 +250,7 @@ class TdxClient {
       final volUnit = byteData.getUint16(pos + 6, Endian.little);
 
       final nameBytes = body.sublist(pos + 8, pos + 16);
-      final name = _decodeGbk(nameBytes);
+      final name = GbkDecoder.decode(nameBytes);
 
       final decimalPoint = body[pos + 20];
       final preCloseRaw = byteData.getUint32(pos + 21, Endian.little);
@@ -268,23 +269,6 @@ class TdxClient {
     }
 
     return stocks;
-  }
-
-  /// GBK 解码 (简化版，仅处理常见中文)
-  String _decodeGbk(Uint8List bytes) {
-    // 移除尾部的 0x00
-    var end = bytes.length;
-    while (end > 0 && bytes[end - 1] == 0) {
-      end--;
-    }
-
-    // 使用 latin1 解码后转换
-    // 注意: 完整的 GBK 支持需要专门的库，这里简化处理
-    try {
-      return String.fromCharCodes(bytes.sublist(0, end));
-    } catch (e) {
-      return '';
-    }
   }
 
   /// 获取实时行情 (最多80只)
