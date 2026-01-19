@@ -7,6 +7,7 @@ import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
+import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 
 class WatchlistScreen extends StatefulWidget {
@@ -88,6 +89,7 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
     });
 
     final stockService = context.read<StockService>();
+    final industryService = context.read<IndustryService>();
 
     try {
       // Get all stocks to find names for watchlist codes
@@ -116,7 +118,10 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
 
       if (!mounted) return;
 
-      final data = await stockService.batchGetMonitorData(stocks);
+      final data = await stockService.batchGetMonitorData(
+        stocks,
+        industryService: industryService,
+      );
       data.sort((a, b) => b.ratio.compareTo(a.ratio));
 
       if (!mounted) return;

@@ -6,6 +6,7 @@ import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
+import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
@@ -104,9 +105,11 @@ class _MarketScreenState extends State<MarketScreen> {
     });
 
     final service = context.read<StockService>();
+    final industryService = context.read<IndustryService>();
     try {
       await service.batchGetMonitorData(
         _allStocks,
+        industryService: industryService,
         onProgress: (current, total) {
           if (mounted) {
             setState(() {

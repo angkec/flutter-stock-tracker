@@ -4,6 +4,7 @@ import 'package:stock_rtwatcher/screens/main_screen.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
+import 'package:stock_rtwatcher/services/industry_service.dart';
 
 void main() {
   runApp(const MyApp());
@@ -16,6 +17,11 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        Provider(create: (_) {
+          final service = IndustryService();
+          service.load(); // 异步加载，不阻塞启动
+          return service;
+        }),
         Provider(create: (_) => TdxPool(poolSize: 5)),
         ProxyProvider<TdxPool, StockService>(
           update: (_, pool, __) => StockService(pool),
