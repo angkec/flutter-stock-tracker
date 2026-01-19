@@ -131,8 +131,8 @@ class _HomeScreenState extends State<HomeScreen> {
         },
       );
 
-      // 按日涨跌比排序，取前N个
-      data.sort((a, b) => b.ratioDay.compareTo(a.ratioDay));
+      // 按涨跌量比排序，取前N个
+      data.sort((a, b) => b.ratio.compareTo(a.ratio));
       final topData = data.take(_displayCount).toList();
 
       setState(() {
