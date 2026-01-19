@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/screens/home_screen.dart';
-import 'package:stock_rtwatcher/services/tdx_client.dart';
+import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 
 void main() {
@@ -15,9 +15,9 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        Provider(create: (_) => TdxClient()),
-        ProxyProvider<TdxClient, StockService>(
-          update: (_, client, __) => StockService(client),
+        Provider(create: (_) => TdxPool(poolSize: 5)),
+        ProxyProvider<TdxPool, StockService>(
+          update: (_, pool, __) => StockService(pool),
         ),
       ],
       child: MaterialApp(

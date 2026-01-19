@@ -29,6 +29,9 @@ class TdxClient {
   Completer<void>? _dataCompleter;
   StreamSubscription<Uint8List>? _subscription;
 
+  // 请求锁，确保同一时间只有一个请求在处理
+  Completer<void>? _requestLock;
+
   bool get isConnected => _isConnected;
 
   /// 服务器列表
@@ -123,12 +126,28 @@ class TdxClient {
     _buffer.clear();
   }
 
-  /// 发送命令并接收响应
+  /// 发送命令并接收响应 (带请求锁)
   Future<Uint8List> sendCommand(Uint8List packet) async {
     if (_socket == null || !_isConnected) {
       throw StateError('Not connected');
     }
-    return _sendPacket(packet);
+
+    // 等待获取锁
+    while (_requestLock != null) {
+      await _requestLock!.future;
+    }
+
+    // 获取锁
+    _requestLock = Completer<void>();
+
+    try {
+      return await _sendPacket(packet);
+    } finally {
+      // 释放锁
+      final lock = _requestLock;
+      _requestLock = null;
+      lock?.complete();
+    }
   }
 
   /// 内部发送数据包方法 (不检查连接状态，用于握手)

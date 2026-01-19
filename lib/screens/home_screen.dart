@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
-import 'package:stock_rtwatcher/services/tdx_client.dart';
+import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
@@ -60,10 +60,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _errorMessage = null;
     });
 
-    final client = context.read<TdxClient>();
+    final pool = context.read<TdxPool>();
 
     try {
-      final success = await client.autoConnect();
+      final success = await pool.autoConnect();
       setState(() {
         _isConnected = success;
         if (!success) {
