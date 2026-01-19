@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
+import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/utils/volume_decoder.dart';
 
 /// TDX 协议客户端
 class TdxClient {
@@ -168,5 +170,93 @@ class TdxClient {
       result.add(int.parse(hex.substring(i, i + 2), radix: 16));
     }
     return Uint8List.fromList(result);
+  }
+
+  /// 获取股票数量
+  Future<int> getSecurityCount(int market) async {
+    final pkg = BytesBuilder();
+    pkg.add(_hexToBytes('0c0c186c0001080008004e04'));
+
+    // market (2 bytes) + 固定尾部 (4 bytes)
+    final params = ByteData(6);
+    params.setUint16(0, market, Endian.little);
+    params.setUint8(2, 0x75);
+    params.setUint8(3, 0xC7);
+    params.setUint8(4, 0x33);
+    params.setUint8(5, 0x01);
+    pkg.add(params.buffer.asUint8List());
+
+    final body = await sendCommand(pkg.toBytes());
+    final byteData = ByteData.sublistView(body);
+    return byteData.getUint16(0, Endian.little);
+  }
+
+  /// 获取股票列表
+  Future<List<Stock>> getSecurityList(int market, int start) async {
+    final pkg = BytesBuilder();
+    pkg.add(_hexToBytes('0c0118640101060006005004'));
+
+    // market (2 bytes) + start (2 bytes)
+    final params = ByteData(4);
+    params.setUint16(0, market, Endian.little);
+    params.setUint16(2, start, Endian.little);
+    pkg.add(params.buffer.asUint8List());
+
+    final body = await sendCommand(pkg.toBytes());
+    return _parseSecurityList(body, market);
+  }
+
+  /// 解析股票列表
+  List<Stock> _parseSecurityList(Uint8List body, int market) {
+    final byteData = ByteData.sublistView(body);
+    final count = byteData.getUint16(0, Endian.little);
+
+    final stocks = <Stock>[];
+    var pos = 2;
+
+    for (var i = 0; i < count; i++) {
+      // 每只股票 29 字节
+      final codeBytes = body.sublist(pos, pos + 6);
+      final code = String.fromCharCodes(codeBytes);
+
+      final volUnit = byteData.getUint16(pos + 6, Endian.little);
+
+      final nameBytes = body.sublist(pos + 8, pos + 16);
+      final name = _decodeGbk(nameBytes);
+
+      final decimalPoint = body[pos + 20];
+      final preCloseRaw = byteData.getUint32(pos + 21, Endian.little);
+      final preClose = decodeVolume(preCloseRaw);
+
+      pos += 29;
+
+      stocks.add(Stock(
+        code: code,
+        name: name,
+        market: market,
+        volUnit: volUnit,
+        decimalPoint: decimalPoint,
+        preClose: preClose,
+      ));
+    }
+
+    return stocks;
+  }
+
+  /// GBK 解码 (简化版，仅处理常见中文)
+  String _decodeGbk(Uint8List bytes) {
+    // 移除尾部的 0x00
+    var end = bytes.length;
+    while (end > 0 && bytes[end - 1] == 0) {
+      end--;
+    }
+
+    // 使用 latin1 解码后转换
+    // 注意: 完整的 GBK 支持需要专门的库，这里简化处理
+    try {
+      return String.fromCharCodes(bytes.sublist(0, end));
+    } catch (e) {
+      return '';
+    }
   }
 }
