@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:stock_rtwatcher/screens/home_screen.dart';
+import 'package:stock_rtwatcher/screens/main_screen.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/services/watchlist_service.dart';
 
 void main() {
   runApp(const MyApp());
@@ -19,6 +20,7 @@ class MyApp extends StatelessWidget {
         ProxyProvider<TdxPool, StockService>(
           update: (_, pool, __) => StockService(pool),
         ),
+        ChangeNotifierProvider(create: (_) => WatchlistService()),
       ],
       child: MaterialApp(
         title: 'A股涨跌量比监控',
@@ -29,7 +31,7 @@ class MyApp extends StatelessWidget {
           ),
           useMaterial3: true,
         ),
-        home: const HomeScreen(),
+        home: const MainScreen(),
       ),
     );
   }
