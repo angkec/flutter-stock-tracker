@@ -9,6 +9,9 @@ import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/widgets/kline_chart.dart';
 import 'package:stock_rtwatcher/widgets/minute_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
+import 'package:stock_rtwatcher/widgets/industry_heat_bar.dart';
+import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:provider/provider.dart';
 
 /// K线图显示模式
 enum ChartMode { minute, daily, weekly }
@@ -289,6 +292,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildKLineSection(),
+            _buildIndustryHeatBar(),
             const Divider(),
             RatioHistoryList(
               ratios: _ratioHistory,
@@ -411,6 +415,34 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     return KLineChart(
       bars: _chartMode == ChartMode.daily ? _dailyBars : _weeklyBars,
       ratios: _chartMode == ChartMode.daily ? _ratioHistory : null,
+    );
+  }
+
+  Widget _buildIndustryHeatBar() {
+    final provider = context.watch<MarketDataProvider>();
+    final industry = provider.industryService.getIndustry(widget.stock.code);
+
+    if (industry == null) {
+      return const SizedBox.shrink();
+    }
+
+    final heat = provider.getIndustryHeat(industry);
+    if (heat == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Text(
+          '板块: $industry (暂无热度数据)',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Colors.grey,
+          ),
+        ),
+      );
+    }
+
+    return IndustryHeatBar(
+      industryName: industry,
+      hotCount: heat.hot,
+      coldCount: heat.cold,
     );
   }
 }
