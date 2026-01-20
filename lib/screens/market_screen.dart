@@ -14,10 +14,10 @@ class MarketScreen extends StatefulWidget {
   const MarketScreen({super.key});
 
   @override
-  State<MarketScreen> createState() => _MarketScreenState();
+  State<MarketScreen> createState() => MarketScreenState();
 }
 
-class _MarketScreenState extends State<MarketScreen> {
+class MarketScreenState extends State<MarketScreen> {
   final _searchController = TextEditingController();
   List<Stock> _allStocks = [];
   List<StockMonitorData> _monitorData = [];
@@ -134,7 +134,8 @@ class _MarketScreenState extends State<MarketScreen> {
         '${now.second.toString().padLeft(2, '0')}';
   }
 
-  void _searchByIndustry(String industry) {
+  /// 按行业搜索（公开方法，供外部调用）
+  void searchByIndustry(String industry) {
     _searchController.text = industry;
     setState(() => _searchQuery = industry);
   }
@@ -246,7 +247,7 @@ class _MarketScreenState extends State<MarketScreen> {
                 isLoading: _isLoading,
                 highlightCodes: watchlistService.watchlist.toSet(),
                 onTap: (data) => _addToWatchlist(data.stock.code, data.stock.name),
-                onIndustryTap: _searchByIndustry,
+                onIndustryTap: searchByIndustry,
               ),
             ),
           ],

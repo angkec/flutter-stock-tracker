@@ -12,11 +12,27 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
+  final _marketScreenKey = GlobalKey<MarketScreenState>();
 
-  final _screens = [
-    const WatchlistScreen(),
-    const MarketScreen(),
-  ];
+  /// 跳转到全市场并按行业搜索
+  void _goToMarketAndSearchIndustry(String industry) {
+    setState(() => _currentIndex = 1);
+    // 延迟一帧确保 Tab 切换完成
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _marketScreenKey.currentState?.searchByIndustry(industry);
+    });
+  }
+
+  late final List<Widget> _screens;
+
+  @override
+  void initState() {
+    super.initState();
+    _screens = [
+      WatchlistScreen(onIndustryTap: _goToMarketAndSearchIndustry),
+      MarketScreen(key: _marketScreenKey),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {

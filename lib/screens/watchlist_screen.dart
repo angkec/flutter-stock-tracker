@@ -12,7 +12,9 @@ import 'package:stock_rtwatcher/widgets/status_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
 class WatchlistScreen extends StatefulWidget {
-  const WatchlistScreen({super.key});
+  final void Function(String industry)? onIndustryTap;
+
+  const WatchlistScreen({super.key, this.onIndustryTap});
 
   @override
   State<WatchlistScreen> createState() => _WatchlistScreenState();
@@ -314,6 +316,7 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
         stocks: _monitorData,
         isLoading: _isLoading,
         onLongPress: (data) => _removeStock(data.stock.code, data.stock.name),
+        onIndustryTap: widget.onIndustryTap,
       ),
     );
   }
