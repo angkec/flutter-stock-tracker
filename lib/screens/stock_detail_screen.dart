@@ -7,7 +7,11 @@ import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/widgets/kline_chart.dart';
+import 'package:stock_rtwatcher/widgets/minute_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
+
+/// K线图显示模式
+enum ChartMode { minute, daily, weekly }
 
 /// 股票详情页
 class StockDetailScreen extends StatefulWidget {
@@ -27,6 +31,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
   List<KLine> _dailyBars = [];
   List<KLine> _weeklyBars = [];
+  List<KLine> _todayBars = []; // 当日分钟数据
   List<DailyRatio> _ratioHistory = [];
 
   bool _isLoadingKLine = false;
@@ -34,7 +39,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   String? _klineError;
   String? _ratioError;
 
-  bool _showDaily = true; // true=日线, false=周线
+  ChartMode _chartMode = ChartMode.minute; // 默认显示分时
 
   @override
   void initState() {
@@ -193,6 +198,12 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         grouped.putIfAbsent(dateKey, () => []).add(bar);
       }
 
+      // 提取当日分钟数据（用于分时图）
+      final today = DateTime.now();
+      final todayKey =
+          '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+      final todayBars = grouped[todayKey] ?? [];
+
       // 计算每天的量比
       final results = <DailyRatio>[];
       final sortedKeys = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
@@ -210,6 +221,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
       if (!mounted) return;
       setState(() {
+        _todayBars = todayBars;
         _ratioHistory = results;
         _isLoadingRatio = false;
       });
@@ -301,60 +313,104 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
             children: [
               Flexible(
                 child: Text(
-                  'K 线图',
+                  _chartMode == ChartMode.minute ? '分时图' : 'K 线图',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                 ),
               ),
               const SizedBox(width: 8),
-              SegmentedButton<bool>(
+              SegmentedButton<ChartMode>(
                 segments: const [
-                  ButtonSegment(value: true, label: Text('日线')),
-                  ButtonSegment(value: false, label: Text('周线')),
+                  ButtonSegment(value: ChartMode.minute, label: Text('分时')),
+                  ButtonSegment(value: ChartMode.daily, label: Text('日线')),
+                  ButtonSegment(value: ChartMode.weekly, label: Text('周线')),
                 ],
-                selected: {_showDaily},
+                selected: {_chartMode},
                 onSelectionChanged: (selected) {
-                  setState(() => _showDaily = selected.first);
+                  setState(() => _chartMode = selected.first);
                 },
               ),
             ],
           ),
           const SizedBox(height: 12),
-          if (_isLoadingKLine)
-            const SizedBox(
-              height: 280,
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_klineError != null)
-            SizedBox(
-              height: 280,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.error_outline,
-                        color: Theme.of(context).colorScheme.error),
-                    const SizedBox(height: 8),
-                    Text(_klineError!,
-                        style: TextStyle(
-                            color: Theme.of(context).colorScheme.error)),
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _loadKLines,
-                      child: const Text('重试'),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else
-            KLineChart(
-              bars: _showDaily ? _dailyBars : _weeklyBars,
-              ratios: _showDaily ? _ratioHistory : null, // 只有日线时显示量比
-            ),
+          _buildChart(),
         ],
       ),
+    );
+  }
+
+  Widget _buildChart() {
+    // 分时图使用 ratio 数据的加载状态
+    if (_chartMode == ChartMode.minute) {
+      if (_isLoadingRatio) {
+        return const SizedBox(
+          height: 280,
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
+      if (_ratioError != null) {
+        return SizedBox(
+          height: 280,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.error_outline,
+                    color: Theme.of(context).colorScheme.error),
+                const SizedBox(height: 8),
+                Text(_ratioError!,
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.error)),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _loadRatioHistory,
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      return MinuteChart(
+        bars: _todayBars,
+        preClose: widget.stock.preClose,
+      );
+    }
+
+    // 日线/周线使用 K 线数据的加载状态
+    if (_isLoadingKLine) {
+      return const SizedBox(
+        height: 280,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_klineError != null) {
+      return SizedBox(
+        height: 280,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.error_outline,
+                  color: Theme.of(context).colorScheme.error),
+              const SizedBox(height: 8),
+              Text(_klineError!,
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.error)),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _loadKLines,
+                child: const Text('重试'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return KLineChart(
+      bars: _chartMode == ChartMode.daily ? _dailyBars : _weeklyBars,
+      ratios: _chartMode == ChartMode.daily ? _ratioHistory : null,
     );
   }
 }
