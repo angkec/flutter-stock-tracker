@@ -13,7 +13,6 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
-  final _watchlistScreenKey = GlobalKey<WatchlistScreenState>();
   final _marketScreenKey = GlobalKey<MarketScreenState>();
 
   /// 跳转到全市场并按行业搜索
@@ -31,16 +30,9 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     _screens = [
-      WatchlistScreen(
-        key: _watchlistScreenKey,
-        onIndustryTap: _goToMarketAndSearchIndustry,
-      ),
-      MarketScreen(
-        key: _marketScreenKey,
-      ),
-      IndustryScreen(
-        onIndustryTap: _goToMarketAndSearchIndustry,
-      ),
+      WatchlistScreen(onIndustryTap: _goToMarketAndSearchIndustry),
+      MarketScreen(key: _marketScreenKey),
+      IndustryScreen(onIndustryTap: _goToMarketAndSearchIndustry),
     ];
   }
 
