@@ -111,30 +111,30 @@ class MarketStatsBar extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 标签和数字行
+        // 标签和数字行 - 等宽布局，确保标签不会被压缩
         Row(
-          children: stats.where((s) => s.count > 0).map((s) => Expanded(
-            flex: s.count,
+          children: stats.map((s) => Expanded(
             child: Text(
               '${s.label}\n${s.count}',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 10,
-                color: Theme.of(context).colorScheme.onSurface,
+                color: s.count > 0
+                    ? Theme.of(context).colorScheme.onSurface
+                    : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4),
               ),
             ),
           )).toList(),
         ),
         const SizedBox(height: 4),
-        // 进度条
+        // 进度条 - 按比例显示
         ClipRRect(
           borderRadius: BorderRadius.circular(4),
           child: Row(
             children: stats.map((s) {
-              final flex = s.count > 0 ? s.count : 0;
-              if (flex == 0) return const SizedBox.shrink();
+              if (s.count == 0) return const SizedBox.shrink();
               return Expanded(
-                flex: flex,
+                flex: s.count,
                 child: Container(
                   height: 8,
                   color: s.color,
@@ -154,10 +154,10 @@ class MarketStatsBar extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 标签行 - 等宽布局
         Row(
           children: [
             Expanded(
-              flex: above > 0 ? above : 1,
               child: Text(
                 '量比>1: $above ($abovePercent%)',
                 textAlign: TextAlign.center,
@@ -168,7 +168,6 @@ class MarketStatsBar extends StatelessWidget {
               ),
             ),
             Expanded(
-              flex: below > 0 ? below : 1,
               child: Text(
                 '量比<1: $below ($belowPercent%)',
                 textAlign: TextAlign.center,
@@ -181,6 +180,7 @@ class MarketStatsBar extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 4),
+        // 进度条 - 按比例显示
         ClipRRect(
           borderRadius: BorderRadius.circular(4),
           child: Row(
