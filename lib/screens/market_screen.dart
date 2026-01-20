@@ -26,13 +26,13 @@ class _MarketScreenState extends State<MarketScreen> {
   int _progress = 0;
   int _total = 0;
   bool _isLoading = false;
-  bool _isConnected = false;
   String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    _connect();
+    // 延迟调用以确保 context 可用
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
   }
 
   @override
@@ -43,36 +43,22 @@ class _MarketScreenState extends State<MarketScreen> {
 
   List<StockMonitorData> get _filteredData {
     if (_searchQuery.isEmpty) return _monitorData;
-    final query = _searchQuery.toLowerCase();
-    return _monitorData.where((data) {
-      return data.stock.code.contains(query) ||
-          data.stock.name.toLowerCase().contains(query);
-    }).toList();
-  }
 
-  Future<void> _connect() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+    final query = _searchQuery.trim();
+    final industryService = context.read<IndustryService>();
 
-    final pool = context.read<TdxPool>();
-    try {
-      final success = await pool.autoConnect();
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _isConnected = success;
-        if (!success) _errorMessage = '无法连接到服务器';
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _isConnected = false;
-        _errorMessage = '连接失败: $e';
-      });
+    // 如果是完整行业名，只按行业筛选
+    if (industryService.allIndustries.contains(query)) {
+      return _monitorData.where((d) => d.industry == query).toList();
     }
+
+    // 否则按代码/名称搜索
+    final lowerQuery = query.toLowerCase();
+    return _monitorData
+        .where((d) =>
+            d.stock.code.contains(lowerQuery) ||
+            d.stock.name.toLowerCase().contains(lowerQuery))
+        .toList();
   }
 
   Future<void> _loadStocks() async {
@@ -148,17 +134,44 @@ class _MarketScreenState extends State<MarketScreen> {
         '${now.second.toString().padLeft(2, '0')}';
   }
 
+  void _searchByIndustry(String industry) {
+    _searchController.text = industry;
+    setState(() => _searchQuery = industry);
+  }
+
   Future<void> _refresh() async {
     if (_isLoading) return;
 
-    if (!_isConnected) {
-      await _connect();
-    }
-    if (_isConnected) {
+    final pool = context.read<TdxPool>();
+
+    // 确保连接可用（会自动重连死连接）
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final connected = await pool.ensureConnected();
+      if (!mounted) return;
+
+      if (!connected) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = '无法连接到服务器';
+        });
+        return;
+      }
+
       if (_allStocks.isEmpty) {
         await _loadStocks();
       }
       await _fetchMonitorData();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = '刷新失败: $e';
+      });
     }
   }
 
