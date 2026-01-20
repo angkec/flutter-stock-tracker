@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/screens/watchlist_screen.dart';
 import 'package:stock_rtwatcher/screens/market_screen.dart';
+import 'package:stock_rtwatcher/screens/industry_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -31,6 +32,7 @@ class _MainScreenState extends State<MainScreen> {
     _screens = [
       WatchlistScreen(onIndustryTap: _goToMarketAndSearchIndustry),
       MarketScreen(key: _marketScreenKey),
+      IndustryScreen(onIndustryTap: _goToMarketAndSearchIndustry),
     ];
   }
 
@@ -58,6 +60,11 @@ class _MainScreenState extends State<MainScreen> {
             icon: Icon(Icons.show_chart_outlined),
             selectedIcon: Icon(Icons.show_chart),
             label: '全市场',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.category_outlined),
+            selectedIcon: Icon(Icons.category),
+            label: '行业',
           ),
         ],
       ),
