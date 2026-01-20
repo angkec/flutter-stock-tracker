@@ -1,5 +1,7 @@
 // lib/screens/main_screen.dart
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/watchlist_screen.dart';
 import 'package:stock_rtwatcher/screens/market_screen.dart';
 import 'package:stock_rtwatcher/screens/industry_screen.dart';
@@ -26,15 +28,13 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  /// 统一刷新：优先刷新自选股，然后刷新全市场和行业
+  /// 统一刷新：刷新共享的 MarketDataProvider 和行业数据
   Future<void> _refreshAll() async {
-    // 1. 优先刷新自选股
-    await _watchlistScreenKey.currentState?.refresh();
-    // 2. 然后并行刷新全市场和行业
-    await Future.wait([
-      _marketScreenKey.currentState?.refresh() ?? Future.value(),
-      _industryScreenKey.currentState?.refresh() ?? Future.value(),
-    ]);
+    final marketProvider = context.read<MarketDataProvider>();
+    // 刷新共享市场数据（自选股和全市场都使用此数据）
+    await marketProvider.refresh();
+    // 刷新行业数据
+    await _industryScreenKey.currentState?.refresh();
   }
 
   late final List<Widget> _screens;
@@ -46,11 +46,9 @@ class _MainScreenState extends State<MainScreen> {
       WatchlistScreen(
         key: _watchlistScreenKey,
         onIndustryTap: _goToMarketAndSearchIndustry,
-        onRefresh: _refreshAll,
       ),
       MarketScreen(
         key: _marketScreenKey,
-        onRefresh: _refreshAll,
       ),
       IndustryScreen(
         key: _industryScreenKey,
