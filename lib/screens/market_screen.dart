@@ -9,6 +9,7 @@ import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
+import 'package:stock_rtwatcher/widgets/market_stats_bar.dart';
 
 class MarketScreen extends StatefulWidget {
   const MarketScreen({super.key});
@@ -222,49 +223,64 @@ class MarketScreenState extends State<MarketScreen> {
 
     return Scaffold(
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            StatusBar(
-              updateTime: _updateTime,
-              progress: _progress > 0 ? _progress : null,
-              total: _total > 0 ? _total : null,
-              isLoading: _isLoading,
-              errorMessage: _errorMessage,
-            ),
-            // 搜索框
-            if (_monitorData.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: '搜索代码或名称',
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    border: const OutlineInputBorder(),
-                    prefixIcon: const Icon(Icons.search, size: 20),
-                    suffixIcon: _searchQuery.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear, size: 20),
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() => _searchQuery = '');
-                            },
-                          )
-                        : null,
-                  ),
-                  onChanged: (value) => setState(() => _searchQuery = value),
+            Column(
+              children: [
+                StatusBar(
+                  updateTime: _updateTime,
+                  progress: _progress > 0 ? _progress : null,
+                  total: _total > 0 ? _total : null,
+                  isLoading: _isLoading,
+                  errorMessage: _errorMessage,
                 ),
-              ),
-            Expanded(
-              child: StockTable(
-                stocks: filteredData,
-                isLoading: _isLoading,
-                highlightCodes: watchlistService.watchlist.toSet(),
-                onTap: (data) => _addToWatchlist(data.stock.code, data.stock.name),
-                onIndustryTap: searchByIndustry,
-              ),
+                // 搜索框
+                if (_monitorData.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: '搜索代码或名称',
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        suffixIcon: _searchQuery.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear, size: 20),
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _searchQuery = '');
+                                },
+                              )
+                            : null,
+                      ),
+                      onChanged: (value) => setState(() => _searchQuery = value),
+                    ),
+                  ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 68),
+                    child: StockTable(
+                      stocks: filteredData,
+                      isLoading: _isLoading,
+                      highlightCodes: watchlistService.watchlist.toSet(),
+                      onTap: (data) => _addToWatchlist(data.stock.code, data.stock.name),
+                      onIndustryTap: searchByIndustry,
+                    ),
+                  ),
+                ),
+              ],
             ),
+            // 底部统计条
+            if (filteredData.isNotEmpty)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: MarketStatsBar(stocks: filteredData),
+              ),
           ],
         ),
       ),
