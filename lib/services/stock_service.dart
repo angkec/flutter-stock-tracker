@@ -193,4 +193,24 @@ class StockService {
 
     return results;
   }
+
+  /// 获取 K 线数据
+  /// [stock] 股票
+  /// [category] K线类型 (klineTypeDaily=4, klineTypeWeekly=5)
+  /// [count] 获取数量
+  Future<List<KLine>> getKLines({
+    required Stock stock,
+    required int category,
+    int count = 30,
+  }) async {
+    final client = _pool.firstClient;
+    if (client == null) throw StateError('Not connected');
+    return client.getSecurityBars(
+      market: stock.market,
+      code: stock.code,
+      category: category,
+      start: 0,
+      count: count,
+    );
+  }
 }

@@ -17,6 +17,9 @@ class TdxPool {
   bool get isConnected => _isConnected && _clients.any((c) => c.isConnected);
   int get poolSize => _clients.length;
 
+  /// 获取第一个可用的 client（供单个请求使用）
+  TdxClient? get firstClient => _clients.isNotEmpty ? _clients.first : null;
+
   /// 确保连接可用，如果有死连接则重连
   Future<bool> ensureConnected() async {
     // 移除所有死连接
