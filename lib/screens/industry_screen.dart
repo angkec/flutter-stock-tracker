@@ -189,15 +189,64 @@ class _IndustryScreenState extends State<IndustryScreen> {
                         ],
                       ),
                     )
-                  : RefreshIndicator(
-                      onRefresh: _refresh,
-                      child: ListView.builder(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: _stats.length,
-                        itemExtent: 48,
-                        itemBuilder: (context, index) =>
-                            _buildRow(context, _stats[index], index),
-                      ),
+                  : Column(
+                      children: [
+                        // 表头
+                        Container(
+                          height: 32,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          ),
+                          child: Row(
+                            children: [
+                              const SizedBox(
+                                width: 64,
+                                child: Text(
+                                  '行业',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                ),
+                              ),
+                              Expanded(
+                                child: Center(
+                                  child: Text(
+                                    '涨跌',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: Center(
+                                  child: Text(
+                                    '量比',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: RefreshIndicator(
+                            onRefresh: _refresh,
+                            child: ListView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              itemCount: _stats.length,
+                              itemExtent: 48,
+                              itemBuilder: (context, index) =>
+                                  _buildRow(context, _stats[index], index),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
             ),
           ],
@@ -230,7 +279,7 @@ class _IndustryScreenState extends State<IndustryScreen> {
           : null,
       child: Container(
         height: 48,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: index.isOdd
               ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
@@ -240,57 +289,93 @@ class _IndustryScreenState extends State<IndustryScreen> {
           children: [
             // 行业名
             SizedBox(
-              width: 80,
+              width: 64,
               child: Text(
                 stats.name,
-                style: const TextStyle(fontSize: 13),
+                style: const TextStyle(fontSize: 12),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            // 涨跌进度条
+            // 涨跌进度条 + 数字
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Row(
-                    children: [
-                      if (stats.upCount > 0)
-                        Expanded(
-                          flex: stats.upCount,
-                          child: Container(height: 8, color: upColor),
-                        ),
-                      if (stats.downCount > 0)
-                        Expanded(
-                          flex: stats.downCount,
-                          child: Container(height: 8, color: downColor),
-                        ),
-                      if (stats.upCount == 0 && stats.downCount == 0)
-                        Expanded(
-                          child: Container(
-                            height: 8,
-                            color: Colors.grey.withValues(alpha: 0.3),
-                          ),
-                        ),
-                    ],
-                  ),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: Row(
+                        children: [
+                          if (stats.upCount > 0)
+                            Expanded(
+                              flex: stats.upCount,
+                              child: Container(height: 6, color: upColor),
+                            ),
+                          if (stats.downCount > 0)
+                            Expanded(
+                              flex: stats.downCount,
+                              child: Container(height: 6, color: downColor),
+                            ),
+                          if (stats.upCount == 0 && stats.downCount == 0)
+                            Expanded(
+                              child: Container(
+                                height: 6,
+                                color: Colors.grey.withValues(alpha: 0.3),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${stats.upCount}↑ ${stats.downCount}↓',
+                      style: const TextStyle(fontSize: 9),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
                 ),
               ),
             ),
-            // 涨跌数字
-            SizedBox(
-              width: 70,
-              child: Text(
-                '涨${stats.upCount} 跌${stats.downCount}',
-                style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
-              ),
-            ),
-            // 量比数字
-            SizedBox(
-              width: 70,
-              child: Text(
-                '>1:${stats.ratioAbove} <1:${stats.ratioBelow}',
-                style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+            // 量比进度条 + 数字
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(3),
+                      child: Row(
+                        children: [
+                          if (stats.ratioAbove > 0)
+                            Expanded(
+                              flex: stats.ratioAbove,
+                              child: Container(height: 6, color: upColor),
+                            ),
+                          if (stats.ratioBelow > 0)
+                            Expanded(
+                              flex: stats.ratioBelow,
+                              child: Container(height: 6, color: downColor),
+                            ),
+                          if (stats.ratioAbove == 0 && stats.ratioBelow == 0)
+                            Expanded(
+                              child: Container(
+                                height: 6,
+                                color: Colors.grey.withValues(alpha: 0.3),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${stats.ratioAbove}↑ ${stats.ratioBelow}↓',
+                      style: const TextStyle(fontSize: 9),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
