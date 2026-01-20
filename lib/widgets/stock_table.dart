@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:stock_rtwatcher/screens/stock_detail_screen.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 
 /// A股风格颜色 - 红涨绿跌
@@ -102,6 +103,13 @@ class StockTable extends StatelessWidget {
     return GestureDetector(
       onLongPress: onLongPress != null ? () => onLongPress!(data) : null,
       onTap: onTap != null ? () => onTap!(data) : null,
+      onDoubleTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => StockDetailScreen(stock: data.stock),
+          ),
+        );
+      },
       child: Container(
       height: _rowHeight,
       decoration: BoxDecoration(
