@@ -27,7 +27,11 @@ class MyApp extends StatelessWidget {
         ProxyProvider<TdxPool, StockService>(
           update: (_, pool, __) => StockService(pool),
         ),
-        ChangeNotifierProvider(create: (_) => WatchlistService()),
+        ChangeNotifierProvider(create: (_) {
+          final service = WatchlistService();
+          service.load(); // 异步加载自选股列表
+          return service;
+        }),
         ChangeNotifierProxyProvider3<TdxPool, StockService, IndustryService, MarketDataProvider>(
           create: (context) {
             final pool = context.read<TdxPool>();
