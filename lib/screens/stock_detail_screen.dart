@@ -145,13 +145,15 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           // 切换按钮
           Row(
             children: [
-              Text(
-                'K 线图',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
+              Flexible(
+                child: Text(
+                  'K 线图',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               SegmentedButton<bool>(
                 segments: const [
                   ButtonSegment(value: true, label: Text('日线')),
