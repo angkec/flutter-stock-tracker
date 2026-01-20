@@ -38,7 +38,7 @@ class MarketStatsBar extends StatelessWidget {
         up5++;
       } else if (cp > 0) {
         up0to5++;
-      } else if (cp == 0) {
+      } else if (cp.abs() < 0.001) {  // effectively zero
         flat++;
       } else if (cp > -5) {
         down0to5++;
@@ -98,7 +98,7 @@ class MarketStatsBar extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           // 涨跌分布
-          _buildChangeRow(context, changeStats, total),
+          _buildChangeRow(context, changeStats),
           const SizedBox(height: 8),
           // 量比分布
           _buildRatioRow(context, ratioAbove, ratioBelow, total),
@@ -107,14 +107,14 @@ class MarketStatsBar extends StatelessWidget {
     );
   }
 
-  Widget _buildChangeRow(BuildContext context, List<StatsInterval> stats, int total) {
+  Widget _buildChangeRow(BuildContext context, List<StatsInterval> stats) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // 标签和数字行
         Row(
-          children: stats.map((s) => Expanded(
-            flex: s.count > 0 ? s.count : 1,
+          children: stats.where((s) => s.count > 0).map((s) => Expanded(
+            flex: s.count,
             child: Text(
               '${s.label}\n${s.count}',
               textAlign: TextAlign.center,
