@@ -33,6 +33,7 @@ class StockTable extends StatelessWidget {
   final Set<String> highlightCodes;
   final void Function(StockMonitorData data)? onLongPress;
   final void Function(StockMonitorData data)? onTap;
+  final void Function(String industry)? onIndustryTap;
 
   const StockTable({
     super.key,
@@ -41,6 +42,7 @@ class StockTable extends StatelessWidget {
     this.highlightCodes = const {},
     this.onLongPress,
     this.onTap,
+    this.onIndustryTap,
   });
 
   void _copyToClipboard(BuildContext context, String code, String name) {
