@@ -268,6 +268,7 @@ class StockTable extends StatelessWidget {
             _buildHeader(context),
             Expanded(
               child: ListView.builder(
+                physics: const AlwaysScrollableScrollPhysics(),
                 itemCount: stocks.length,
                 itemExtent: _rowHeight,
                 itemBuilder: (context, index) => _buildRow(context, stocks[index], index),
