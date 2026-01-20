@@ -9,14 +9,15 @@ import 'package:stock_rtwatcher/widgets/status_bar.dart';
 
 class IndustryScreen extends StatefulWidget {
   final void Function(String industry)? onIndustryTap;
+  final VoidCallback? onRefresh;
 
-  const IndustryScreen({super.key, this.onIndustryTap});
+  const IndustryScreen({super.key, this.onIndustryTap, this.onRefresh});
 
   @override
-  State<IndustryScreen> createState() => _IndustryScreenState();
+  State<IndustryScreen> createState() => IndustryScreenState();
 }
 
-class _IndustryScreenState extends State<IndustryScreen> {
+class IndustryScreenState extends State<IndustryScreen> {
   List<IndustryStats> _stats = [];
   String? _updateTime;
   int _progress = 0;
@@ -72,6 +73,9 @@ class _IndustryScreenState extends State<IndustryScreen> {
 
     return result;
   }
+
+  /// 公开的刷新方法，供外部调用
+  Future<void> refresh() => _refresh();
 
   Future<void> _refresh() async {
     if (_isLoading) return;
@@ -164,6 +168,7 @@ class _IndustryScreenState extends State<IndustryScreen> {
               total: _total > 0 ? _total : null,
               isLoading: _isLoading,
               errorMessage: _errorMessage,
+              onRefresh: widget.onRefresh,
             ),
             Expanded(
               child: _stats.isEmpty && !_isLoading
@@ -251,20 +256,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
             ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _isLoading ? null : _refresh,
-        tooltip: '刷新数据',
-        child: _isLoading
-            ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Icon(Icons.refresh),
       ),
     );
   }

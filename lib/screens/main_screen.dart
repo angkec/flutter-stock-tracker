@@ -13,7 +13,9 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
+  final _watchlistScreenKey = GlobalKey<WatchlistScreenState>();
   final _marketScreenKey = GlobalKey<MarketScreenState>();
+  final _industryScreenKey = GlobalKey<IndustryScreenState>();
 
   /// 跳转到全市场并按行业搜索
   void _goToMarketAndSearchIndustry(String industry) {
@@ -24,15 +26,37 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  /// 统一刷新：优先刷新自选股，然后刷新全市场和行业
+  Future<void> _refreshAll() async {
+    // 1. 优先刷新自选股
+    await _watchlistScreenKey.currentState?.refresh();
+    // 2. 然后并行刷新全市场和行业
+    await Future.wait([
+      _marketScreenKey.currentState?.refresh() ?? Future.value(),
+      _industryScreenKey.currentState?.refresh() ?? Future.value(),
+    ]);
+  }
+
   late final List<Widget> _screens;
 
   @override
   void initState() {
     super.initState();
     _screens = [
-      WatchlistScreen(onIndustryTap: _goToMarketAndSearchIndustry),
-      MarketScreen(key: _marketScreenKey),
-      IndustryScreen(onIndustryTap: _goToMarketAndSearchIndustry),
+      WatchlistScreen(
+        key: _watchlistScreenKey,
+        onIndustryTap: _goToMarketAndSearchIndustry,
+        onRefresh: _refreshAll,
+      ),
+      MarketScreen(
+        key: _marketScreenKey,
+        onRefresh: _refreshAll,
+      ),
+      IndustryScreen(
+        key: _industryScreenKey,
+        onIndustryTap: _goToMarketAndSearchIndustry,
+        onRefresh: _refreshAll,
+      ),
     ];
   }
 

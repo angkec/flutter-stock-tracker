@@ -12,7 +12,9 @@ import 'package:stock_rtwatcher/widgets/stock_table.dart';
 import 'package:stock_rtwatcher/widgets/market_stats_bar.dart';
 
 class MarketScreen extends StatefulWidget {
-  const MarketScreen({super.key});
+  final VoidCallback? onRefresh;
+
+  const MarketScreen({super.key, this.onRefresh});
 
   @override
   State<MarketScreen> createState() => MarketScreenState();
@@ -156,6 +158,9 @@ class MarketScreenState extends State<MarketScreen> {
     setState(() => _searchQuery = industry);
   }
 
+  /// 公开的刷新方法，供外部调用
+  Future<void> refresh() => _refresh();
+
   Future<void> _refresh() async {
     if (_isLoading) return;
 
@@ -233,6 +238,7 @@ class MarketScreenState extends State<MarketScreen> {
                   total: _total > 0 ? _total : null,
                   isLoading: _isLoading,
                   errorMessage: _errorMessage,
+                  onRefresh: widget.onRefresh,
                 ),
                 // 搜索框
                 if (_monitorData.isNotEmpty)
@@ -283,20 +289,6 @@ class MarketScreenState extends State<MarketScreen> {
               ),
           ],
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _isLoading ? null : _refresh,
-        tooltip: '刷新数据',
-        child: _isLoading
-            ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : const Icon(Icons.refresh),
       ),
     );
   }

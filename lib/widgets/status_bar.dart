@@ -84,6 +84,7 @@ class StatusBar extends StatelessWidget {
   final int? total;
   final bool isLoading;
   final String? errorMessage;
+  final VoidCallback? onRefresh;
 
   const StatusBar({
     super.key,
@@ -92,6 +93,7 @@ class StatusBar extends StatelessWidget {
     this.total,
     this.isLoading = false,
     this.errorMessage,
+    this.onRefresh,
   });
 
   @override
@@ -147,6 +149,26 @@ class StatusBar extends StatelessWidget {
                             fontFamily: 'monospace',
                           ),
                     ),
+                  // 刷新按钮
+                  if (onRefresh != null) ...[
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        onPressed: isLoading ? null : onRefresh,
+                        icon: isLoading
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh, size: 20),
+                        tooltip: '刷新数据',
+                      ),
+                    ),
+                  ],
                 ],
               ),
               // 第二行: 进度条或错误信息

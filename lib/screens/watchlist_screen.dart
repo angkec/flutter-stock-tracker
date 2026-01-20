@@ -13,14 +13,15 @@ import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
 class WatchlistScreen extends StatefulWidget {
   final void Function(String industry)? onIndustryTap;
+  final VoidCallback? onRefresh;
 
-  const WatchlistScreen({super.key, this.onIndustryTap});
+  const WatchlistScreen({super.key, this.onIndustryTap, this.onRefresh});
 
   @override
-  State<WatchlistScreen> createState() => _WatchlistScreenState();
+  State<WatchlistScreen> createState() => WatchlistScreenState();
 }
 
-class _WatchlistScreenState extends State<WatchlistScreen> {
+class WatchlistScreenState extends State<WatchlistScreen> {
   final _codeController = TextEditingController();
   List<StockMonitorData> _monitorData = [];
   String? _updateTime;
@@ -161,6 +162,9 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
     );
   }
 
+  /// 公开的刷新方法，供外部调用
+  Future<void> refresh() => _refresh();
+
   Future<void> _refresh() async {
     if (_isLoading) return;
 
@@ -239,6 +243,7 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
             updateTime: _updateTime,
             isLoading: _isLoading,
             errorMessage: _errorMessage,
+            onRefresh: widget.onRefresh,
           ),
           // 添加股票输入框
           Padding(
