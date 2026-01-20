@@ -18,6 +18,14 @@ class IndustryService {
   /// 获取所有唯一行业名称
   Set<String> get allIndustries => _data.values.toSet();
 
+  /// 获取指定行业的所有股票代码
+  List<String> getStocksByIndustry(String industry) {
+    return _data.entries
+        .where((e) => e.value == industry)
+        .map((e) => e.key)
+        .toList();
+  }
+
   /// 仅用于测试
   void setTestData(Map<String, String> data) {
     _data = data;

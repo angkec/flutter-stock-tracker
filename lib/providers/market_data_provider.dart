@@ -36,6 +36,34 @@ class MarketDataProvider extends ChangeNotifier {
   int get total => _total;
   String? get updateTime => _updateTime;
   String? get errorMessage => _errorMessage;
+  IndustryService get industryService => _industryService;
+
+  /// 获取板块热度（量比>=1 和 <1 的股票数量）
+  /// 返回 (hotCount, coldCount)，如果行业为空或无数据返回 null
+  ({int hot, int cold})? getIndustryHeat(String? industry) {
+    if (industry == null || industry.isEmpty || _allData.isEmpty) {
+      return null;
+    }
+
+    int hot = 0;
+    int cold = 0;
+
+    for (final data in _allData) {
+      if (data.industry == industry) {
+        if (data.ratio >= 1.0) {
+          hot++;
+        } else {
+          cold++;
+        }
+      }
+    }
+
+    if (hot == 0 && cold == 0) {
+      return null;
+    }
+
+    return (hot: hot, cold: cold);
+  }
 
   /// 设置自选股代码（用于优先排序）
   void setWatchlistCodes(Set<String> codes) {
