@@ -323,12 +323,12 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           const SizedBox(height: 12),
           if (_isLoadingKLine)
             const SizedBox(
-              height: 220,
+              height: 280,
               child: Center(child: CircularProgressIndicator()),
             )
           else if (_klineError != null)
             SizedBox(
-              height: 220,
+              height: 280,
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
