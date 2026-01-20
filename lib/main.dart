@@ -5,6 +5,7 @@ import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 
 void main() {
   runApp(const MyApp());
@@ -27,6 +28,25 @@ class MyApp extends StatelessWidget {
           update: (_, pool, __) => StockService(pool),
         ),
         ChangeNotifierProvider(create: (_) => WatchlistService()),
+        ChangeNotifierProxyProvider3<TdxPool, StockService, IndustryService, MarketDataProvider>(
+          create: (_) => MarketDataProvider(
+            pool: TdxPool(poolSize: 5), // 临时，会被 update 替换
+            stockService: StockService(TdxPool(poolSize: 5)),
+            industryService: IndustryService(),
+          ),
+          update: (_, pool, stockService, industryService, previous) {
+            final provider = previous ?? MarketDataProvider(
+              pool: pool,
+              stockService: stockService,
+              industryService: industryService,
+            );
+            // 首次创建时加载缓存
+            if (previous == null) {
+              provider.loadFromCache();
+            }
+            return provider;
+          },
+        ),
       ],
       child: MaterialApp(
         title: 'A股涨跌量比监控',
