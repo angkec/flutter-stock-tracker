@@ -534,11 +534,28 @@ class TdxClient {
       if (pos + 4 > body.length) break;
 
       // Parse datetime based on category
-      final yearOrDate = byteData.getUint16(pos, Endian.little);
-      final minOrTime = byteData.getUint16(pos + 2, Endian.little);
-      pos += 4;
+      // For minute bars: 2 bytes date + 2 bytes time
+      // For day bars: 4 bytes as yyyymmdd
+      final isMinuteBar = category < 4 || category == 7 || category == 8;
+      final DateTime datetime;
 
-      final datetime = _parseDateTime(yearOrDate, minOrTime, category);
+      if (isMinuteBar) {
+        final yearOrDate = byteData.getUint16(pos, Endian.little);
+        final minOrTime = byteData.getUint16(pos + 2, Endian.little);
+        datetime = _parseDateTime(yearOrDate, minOrTime, category);
+      } else {
+        // Day bars: read as 32-bit yyyymmdd
+        final yyyymmdd = byteData.getUint32(pos, Endian.little);
+        final year = yyyymmdd ~/ 10000;
+        final month = (yyyymmdd % 10000) ~/ 100;
+        final day = yyyymmdd % 100;
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          datetime = DateTime(year, month, day);
+        } else {
+          datetime = _defaultDateTime;
+        }
+      }
+      pos += 4;
 
       // Parse prices using differential encoding
       final (openDiff, pos1) = _decodePrice(body, pos);
