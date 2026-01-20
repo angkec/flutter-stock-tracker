@@ -92,9 +92,24 @@ class MarketScreenState extends State<MarketScreen> {
 
     final service = context.read<StockService>();
     final industryService = context.read<IndustryService>();
+    final watchlistService = context.read<WatchlistService>();
+
+    // 将自选股放到列表最前面，优先获取
+    final watchlistCodes = watchlistService.watchlist.toSet();
+    final prioritizedStocks = <Stock>[];
+    final otherStocks = <Stock>[];
+    for (final stock in _allStocks) {
+      if (watchlistCodes.contains(stock.code)) {
+        prioritizedStocks.add(stock);
+      } else {
+        otherStocks.add(stock);
+      }
+    }
+    final orderedStocks = [...prioritizedStocks, ...otherStocks];
+
     try {
       await service.batchGetMonitorData(
-        _allStocks,
+        orderedStocks,
         industryService: industryService,
         onProgress: (current, total) {
           if (mounted) {
