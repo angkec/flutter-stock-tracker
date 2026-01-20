@@ -17,6 +17,20 @@ class StockMonitorData {
     required this.changePercent,
     this.industry,
   });
+
+  Map<String, dynamic> toJson() => {
+    'stock': stock.toJson(),
+    'ratio': ratio,
+    'changePercent': changePercent,
+    'industry': industry,
+  };
+
+  factory StockMonitorData.fromJson(Map<String, dynamic> json) => StockMonitorData(
+    stock: Stock.fromJson(json['stock'] as Map<String, dynamic>),
+    ratio: (json['ratio'] as num).toDouble(),
+    changePercent: (json['changePercent'] as num).toDouble(),
+    industry: json['industry'] as String?,
+  );
 }
 
 /// 股票服务
