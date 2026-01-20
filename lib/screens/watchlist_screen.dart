@@ -130,7 +130,7 @@ class WatchlistScreenState extends State<WatchlistScreen> {
                     child: StockTable(
                       stocks: watchlistData,
                       isLoading: marketProvider.isLoading,
-                      onTap: (data) => _removeStock(data.stock.code),
+                      onLongPress: (data) => _removeStock(data.stock.code),
                       onIndustryTap: widget.onIndustryTap,
                     ),
                   ),

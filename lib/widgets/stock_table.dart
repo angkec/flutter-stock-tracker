@@ -33,7 +33,6 @@ class StockTable extends StatelessWidget {
   final bool isLoading;
   final Set<String> highlightCodes;
   final void Function(StockMonitorData data)? onLongPress;
-  final void Function(StockMonitorData data)? onTap;
   final void Function(String industry)? onIndustryTap;
 
   const StockTable({
@@ -42,7 +41,6 @@ class StockTable extends StatelessWidget {
     this.isLoading = false,
     this.highlightCodes = const {},
     this.onLongPress,
-    this.onTap,
     this.onIndustryTap,
   });
 
@@ -102,8 +100,7 @@ class StockTable extends StatelessWidget {
 
     return GestureDetector(
       onLongPress: onLongPress != null ? () => onLongPress!(data) : null,
-      onTap: onTap != null ? () => onTap!(data) : null,
-      onDoubleTap: () {
+      onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => StockDetailScreen(stock: data.stock),

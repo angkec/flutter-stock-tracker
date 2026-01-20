@@ -118,7 +118,7 @@ class MarketScreenState extends State<MarketScreen> {
                         stocks: filteredData,
                         isLoading: marketProvider.isLoading,
                         highlightCodes: watchlistService.watchlist.toSet(),
-                        onTap: (data) => _addToWatchlist(data.stock.code, data.stock.name),
+                        onLongPress: (data) => _addToWatchlist(data.stock.code, data.stock.name),
                         onIndustryTap: searchByIndustry,
                       ),
                     ),
