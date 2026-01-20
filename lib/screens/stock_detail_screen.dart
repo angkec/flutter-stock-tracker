@@ -349,7 +349,10 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
               ),
             )
           else
-            KLineChart(bars: _showDaily ? _dailyBars : _weeklyBars),
+            KLineChart(
+              bars: _showDaily ? _dailyBars : _weeklyBars,
+              ratios: _showDaily ? _ratioHistory : null, // 只有日线时显示量比
+            ),
         ],
       ),
     );

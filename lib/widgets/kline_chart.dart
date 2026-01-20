@@ -1,39 +1,153 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/models/daily_ratio.dart';
 
 /// K 线图颜色
 const Color kUpColor = Color(0xFFFF4444);   // 涨 - 红
 const Color kDownColor = Color(0xFF00AA00); // 跌 - 绿
 
-/// K 线图组件（含成交量）
-class KLineChart extends StatelessWidget {
+/// K 线图组件（含成交量，支持触摸选择）
+class KLineChart extends StatefulWidget {
   final List<KLine> bars;
+  final List<DailyRatio>? ratios; // 量比数据，用于显示选中日期的量比
   final double height;
 
   const KLineChart({
     super.key,
     required this.bars,
-    this.height = 280, // 增加高度以容纳量柱
+    this.ratios,
+    this.height = 280,
   });
 
   @override
+  State<KLineChart> createState() => _KLineChartState();
+}
+
+class _KLineChartState extends State<KLineChart> {
+  int? _selectedIndex;
+
+  @override
   Widget build(BuildContext context) {
-    if (bars.isEmpty) {
+    if (widget.bars.isEmpty) {
       return SizedBox(
-        height: height,
+        height: widget.height,
         child: const Center(child: Text('暂无数据')),
       );
     }
 
-    return SizedBox(
-      height: height,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          return CustomPaint(
-            size: Size(constraints.maxWidth, height),
-            painter: _KLinePainter(bars: bars),
-          );
-        },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 选中信息显示
+        _buildSelectedInfo(),
+        // K线图
+        SizedBox(
+          height: widget.height,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return GestureDetector(
+                onHorizontalDragStart: (details) => _handleTouch(details.localPosition, constraints.maxWidth),
+                onHorizontalDragUpdate: (details) => _handleTouch(details.localPosition, constraints.maxWidth),
+                onHorizontalDragEnd: (_) => _clearSelection(),
+                onTapDown: (details) => _handleTouch(details.localPosition, constraints.maxWidth),
+                onTapUp: (_) => _clearSelection(),
+                child: CustomPaint(
+                  size: Size(constraints.maxWidth, widget.height),
+                  painter: _KLinePainter(
+                    bars: widget.bars,
+                    selectedIndex: _selectedIndex,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _handleTouch(Offset position, double chartWidth) {
+    const sidePadding = 5.0;
+    final effectiveWidth = chartWidth - sidePadding * 2;
+    final barSpacing = effectiveWidth / widget.bars.length;
+
+    // 计算触摸位置对应的K线索引
+    final x = position.dx - sidePadding;
+    var index = (x / barSpacing).floor();
+    index = index.clamp(0, widget.bars.length - 1);
+
+    if (index != _selectedIndex) {
+      setState(() => _selectedIndex = index);
+    }
+  }
+
+  void _clearSelection() {
+    if (_selectedIndex != null) {
+      setState(() => _selectedIndex = null);
+    }
+  }
+
+  Widget _buildSelectedInfo() {
+    if (_selectedIndex == null || _selectedIndex! >= widget.bars.length) {
+      return const SizedBox(height: 24);
+    }
+
+    final bar = widget.bars[_selectedIndex!];
+    final dateStr = '${bar.datetime.year}/${bar.datetime.month}/${bar.datetime.day}';
+
+    // 查找对应日期的量比
+    double? ratio;
+    if (widget.ratios != null) {
+      for (final r in widget.ratios!) {
+        if (r.date.year == bar.datetime.year &&
+            r.date.month == bar.datetime.month &&
+            r.date.day == bar.datetime.day) {
+          ratio = r.ratio;
+          break;
+        }
+      }
+    }
+
+    final changePercent = ((bar.close - bar.open) / bar.open * 100);
+    final isUp = bar.close >= bar.open;
+
+    return Container(
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          Text(
+            dateStr,
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '收: ${bar.close.toStringAsFixed(2)}',
+            style: TextStyle(
+              fontSize: 12,
+              color: isUp ? kUpColor : kDownColor,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${isUp ? "+" : ""}${changePercent.toStringAsFixed(2)}%',
+            style: TextStyle(
+              fontSize: 12,
+              color: isUp ? kUpColor : kDownColor,
+            ),
+          ),
+          if (ratio != null) ...[
+            const SizedBox(width: 12),
+            Text(
+              '量比: ${ratio.toStringAsFixed(2)}',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: ratio >= 1.0 ? kUpColor : kDownColor,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -41,8 +155,9 @@ class KLineChart extends StatelessWidget {
 
 class _KLinePainter extends CustomPainter {
   final List<KLine> bars;
+  final int? selectedIndex;
 
-  _KLinePainter({required this.bars});
+  _KLinePainter({required this.bars, this.selectedIndex});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -115,11 +230,37 @@ class _KLinePainter extends CustomPainter {
       ..strokeWidth = 1
       ..style = PaintingStyle.fill;
 
+    // 绘制选中线（如果有）
+    if (selectedIndex != null && selectedIndex! >= 0 && selectedIndex! < bars.length) {
+      final x = sidePadding + selectedIndex! * barSpacing + barSpacing / 2;
+      final crosshairPaint = Paint()
+        ..color = Colors.white.withValues(alpha: 0.5)
+        ..strokeWidth = 1;
+      canvas.drawLine(
+        Offset(x, topPadding),
+        Offset(x, size.height - bottomPadding),
+        crosshairPaint,
+      );
+    }
+
     // 绘制每根 K 线和量柱
     for (var i = 0; i < bars.length; i++) {
       final bar = bars[i];
       final x = sidePadding + i * barSpacing + barSpacing / 2;
-      final paint = bar.close >= bar.open ? upPaint : downPaint;
+      final isSelected = i == selectedIndex;
+
+      // 选中的K线使用更亮的颜色
+      Paint paint;
+      if (isSelected) {
+        paint = Paint()
+          ..color = bar.close >= bar.open
+              ? kUpColor.withValues(alpha: 1.0)
+              : kDownColor.withValues(alpha: 1.0)
+          ..strokeWidth = 2
+          ..style = PaintingStyle.fill;
+      } else {
+        paint = bar.close >= bar.open ? upPaint : downPaint;
+      }
 
       // === K线 ===
       final openY = priceToY(bar.open);
@@ -135,8 +276,10 @@ class _KLinePainter extends CustomPainter {
       final bodyBottom = openY > closeY ? openY : closeY;
       final bodyHeight = (bodyBottom - bodyTop).clamp(1.0, double.infinity);
 
+      final currentBarWidth = isSelected ? barWidth * 1.2 : barWidth;
+
       canvas.drawRect(
-        Rect.fromLTWH(x - barWidth / 2, bodyTop, barWidth, bodyHeight),
+        Rect.fromLTWH(x - currentBarWidth / 2, bodyTop, currentBarWidth, bodyHeight),
         paint,
       );
 
@@ -144,9 +287,9 @@ class _KLinePainter extends CustomPainter {
       final volHeight = volumeToHeight(bar.volume.toDouble());
       canvas.drawRect(
         Rect.fromLTWH(
-          x - barWidth / 2,
+          x - currentBarWidth / 2,
           volumeBottom - volHeight,
-          barWidth,
+          currentBarWidth,
           volHeight.clamp(1.0, double.infinity),
         ),
         paint,
@@ -176,6 +319,6 @@ class _KLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _KLinePainter oldDelegate) {
-    return oldDelegate.bars != bars;
+    return oldDelegate.bars != bars || oldDelegate.selectedIndex != selectedIndex;
   }
 }
