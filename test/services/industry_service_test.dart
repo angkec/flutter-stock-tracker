@@ -19,5 +19,23 @@ void main() {
 
       expect(service.getIndustry('999999'), isNull);
     });
+
+    test('allIndustries returns unique industry names', () {
+      final service = IndustryService();
+      service.setTestData({
+        '000001': '银行',
+        '000002': '房地产',
+        '600519': '食品饮料',
+        '601398': '银行',
+      });
+
+      final industries = service.allIndustries;
+
+      expect(industries, isA<Set<String>>());
+      expect(industries.length, 3);
+      expect(industries, contains('银行'));
+      expect(industries, contains('房地产'));
+      expect(industries, contains('食品饮料'));
+    });
   });
 }

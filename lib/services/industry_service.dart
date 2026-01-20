@@ -15,6 +15,9 @@ class IndustryService {
   /// 根据股票代码获取行业
   String? getIndustry(String code) => _data[code];
 
+  /// 获取所有唯一行业名称
+  Set<String> get allIndustries => _data.values.toSet();
+
   /// 仅用于测试
   void setTestData(Map<String, String> data) {
     _data = data;
