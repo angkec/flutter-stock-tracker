@@ -1,7 +1,5 @@
 // lib/screens/main_screen.dart
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/watchlist_screen.dart';
 import 'package:stock_rtwatcher/screens/market_screen.dart';
 import 'package:stock_rtwatcher/screens/industry_screen.dart';
@@ -17,7 +15,6 @@ class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
   final _watchlistScreenKey = GlobalKey<WatchlistScreenState>();
   final _marketScreenKey = GlobalKey<MarketScreenState>();
-  final _industryScreenKey = GlobalKey<IndustryScreenState>();
 
   /// 跳转到全市场并按行业搜索
   void _goToMarketAndSearchIndustry(String industry) {
@@ -26,15 +23,6 @@ class _MainScreenState extends State<MainScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _marketScreenKey.currentState?.searchByIndustry(industry);
     });
-  }
-
-  /// 统一刷新：刷新共享的 MarketDataProvider 和行业数据
-  Future<void> _refreshAll() async {
-    final marketProvider = context.read<MarketDataProvider>();
-    // 刷新共享市场数据（自选股和全市场都使用此数据）
-    await marketProvider.refresh();
-    // 刷新行业数据
-    await _industryScreenKey.currentState?.refresh();
   }
 
   late final List<Widget> _screens;
@@ -51,9 +39,7 @@ class _MainScreenState extends State<MainScreen> {
         key: _marketScreenKey,
       ),
       IndustryScreen(
-        key: _industryScreenKey,
         onIndustryTap: _goToMarketAndSearchIndustry,
-        onRefresh: _refreshAll,
       ),
     ];
   }

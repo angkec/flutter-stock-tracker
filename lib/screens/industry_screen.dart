@@ -1,38 +1,17 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/models/industry_stats.dart';
+import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
-import 'package:stock_rtwatcher/services/tdx_pool.dart';
-import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 
-class IndustryScreen extends StatefulWidget {
+class IndustryScreen extends StatelessWidget {
   final void Function(String industry)? onIndustryTap;
-  final VoidCallback? onRefresh;
 
-  const IndustryScreen({super.key, this.onIndustryTap, this.onRefresh});
-
-  @override
-  State<IndustryScreen> createState() => IndustryScreenState();
-}
-
-class IndustryScreenState extends State<IndustryScreen> {
-  List<IndustryStats> _stats = [];
-  String? _updateTime;
-  int _progress = 0;
-  int _total = 0;
-  bool _isLoading = false;
-  String? _errorMessage;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
-  }
+  const IndustryScreen({super.key, this.onIndustryTap});
 
   /// 计算行业统计
-  Map<String, IndustryStats> _calculateStats(List<StockMonitorData> data) {
+  List<IndustryStats> _calculateStats(List<StockMonitorData> data) {
     final Map<String, List<StockMonitorData>> grouped = {};
 
     for (final stock in data) {
@@ -71,107 +50,24 @@ class IndustryScreenState extends State<IndustryScreen> {
       );
     }
 
-    return result;
-  }
+    final statsList = result.values.toList()
+      ..sort((a, b) => b.ratioSortValue.compareTo(a.ratioSortValue));
 
-  /// 公开的刷新方法，供外部调用
-  Future<void> refresh() => _refresh();
-
-  Future<void> _refresh() async {
-    if (_isLoading) return;
-
-    final pool = context.read<TdxPool>();
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final connected = await pool.ensureConnected();
-      if (!mounted) return;
-
-      if (!connected) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = '无法连接到服务器';
-        });
-        return;
-      }
-
-      final stockService = context.read<StockService>();
-      final industryService = context.read<IndustryService>();
-
-      // 获取股票列表
-      final stocks = await stockService.getAllStocks();
-      if (!mounted) return;
-
-      setState(() {
-        _total = stocks.length;
-      });
-
-      // 获取监控数据
-      final data = await stockService.batchGetMonitorData(
-        stocks,
-        industryService: industryService,
-        onProgress: (current, total) {
-          if (mounted) {
-            setState(() {
-              _progress = current;
-              _total = total;
-            });
-          }
-        },
-      );
-
-      if (!mounted) return;
-
-      // 计算行业统计
-      final statsMap = _calculateStats(data);
-      final statsList = statsMap.values.toList()
-        ..sort((a, b) => b.ratioSortValue.compareTo(a.ratioSortValue));
-
-      setState(() {
-        _stats = statsList;
-        _updateTime = _formatTime();
-        _isLoading = false;
-        _progress = 0;
-        _total = 0;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _errorMessage = '获取数据失败: $e';
-        _isLoading = false;
-        _progress = 0;
-        _total = 0;
-      });
-    }
-  }
-
-  String _formatTime() {
-    final now = DateTime.now();
-    return '${now.hour.toString().padLeft(2, '0')}:'
-        '${now.minute.toString().padLeft(2, '0')}:'
-        '${now.second.toString().padLeft(2, '0')}';
+    return statsList;
   }
 
   @override
   Widget build(BuildContext context) {
+    final marketProvider = context.watch<MarketDataProvider>();
+    final stats = _calculateStats(marketProvider.allData);
+
     return Scaffold(
       body: SafeArea(
         child: Column(
           children: [
-            StatusBar(
-              updateTime: _updateTime,
-              progress: _progress > 0 ? _progress : null,
-              total: _total > 0 ? _total : null,
-              isLoading: _isLoading,
-              errorMessage: _errorMessage,
-              onRefresh: widget.onRefresh,
-            ),
+            const StatusBar(),
             Expanded(
-              child: _stats.isEmpty && !_isLoading
+              child: stats.isEmpty && !marketProvider.isLoading
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -241,13 +137,13 @@ class IndustryScreenState extends State<IndustryScreen> {
                         ),
                         Expanded(
                           child: RefreshIndicator(
-                            onRefresh: _refresh,
+                            onRefresh: () => marketProvider.refresh(),
                             child: ListView.builder(
                               physics: const AlwaysScrollableScrollPhysics(),
-                              itemCount: _stats.length,
+                              itemCount: stats.length,
                               itemExtent: 48,
                               itemBuilder: (context, index) =>
-                                  _buildRow(context, _stats[index], index),
+                                  _buildRow(context, stats[index], index),
                             ),
                           ),
                         ),
@@ -265,8 +161,8 @@ class IndustryScreenState extends State<IndustryScreen> {
     const downColor = Color(0xFF00AA00);
 
     return GestureDetector(
-      onTap: widget.onIndustryTap != null
-          ? () => widget.onIndustryTap!(stats.name)
+      onTap: onIndustryTap != null
+          ? () => onIndustryTap!(stats.name)
           : null,
       child: Container(
         height: 48,
