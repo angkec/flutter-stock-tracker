@@ -9,7 +9,7 @@ const Color _downColor = Color(0xFF00AA00); // <1 绿
 const List<String> _weekdays = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 /// 量比历史列表组件
-class RatioHistoryList extends StatelessWidget {
+class RatioHistoryList extends StatefulWidget {
   final List<DailyRatio> ratios;
   final bool isLoading;
   final String? errorMessage;
@@ -24,15 +24,42 @@ class RatioHistoryList extends StatelessWidget {
   });
 
   @override
+  State<RatioHistoryList> createState() => _RatioHistoryListState();
+}
+
+class _RatioHistoryListState extends State<RatioHistoryList> {
+  // 排除的日期集合
+  final Set<DateTime> _excludedDates = {};
+
+  @override
+  void didUpdateWidget(RatioHistoryList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 数据更新时清除排除状态
+    if (widget.ratios != oldWidget.ratios) {
+      _excludedDates.clear();
+    }
+  }
+
+  void _toggleExclude(DateTime date) {
+    setState(() {
+      if (_excludedDates.contains(date)) {
+        _excludedDates.remove(date);
+      } else {
+        _excludedDates.add(date);
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (isLoading) {
+    if (widget.isLoading) {
       return const Padding(
         padding: EdgeInsets.all(24),
         child: Center(child: CircularProgressIndicator()),
       );
     }
 
-    if (errorMessage != null) {
+    if (widget.errorMessage != null) {
       return Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -40,25 +67,27 @@ class RatioHistoryList extends StatelessWidget {
           children: [
             Icon(Icons.error_outline, color: Theme.of(context).colorScheme.error),
             const SizedBox(height: 8),
-            Text(errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            if (onRetry != null) ...[
+            Text(widget.errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            if (widget.onRetry != null) ...[
               const SizedBox(height: 8),
-              TextButton(onPressed: onRetry, child: const Text('重试')),
+              TextButton(onPressed: widget.onRetry, child: const Text('重试')),
             ],
           ],
         ),
       );
     }
 
-    if (ratios.isEmpty) {
+    if (widget.ratios.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(24),
         child: Center(child: Text('暂无数据')),
       );
     }
 
-    // 计算统计数据
-    final validRatios = ratios.where((r) => r.ratio != null).toList();
+    // 计算统计数据（排除被点击的行）
+    final validRatios = widget.ratios
+        .where((r) => r.ratio != null && !_excludedDates.contains(r.date))
+        .toList();
     final redCount = validRatios.where((r) => r.ratio! >= 1.0).length;
     final greenCount = validRatios.where((r) => r.ratio! < 1.0).length;
     final avgRatio = validRatios.isNotEmpty
@@ -107,15 +136,26 @@ class RatioHistoryList extends StatelessWidget {
                   style: const TextStyle(color: _downColor, fontWeight: FontWeight.w500, fontSize: 13),
                 ),
               ],
+              // 显示排除数量
+              if (_excludedDates.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '(排除${_excludedDates.length})',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
-        ...ratios.map((r) => _buildRow(context, r)),
+        ...widget.ratios.map((r) => _buildRow(context, r)),
       ],
     );
   }
 
   Widget _buildRow(BuildContext context, DailyRatio ratio) {
+    final isExcluded = _excludedDates.contains(ratio.date);
     final dateStr = '${ratio.date.month.toString().padLeft(2, '0')}-${ratio.date.day.toString().padLeft(2, '0')}';
     final weekday = _weekdays[ratio.date.weekday];
     final ratioStr = ratio.ratio != null ? ratio.ratio!.toStringAsFixed(2) : '-';
@@ -123,32 +163,40 @@ class RatioHistoryList extends StatelessWidget {
         ? (ratio.ratio! >= 1.0 ? _upColor : _downColor)
         : Colors.grey;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(
-            color: Theme.of(context).dividerColor.withValues(alpha: 0.3),
-          ),
-        ),
-      ),
-      child: Row(
-        children: [
-          Text(
-            '$dateStr $weekday',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          const Spacer(),
-          Text(
-            ratioStr,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w500,
-              fontFamily: 'monospace',
-              fontSize: 15,
+    return GestureDetector(
+      onTap: () => _toggleExclude(ratio.date),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isExcluded ? Colors.grey.withValues(alpha: 0.1) : null,
+          border: Border(
+            bottom: BorderSide(
+              color: Theme.of(context).dividerColor.withValues(alpha: 0.3),
             ),
           ),
-        ],
+        ),
+        child: Row(
+          children: [
+            Text(
+              '$dateStr $weekday',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: isExcluded ? Colors.grey : null,
+                decoration: isExcluded ? TextDecoration.lineThrough : null,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              ratioStr,
+              style: TextStyle(
+                color: isExcluded ? Colors.grey : color,
+                fontWeight: FontWeight.w500,
+                fontFamily: 'monospace',
+                fontSize: 15,
+                decoration: isExcluded ? TextDecoration.lineThrough : null,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
