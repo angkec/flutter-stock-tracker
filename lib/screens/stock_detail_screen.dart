@@ -1,10 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
-import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/widgets/kline_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
@@ -54,25 +54,31 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       _connectError = null;
     });
 
-    // 创建独立连接
-    _client = TdxClient();
+    // 并行尝试所有服务器，使用第一个成功的（快速连接）
+    final completer = Completer<TdxClient?>();
+    var pendingCount = TdxClient.servers.length;
 
-    // 优先使用 TdxPool 已连接的服务器地址（快速连接）
-    final pool = context.read<TdxPool>();
-    bool connected = false;
+    for (final server in TdxClient.servers) {
+      final host = server['host'] as String;
+      final port = server['port'] as int;
 
-    if (pool.connectedHost != null && pool.connectedPort != null) {
-      connected = await _client!.connect(pool.connectedHost!, pool.connectedPort!);
+      _tryConnect(host, port).then((client) {
+        if (client != null && !completer.isCompleted) {
+          completer.complete(client);
+        } else {
+          pendingCount--;
+          if (pendingCount == 0 && !completer.isCompleted) {
+            completer.complete(null);
+          }
+        }
+      });
     }
 
-    // 如果失败，回退到 autoConnect
-    if (!connected) {
-      connected = await _client!.autoConnect();
-    }
+    _client = await completer.future;
 
     if (!mounted) return;
 
-    if (!connected) {
+    if (_client == null) {
       setState(() {
         _isConnecting = false;
         _connectError = '连接服务器失败';
@@ -89,6 +95,14 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       _loadKLines(),
       _loadRatioHistory(),
     ]);
+  }
+
+  Future<TdxClient?> _tryConnect(String host, int port) async {
+    final client = TdxClient();
+    if (await client.connect(host, port)) {
+      return client;
+    }
+    return null;
   }
 
   Future<void> _loadData() async {
