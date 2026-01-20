@@ -246,6 +246,7 @@ class _MarketScreenState extends State<MarketScreen> {
                 isLoading: _isLoading,
                 highlightCodes: watchlistService.watchlist.toSet(),
                 onTap: (data) => _addToWatchlist(data.stock.code, data.stock.name),
+                onIndustryTap: _searchByIndustry,
               ),
             ),
           ],
