@@ -190,12 +190,34 @@ class StockTable extends StatelessWidget {
           SizedBox(
             width: _industryWidth,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                data.industry ?? '-',
-                style: const TextStyle(fontSize: 13),
-                overflow: TextOverflow.ellipsis,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: data.industry != null
+                  ? GestureDetector(
+                      onTap: onIndustryTap != null
+                          ? () => onIndustryTap!(data.industry!)
+                          : null,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .secondaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          data.industry!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSecondaryContainer,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                  : const Text('-', style: TextStyle(fontSize: 13)),
             ),
           ),
         ],
