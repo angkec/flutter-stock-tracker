@@ -87,10 +87,12 @@ class TdxClient {
         _dataCompleter = null;
       },
       onError: (error) {
+        _isConnected = false;
         _dataCompleter?.completeError(error);
         _dataCompleter = null;
       },
       onDone: () {
+        _isConnected = false;
         _dataCompleter?.completeError(StateError('Connection closed'));
         _dataCompleter = null;
       },
@@ -537,10 +539,10 @@ class TdxClient {
 
       bars.add(KLine(
         datetime: datetime,
-        open: openRaw / 100.0,
-        close: closeRaw / 100.0,
-        high: highRaw / 100.0,
-        low: lowRaw / 100.0,
+        open: openRaw / 1000.0,
+        close: closeRaw / 1000.0,
+        high: highRaw / 1000.0,
+        low: lowRaw / 1000.0,
         volume: volume,
         amount: amount,
       ));

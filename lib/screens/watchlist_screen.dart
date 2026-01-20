@@ -151,12 +151,33 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
     _refreshTimer?.cancel();
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 60),
-      (_) {
-        if (_isConnected && mounted) {
-          _fetchData();
+      (_) async {
+        if (mounted) {
+          await _refresh();
         }
       },
     );
+  }
+
+  Future<void> _refresh() async {
+    if (_isLoading) return;
+
+    final pool = context.read<TdxPool>();
+
+    // 确保连接可用（会自动重连死连接）
+    final connected = await pool.ensureConnected();
+    if (!mounted) return;
+
+    if (!connected) {
+      setState(() {
+        _isConnected = false;
+        _errorMessage = '无法连接到服务器';
+      });
+      return;
+    }
+
+    setState(() => _isConnected = true);
+    await _fetchData();
   }
 
   Future<void> _addStock() async {
@@ -288,7 +309,7 @@ class _WatchlistScreenState extends State<WatchlistScreen> {
     }
 
     return RefreshIndicator(
-      onRefresh: _fetchData,
+      onRefresh: _refresh,
       child: StockTable(
         stocks: _monitorData,
         isLoading: _isLoading,

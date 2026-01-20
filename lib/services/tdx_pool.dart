@@ -14,8 +14,36 @@ class TdxPool {
 
   TdxPool({int poolSize = 5}) : _poolSize = poolSize;
 
-  bool get isConnected => _isConnected;
+  bool get isConnected => _isConnected && _clients.any((c) => c.isConnected);
   int get poolSize => _clients.length;
+
+  /// 确保连接可用，如果有死连接则重连
+  Future<bool> ensureConnected() async {
+    // 移除所有死连接
+    _clients.removeWhere((c) => !c.isConnected);
+
+    // 如果没有可用连接，重新连接
+    if (_clients.isEmpty) {
+      _isConnected = false;
+      return await autoConnect();
+    }
+
+    // 如果连接数不足，补充连接
+    if (_clients.length < _poolSize && _connectedHost != null) {
+      final futures = <Future<TdxClient?>>[];
+      for (var i = _clients.length; i < _poolSize; i++) {
+        futures.add(_createConnection(_connectedHost!, _connectedPort!));
+      }
+      final results = await Future.wait(futures);
+      for (final client in results) {
+        if (client != null) {
+          _clients.add(client);
+        }
+      }
+    }
+
+    return _clients.isNotEmpty;
+  }
 
   /// 自动连接到可用服务器
   /// 并行尝试所有服务器，使用第一个成功的
