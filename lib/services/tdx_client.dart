@@ -32,6 +32,10 @@ class TdxClient {
   // 请求锁，确保同一时间只有一个请求在处理
   Completer<void>? _requestLock;
 
+  // 当前连接的服务器信息（用于重连）
+  String? _connectedHost;
+  int? _connectedPort;
+
   bool get isConnected => _isConnected;
 
   /// 服务器列表
@@ -68,6 +72,8 @@ class TdxClient {
       await _sendSetupCommands();
 
       _isConnected = true;
+      _connectedHost = host;
+      _connectedPort = port;
       developer.log(' Connected to $host:$port successfully');
       return true;
     } catch (e) {
@@ -128,7 +134,7 @@ class TdxClient {
     _buffer.clear();
   }
 
-  /// 发送命令并接收响应 (带请求锁)
+  /// 发送命令并接收响应 (带请求锁和自动重试)
   Future<Uint8List> sendCommand(Uint8List packet) async {
     if (_socket == null || !_isConnected) {
       throw StateError('Not connected');
@@ -143,12 +149,34 @@ class TdxClient {
     _requestLock = Completer<void>();
 
     try {
-      return await _sendPacket(packet);
+      return await _sendPacketWithRetry(packet);
     } finally {
       // 释放锁
       final lock = _requestLock;
       _requestLock = null;
       lock?.complete();
+    }
+  }
+
+  /// 发送数据包，失败时自动重连并重试一次
+  Future<Uint8List> _sendPacketWithRetry(Uint8List packet) async {
+    try {
+      return await _sendPacket(packet);
+    } catch (e) {
+      developer.log(' Socket error, attempting reconnect: $e');
+
+      // 尝试重连
+      if (_connectedHost != null && _connectedPort != null) {
+        await _cleanup();
+        final reconnected = await connect(_connectedHost!, _connectedPort!);
+        if (reconnected) {
+          developer.log(' Reconnected, retrying command...');
+          return await _sendPacket(packet);
+        }
+      }
+
+      // 重连失败，抛出原始错误
+      rethrow;
     }
   }
 
