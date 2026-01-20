@@ -1,3 +1,4 @@
+import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
@@ -212,5 +213,60 @@ class StockService {
       start: 0,
       count: count,
     );
+  }
+
+  /// 获取量比历史（最近 N 天）
+  /// [stock] 股票
+  /// [days] 天数（默认 20 天）
+  Future<List<DailyRatio>> getRatioHistory({
+    required Stock stock,
+    int days = 20,
+  }) async {
+    final client = _pool.firstClient;
+    if (client == null) throw StateError('Not connected');
+
+    // 每天约 240 根分钟线，请求足够的数据
+    // 分批请求，每次最多 800 根
+    final allBars = <KLine>[];
+    final totalBars = days * 240;
+    var fetched = 0;
+
+    while (fetched < totalBars) {
+      final count = (totalBars - fetched).clamp(0, 800);
+      final bars = await client.getSecurityBars(
+        market: stock.market,
+        code: stock.code,
+        category: klineType1Min,
+        start: fetched,
+        count: count,
+      );
+      if (bars.isEmpty) break;
+      allBars.addAll(bars);
+      fetched += bars.length;
+      if (bars.length < count) break; // 没有更多数据
+    }
+
+    // 按日期分组
+    final Map<String, List<KLine>> grouped = {};
+    for (final bar in allBars) {
+      final dateKey = '${bar.datetime.year}-${bar.datetime.month.toString().padLeft(2, '0')}-${bar.datetime.day.toString().padLeft(2, '0')}';
+      grouped.putIfAbsent(dateKey, () => []).add(bar);
+    }
+
+    // 计算每天的量比
+    final results = <DailyRatio>[];
+    final sortedKeys = grouped.keys.toList()..sort((a, b) => b.compareTo(a)); // 降序
+
+    for (final dateKey in sortedKeys.take(days)) {
+      final dayBars = grouped[dateKey]!;
+      final ratio = calculateRatio(dayBars);
+      final parts = dateKey.split('-');
+      results.add(DailyRatio(
+        date: DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2])),
+        ratio: ratio,
+      ));
+    }
+
+    return results;
   }
 }
