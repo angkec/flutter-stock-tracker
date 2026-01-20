@@ -29,23 +29,19 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(create: (_) => WatchlistService()),
         ChangeNotifierProxyProvider3<TdxPool, StockService, IndustryService, MarketDataProvider>(
-          create: (_) => MarketDataProvider(
-            pool: TdxPool(poolSize: 5), // 临时，会被 update 替换
-            stockService: StockService(TdxPool(poolSize: 5)),
-            industryService: IndustryService(),
-          ),
-          update: (_, pool, stockService, industryService, previous) {
-            final provider = previous ?? MarketDataProvider(
+          create: (context) {
+            final pool = context.read<TdxPool>();
+            final stockService = context.read<StockService>();
+            final industryService = context.read<IndustryService>();
+            final provider = MarketDataProvider(
               pool: pool,
               stockService: stockService,
               industryService: industryService,
             );
-            // 首次创建时加载缓存
-            if (previous == null) {
-              provider.loadFromCache();
-            }
+            provider.loadFromCache();
             return provider;
           },
+          update: (_, pool, stockService, industryService, previous) => previous!,
         ),
       ],
       child: MaterialApp(
