@@ -39,4 +39,22 @@ class Stock {
     }
     return 0.10;
   }
+
+  Map<String, dynamic> toJson() => {
+    'code': code,
+    'name': name,
+    'market': market,
+    'volUnit': volUnit,
+    'decimalPoint': decimalPoint,
+    'preClose': preClose,
+  };
+
+  factory Stock.fromJson(Map<String, dynamic> json) => Stock(
+    code: json['code'] as String,
+    name: json['name'] as String,
+    market: json['market'] as int,
+    volUnit: json['volUnit'] as int? ?? 100,
+    decimalPoint: json['decimalPoint'] as int? ?? 2,
+    preClose: (json['preClose'] as num?)?.toDouble() ?? 0.0,
+  );
 }
