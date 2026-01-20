@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
+import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/widgets/kline_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
@@ -54,7 +56,19 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
     // 创建独立连接
     _client = TdxClient();
-    final connected = await _client!.autoConnect();
+
+    // 优先使用 TdxPool 已连接的服务器地址（快速连接）
+    final pool = context.read<TdxPool>();
+    bool connected = false;
+
+    if (pool.connectedHost != null && pool.connectedPort != null) {
+      connected = await _client!.connect(pool.connectedHost!, pool.connectedPort!);
+    }
+
+    // 如果失败，回退到 autoConnect
+    if (!connected) {
+      connected = await _client!.autoConnect();
+    }
 
     if (!mounted) return;
 

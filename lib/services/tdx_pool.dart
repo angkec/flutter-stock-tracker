@@ -17,6 +17,10 @@ class TdxPool {
   bool get isConnected => _isConnected && _clients.any((c) => c.isConnected);
   int get poolSize => _clients.length;
 
+  /// 已连接的服务器地址
+  String? get connectedHost => _connectedHost;
+  int? get connectedPort => _connectedPort;
+
   /// 获取第一个可用的 client（供单个请求使用）
   TdxClient? get firstClient => _clients.isNotEmpty ? _clients.first : null;
 
