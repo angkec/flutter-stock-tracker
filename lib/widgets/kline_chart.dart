@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 
-/// K 线图颜色
-const Color kUpColor = Color(0xFFFF4444);   // 涨 - 红
-const Color kDownColor = Color(0xFF00AA00); // 跌 - 绿
+/// K 线图颜色 - use theme colors
+const Color kUpColor = AppColors.stockUp;   // 涨 - 红
+const Color kDownColor = AppColors.stockDown; // 跌 - 绿
 
 /// K 线图组件（含成交量，支持触摸选择）
 class KLineChart extends StatefulWidget {
@@ -220,15 +221,34 @@ class _KLinePainter extends CustomPainter {
       return (volume / maxVolume) * volumeHeight;
     }
 
-    // Paint objects
+    // Paint objects (wick strokeWidth: 0.8)
     final upPaint = Paint()
       ..color = kUpColor
-      ..strokeWidth = 1
+      ..strokeWidth = 0.8
       ..style = PaintingStyle.fill;
     final downPaint = Paint()
       ..color = kDownColor
-      ..strokeWidth = 1
+      ..strokeWidth = 0.8
       ..style = PaintingStyle.fill;
+
+    // Paint objects for volume bars (80% opacity)
+    final upVolumePaint = Paint()
+      ..color = kUpColor.withValues(alpha: 0.8)
+      ..style = PaintingStyle.fill;
+    final downVolumePaint = Paint()
+      ..color = kDownColor.withValues(alpha: 0.8)
+      ..style = PaintingStyle.fill;
+
+    // Draw horizontal grid lines (10% opacity)
+    final gridPaint = Paint()
+      ..color = Colors.grey.withValues(alpha: 0.1)
+      ..strokeWidth = 0.5;
+
+    const gridLines = 4;
+    for (int i = 1; i < gridLines; i++) {
+      final y = klineTop + klineHeight * i / gridLines;
+      canvas.drawLine(Offset(sidePadding, y), Offset(size.width - sidePadding, y), gridPaint);
+    }
 
     // 绘制选中线（如果有）
     if (selectedIndex != null && selectedIndex! >= 0 && selectedIndex! < bars.length) {
@@ -283,8 +303,11 @@ class _KLinePainter extends CustomPainter {
         paint,
       );
 
-      // === 量柱 ===
+      // === 量柱 (80% opacity) ===
       final volHeight = volumeToHeight(bar.volume.toDouble());
+      final volumePaint = isSelected
+          ? (bar.close >= bar.open ? upVolumePaint : downVolumePaint)
+          : (bar.close >= bar.open ? upVolumePaint : downVolumePaint);
       canvas.drawRect(
         Rect.fromLTWH(
           x - currentBarWidth / 2,
@@ -292,7 +315,7 @@ class _KLinePainter extends CustomPainter {
           currentBarWidth,
           volHeight.clamp(1.0, double.infinity),
         ),
-        paint,
+        volumePaint,
       );
     }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 
 /// 市场状态枚举
 enum MarketStatus {
@@ -68,14 +69,14 @@ String getMarketStatusText(MarketStatus status) {
 Color getMarketStatusColor(MarketStatus status) {
   switch (status) {
     case MarketStatus.preMarket:
-      return Colors.orange;
+      return AppColors.statusPreMarket;
     case MarketStatus.morningTrading:
     case MarketStatus.afternoonTrading:
-      return Colors.green;
+      return AppColors.statusTrading;
     case MarketStatus.lunchBreak:
-      return Colors.yellow;
+      return AppColors.statusLunchBreak;
     case MarketStatus.closed:
-      return Colors.grey;
+      return AppColors.statusClosed;
   }
 }
 
@@ -149,7 +150,7 @@ class StatusBar extends StatelessWidget {
                           displayText,
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                 color: isHistorical
-                                    ? Colors.orange
+                                    ? AppColors.statusPreMarket
                                     : Theme.of(context).colorScheme.onSurfaceVariant,
                                 fontFamily: 'monospace',
                               ),

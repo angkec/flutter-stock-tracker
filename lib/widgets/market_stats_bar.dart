@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 
 /// 统计区间数据
 class StatsInterval {
@@ -50,13 +51,13 @@ class MarketStatsBar extends StatelessWidget {
     }
 
     return [
-      StatsInterval(label: '涨停', count: limitUp, color: const Color(0xFFFF0000)),
-      StatsInterval(label: '>5%', count: up5, color: const Color(0xFFFF4444)),
-      StatsInterval(label: '0~5%', count: up0to5, color: const Color(0xFFFF8888)),
-      StatsInterval(label: '平', count: flat, color: const Color(0xFF888888)),
-      StatsInterval(label: '-5~0', count: down0to5, color: const Color(0xFF88CC88)),
-      StatsInterval(label: '<-5%', count: down5, color: const Color(0xFF44AA44)),
-      StatsInterval(label: '跌停', count: limitDown, color: const Color(0xFF00AA00)),
+      StatsInterval(label: '涨停', count: limitUp, color: AppColors.limitUp),
+      StatsInterval(label: '>5%', count: up5, color: AppColors.up5),
+      StatsInterval(label: '0~5%', count: up0to5, color: AppColors.up0to5),
+      StatsInterval(label: '平', count: flat, color: AppColors.flat),
+      StatsInterval(label: '-5~0', count: down0to5, color: AppColors.down0to5),
+      StatsInterval(label: '<-5%', count: down5, color: AppColors.down5),
+      StatsInterval(label: '跌停', count: limitDown, color: AppColors.limitDown),
     ];
   }
 
@@ -86,6 +87,9 @@ class MarketStatsBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          top: BorderSide(color: Theme.of(context).dividerColor, width: 1),
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.1),
@@ -131,16 +135,22 @@ class MarketStatsBar extends StatelessWidget {
         ClipRRect(
           borderRadius: BorderRadius.circular(4),
           child: Row(
-            children: stats.map((s) {
-              if (s.count == 0) return const SizedBox.shrink();
-              return Expanded(
-                flex: s.count,
-                child: Container(
-                  height: 8,
-                  color: s.color,
-                ),
-              );
-            }).toList(),
+            children: () {
+              final nonZeroStats = stats.where((s) => s.count > 0).toList();
+              return nonZeroStats.asMap().entries.map((entry) {
+                final index = entry.key;
+                final s = entry.value;
+                final isLast = index == nonZeroStats.length - 1;
+                return Expanded(
+                  flex: s.count,
+                  child: Container(
+                    height: 8,
+                    margin: isLast ? null : const EdgeInsets.only(right: 1),
+                    color: s.color,
+                  ),
+                );
+              }).toList();
+            }(),
           ),
         ),
       ],
@@ -190,7 +200,7 @@ class MarketStatsBar extends StatelessWidget {
                   flex: above,
                   child: Container(
                     height: 8,
-                    color: const Color(0xFFFF4444),
+                    color: AppColors.stockUp,
                   ),
                 ),
               if (below > 0)
@@ -198,7 +208,7 @@ class MarketStatsBar extends StatelessWidget {
                   flex: below,
                   child: Container(
                     height: 8,
-                    color: const Color(0xFF00AA00),
+                    color: AppColors.stockDown,
                   ),
                 ),
             ],

@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 
 /// 分时图颜色
 const Color _priceLineColor = Colors.white;
 const Color _avgLineColor = Color(0xFFFFD700); // 黄色均价线
-const Color _upColor = Color(0xFFFF4444);   // 涨 - 红
-const Color _downColor = Color(0xFF00AA00); // 跌 - 绿
 
 /// 分时图组件
 class MinuteChart extends StatelessWidget {
@@ -165,9 +164,9 @@ class _MinuteChartPainter extends CustomPainter {
       }
     }
 
-    // 绘制均价线（黄色）
+    // 绘制均价线（黄色，80%透明度）
     final avgPaint = Paint()
-      ..color = _avgLineColor
+      ..color = _avgLineColor.withValues(alpha: 0.8)
       ..strokeWidth = 1
       ..style = PaintingStyle.stroke;
     canvas.drawPath(avgPath, avgPaint);
@@ -179,6 +178,29 @@ class _MinuteChartPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     canvas.drawPath(pricePath, pricePaint);
 
+    // 绘制价格线下方的渐变填充
+    if (bars.isNotEmpty) {
+      final firstX = sidePadding + 0.5 * barWidth;
+      final lastX = sidePadding + (bars.length - 1 + 0.5) * barWidth;
+
+      final gradientPath = Path()..addPath(pricePath, Offset.zero);
+      gradientPath.lineTo(lastX, priceBottom);
+      gradientPath.lineTo(firstX, priceBottom);
+      gradientPath.close();
+
+      final gradientPaint = Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withValues(alpha: 0.1),
+            Colors.white.withValues(alpha: 0.0),
+          ],
+        ).createShader(Rect.fromLTWH(0, 0, size.width, priceBottom));
+
+      canvas.drawPath(gradientPath, gradientPaint);
+    }
+
     // 绘制成交量柱
     for (var i = 0; i < bars.length; i++) {
       final bar = bars[i];
@@ -187,7 +209,7 @@ class _MinuteChartPainter extends CustomPainter {
       final isUp = bar.close >= preClose;
 
       final paint = Paint()
-        ..color = isUp ? _upColor : _downColor
+        ..color = isUp ? AppColors.stockUp : AppColors.stockDown
         ..style = PaintingStyle.fill;
 
       canvas.drawRect(
@@ -230,14 +252,14 @@ class _MinuteChartPainter extends CustomPainter {
 
     textPainter.text = TextSpan(
       text: '+$upPercent%',
-      style: const TextStyle(color: _upColor, fontSize: 9),
+      style: const TextStyle(color: AppColors.stockUp, fontSize: 9),
     );
     textPainter.layout();
     textPainter.paint(canvas, Offset(size.width - sidePadding - textPainter.width, priceTop));
 
     textPainter.text = TextSpan(
       text: '$downPercent%',
-      style: const TextStyle(color: _downColor, fontSize: 9),
+      style: const TextStyle(color: AppColors.stockDown, fontSize: 9),
     );
     textPainter.layout();
     textPainter.paint(canvas, Offset(size.width - sidePadding - textPainter.width, priceBottom - 12));

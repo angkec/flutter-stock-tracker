@@ -3,11 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/screens/stock_detail_screen.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 
 /// A股风格颜色 - 红涨绿跌
-const Color upColor = Color(0xFFFF4444);
-const Color downColor = Color(0xFF00AA00);
+const Color upColor = AppColors.stockUp;
+const Color downColor = AppColors.stockDown;
 
 // 列宽定义
 const double _codeWidth = 95;
@@ -129,8 +130,14 @@ class StockTable extends StatelessWidget {
         color: isHighlighted
             ? Colors.amber.withValues(alpha: 0.15)
             : (index.isOdd
-                ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
+                ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.15)
                 : null),
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).dividerColor,
+            width: 0.5,
+          ),
+        ),
       ),
       child: Row(
         children: [
