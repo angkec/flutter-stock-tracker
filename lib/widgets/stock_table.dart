@@ -8,7 +8,7 @@ const Color upColor = Color(0xFFFF4444);
 const Color downColor = Color(0xFF00AA00);
 
 // 列宽定义
-const double _codeWidth = 80;
+const double _codeWidth = 95;
 const double _nameWidth = 100;
 const double _changeWidth = 75;
 const double _ratioWidth = 65;
