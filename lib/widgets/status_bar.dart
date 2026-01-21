@@ -79,6 +79,15 @@ Color getMarketStatusColor(MarketStatus status) {
   }
 }
 
+/// 判断是否是历史数据（数据日期不是今天）
+bool _isHistoricalData(DateTime? dataDate) {
+  if (dataDate == null) return false;
+  final today = DateTime.now();
+  return dataDate.year != today.year ||
+      dataDate.month != today.month ||
+      dataDate.day != today.day;
+}
+
 /// 状态栏组件
 class StatusBar extends StatelessWidget {
   const StatusBar({super.key});
@@ -129,14 +138,25 @@ class StatusBar extends StatelessWidget {
                   ),
                   const Spacer(),
                   // 更新时间
-                  if (provider.updateTime != null && !provider.isLoading)
-                    Text(
-                      provider.updateTime!,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            fontFamily: 'monospace',
-                          ),
+                  if (provider.updateTime != null && !provider.isLoading) ...[
+                    Builder(
+                      builder: (context) {
+                        final isHistorical = _isHistoricalData(provider.dataDate);
+                        final displayText = isHistorical
+                            ? '${provider.dataDate!.month.toString().padLeft(2, '0')}-${provider.dataDate!.day.toString().padLeft(2, '0')} ${provider.updateTime!}'
+                            : provider.updateTime!;
+                        return Text(
+                          displayText,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: isHistorical
+                                    ? Colors.orange
+                                    : Theme.of(context).colorScheme.onSurfaceVariant,
+                                fontFamily: 'monospace',
+                              ),
+                        );
+                      },
                     ),
+                  ],
                   const SizedBox(width: 8),
                   // 右上角：刷新按钮 或 进度指示器
                   _buildRefreshArea(context, provider),
