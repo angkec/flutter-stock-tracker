@@ -4,6 +4,7 @@ import 'package:stock_rtwatcher/models/pullback_config.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
+import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 import 'package:stock_rtwatcher/widgets/pullback_config_dialog.dart';
 
@@ -61,11 +62,15 @@ class PullbackScreen extends StatelessWidget {
     final provider = context.watch<MarketDataProvider>();
     final pullbackService = context.watch<PullbackService>();
     final watchlist = context.watch<WatchlistService>();
+    final trendService = context.watch<IndustryTrendService>();
 
     // 筛选出回踩股票
     final pullbackStocks = provider.allData
         .where((data) => data.isPullback)
         .toList();
+
+    // 计算今日实时趋势数据
+    final todayTrend = trendService.calculateTodayTrend(provider.allData);
 
     return Scaffold(
       appBar: AppBar(
@@ -157,6 +162,8 @@ class PullbackScreen extends StatelessWidget {
                     highlightCodes: watchlist.watchlist.toSet(),
                     onLongPress: (data) => _handleLongPress(context, data),
                     onIndustryTap: onIndustryTap,
+                    industryTrendData: trendService.trendData,
+                    todayTrendData: todayTrend,
                   ),
           ),
         ],

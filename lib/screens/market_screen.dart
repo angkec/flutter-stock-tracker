@@ -5,6 +5,7 @@ import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 import 'package:stock_rtwatcher/widgets/market_stats_bar.dart';
@@ -75,7 +76,11 @@ class MarketScreenState extends State<MarketScreen> {
   Widget build(BuildContext context) {
     final watchlistService = context.watch<WatchlistService>();
     final marketProvider = context.watch<MarketDataProvider>();
+    final trendService = context.watch<IndustryTrendService>();
     final filteredData = _getFilteredData(marketProvider.allData);
+
+    // 计算今日实时趋势数据
+    final todayTrend = trendService.calculateTodayTrend(marketProvider.allData);
 
     return Scaffold(
       body: SafeArea(
@@ -120,6 +125,8 @@ class MarketScreenState extends State<MarketScreen> {
                         highlightCodes: watchlistService.watchlist.toSet(),
                         onLongPress: (data) => _addToWatchlist(data.stock.code, data.stock.name),
                         onIndustryTap: searchByIndustry,
+                        industryTrendData: trendService.trendData,
+                        todayTrendData: todayTrend,
                       ),
                     ),
                   ),

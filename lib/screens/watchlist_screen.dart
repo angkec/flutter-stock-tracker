@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
+import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
@@ -80,11 +81,15 @@ class WatchlistScreenState extends State<WatchlistScreen> {
   Widget build(BuildContext context) {
     final watchlistService = context.watch<WatchlistService>();
     final marketProvider = context.watch<MarketDataProvider>();
+    final trendService = context.watch<IndustryTrendService>();
 
     // 从共享数据中过滤自选股
     final watchlistData = marketProvider.allData
         .where((d) => watchlistService.contains(d.stock.code))
         .toList();
+
+    // 计算今日实时趋势数据
+    final todayTrend = trendService.calculateTodayTrend(marketProvider.allData);
 
     return SafeArea(
       child: Column(
@@ -132,6 +137,8 @@ class WatchlistScreenState extends State<WatchlistScreen> {
                       isLoading: marketProvider.isLoading,
                       onLongPress: (data) => _removeStock(data.stock.code),
                       onIndustryTap: widget.onIndustryTap,
+                      industryTrendData: trendService.trendData,
+                      todayTrendData: todayTrend,
                     ),
                   ),
           ),

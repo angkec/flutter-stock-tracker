@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/screens/stock_detail_screen.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 
 /// A股风格颜色 - 红涨绿跌
 const Color upColor = Color(0xFFFF4444);
@@ -13,6 +15,7 @@ const double _nameWidth = 100;
 const double _changeWidth = 75;
 const double _ratioWidth = 65;
 const double _industryWidth = 80;
+const double _trendWidth = 65;
 const double _rowHeight = 44;
 
 /// 格式化量比
@@ -35,6 +38,12 @@ class StockTable extends StatelessWidget {
   final void Function(StockMonitorData data)? onLongPress;
   final void Function(String industry)? onIndustryTap;
 
+  /// 行业趋势数据，key 为行业名称
+  final Map<String, IndustryTrendData>? industryTrendData;
+
+  /// 今日实时行业趋势数据，key 为行业名称
+  final Map<String, DailyRatioPoint>? todayTrendData;
+
   const StockTable({
     super.key,
     required this.stocks,
@@ -42,6 +51,8 @@ class StockTable extends StatelessWidget {
     this.highlightCodes = const {},
     this.onLongPress,
     this.onIndustryTap,
+    this.industryTrendData,
+    this.todayTrendData,
   });
 
   void _copyToClipboard(BuildContext context, String code, String name) {
@@ -69,6 +80,8 @@ class StockTable extends StatelessWidget {
     );
   }
 
+  bool get _showTrendColumn => industryTrendData != null || todayTrendData != null;
+
   Widget _buildHeader(BuildContext context) {
     return Container(
       height: _rowHeight,
@@ -88,6 +101,7 @@ class StockTable extends StatelessWidget {
           _buildHeaderCell('涨跌幅', _changeWidth, numeric: true),
           _buildHeaderCell('量比', _ratioWidth, numeric: true),
           _buildHeaderCell('行业', _industryWidth),
+          if (_showTrendColumn) _buildHeaderCell('趋势', _trendWidth),
         ],
       ),
     );
@@ -243,9 +257,51 @@ class StockTable extends StatelessWidget {
                   : const Text('-', style: TextStyle(fontSize: 13)),
             ),
           ),
+          // 趋势列
+          if (_showTrendColumn)
+            SizedBox(
+              width: _trendWidth,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: _buildTrendSparkline(data.industry),
+              ),
+            ),
         ],
       ),
       ),
+    );
+  }
+
+  /// 构建行业趋势迷你折线图
+  Widget _buildTrendSparkline(String? industry) {
+    if (industry == null) return const SizedBox.shrink();
+
+    // 获取历史趋势数据
+    final trendData = industryTrendData?[industry];
+    final todayData = todayTrendData?[industry];
+
+    // 构建数据点列表
+    final points = <double>[];
+
+    // 添加历史数据点
+    if (trendData != null) {
+      for (final point in trendData.points) {
+        points.add(point.ratioAbovePercent);
+      }
+    }
+
+    // 添加今日数据点
+    if (todayData != null) {
+      points.add(todayData.ratioAbovePercent);
+    }
+
+    if (points.isEmpty) return const SizedBox.shrink();
+
+    return SparklineChart(
+      data: points,
+      width: 56,
+      height: 24,
+      referenceValue: 50,
     );
   }
 
@@ -280,7 +336,8 @@ class StockTable extends StatelessWidget {
       );
     }
 
-    const totalWidth = _codeWidth + _nameWidth + _changeWidth + _ratioWidth + _industryWidth;
+    final totalWidth = _codeWidth + _nameWidth + _changeWidth + _ratioWidth + _industryWidth +
+        (_showTrendColumn ? _trendWidth : 0);
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
