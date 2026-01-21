@@ -55,7 +55,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   String? _klineError;
   String? _ratioError;
 
-  ChartMode _chartMode = ChartMode.minute; // 默认显示分时
+  ChartMode _chartMode = ChartMode.daily; // 默认显示日线
 
   // 当前显示的股票索引和股票
   late int _currentIndex;
