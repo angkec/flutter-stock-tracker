@@ -169,13 +169,15 @@ class StockService {
     void Function(List<StockMonitorData> results)? onData,
   }) async {
     final today = DateTime.now();
-    final todayKey = _formatDate(today);
-    final allDates = <String>{};  // 收集所有日期
-    final stockBarsMap = <int, List<KLine>>{};  // 暂存所有K线
+    final allDates = <String>{};  // 收集所有日期（用于回退）
+    final stockBarsMap = <int, List<KLine>>{};  // 暂存所有K线（用于回退）
+    final results = <StockMonitorData>[];
     var completed = 0;
     final total = stocks.length;
+    var lastReportedCount = 0;
+    const reportThreshold = 50;
 
-    // 第一遍：收集数据和日期
+    // 第一遍：边下载边处理今天的数据，同时收集所有日期用于可能的回退
     await _pool.batchGetSecurityBarsStreaming(
       stocks: stocks,
       category: klineType1Min,
@@ -184,31 +186,66 @@ class StockService {
       onStockBars: (index, bars) {
         completed++;
         onProgress?.call(completed, total);
+
+        // 收集所有日期和数据（用于回退）
         stockBarsMap[index] = bars;
         for (final bar in bars) {
           allDates.add(_formatDate(bar.datetime));
         }
+
+        // 立即处理今天的数据
+        final todayBars = bars.where((bar) =>
+            bar.datetime.year == today.year &&
+            bar.datetime.month == today.month &&
+            bar.datetime.day == today.day).toList();
+
+        if (todayBars.isEmpty) return;
+
+        final ratio = calculateRatio(todayBars);
+        if (ratio == null) return;
+
+        final changePercent = calculateChangePercent(todayBars, stocks[index].preClose);
+
+        results.add(StockMonitorData(
+          stock: stocks[index],
+          ratio: ratio,
+          changePercent: changePercent ?? 0.0,
+          industry: industryService?.getIndustry(stocks[index].code),
+        ));
+
+        // 达到阈值时回调
+        if (results.length >= lastReportedCount + reportThreshold) {
+          lastReportedCount = results.length;
+          final sorted = List<StockMonitorData>.from(results)
+            ..sort((a, b) => b.ratio.compareTo(a.ratio));
+          onData?.call(sorted);
+        }
       },
     );
 
-    // 确定使用哪个日期：优先今天，否则用最近的日期
-    final sortedDates = allDates.toList()..sort((a, b) => b.compareTo(a));
-    final targetDate = sortedDates.contains(todayKey)
-        ? todayKey
-        : (sortedDates.isNotEmpty ? sortedDates.first : todayKey);
+    // 如果今天有数据，直接返回
+    if (results.isNotEmpty) {
+      results.sort((a, b) => b.ratio.compareTo(a.ratio));
+      if (results.length > lastReportedCount) {
+        onData?.call(results);
+      }
+      return MonitorDataResult(data: results, dataDate: today);
+    }
 
-    // 第二遍：用目标日期过滤并计算
-    final results = <StockMonitorData>[];
-    var lastReportedCount = 0;
-    const reportThreshold = 50; // 每增加50个有效结果就回调一次
+    // 今天没数据，回退到最近的日期重新处理
+    final sortedDates = allDates.toList()..sort((a, b) => b.compareTo(a));
+    if (sortedDates.isEmpty) {
+      return MonitorDataResult(data: [], dataDate: today);
+    }
+
+    final fallbackDate = sortedDates.first;
+    lastReportedCount = 0;
 
     for (final entry in stockBarsMap.entries) {
       final index = entry.key;
       final bars = entry.value;
 
-      // 只保留目标日期的K线
-      final targetBars = bars.where((bar) => _formatDate(bar.datetime) == targetDate).toList();
-
+      final targetBars = bars.where((bar) => _formatDate(bar.datetime) == fallbackDate).toList();
       if (targetBars.isEmpty) continue;
 
       final ratio = calculateRatio(targetBars);
@@ -223,25 +260,20 @@ class StockService {
         industry: industryService?.getIndustry(stocks[index].code),
       ));
 
-      // 达到阈值时回调
       if (results.length >= lastReportedCount + reportThreshold) {
         lastReportedCount = results.length;
-        // 按量比排序后回调
         final sorted = List<StockMonitorData>.from(results)
           ..sort((a, b) => b.ratio.compareTo(a.ratio));
         onData?.call(sorted);
       }
     }
 
-    // 最终结果排序
     results.sort((a, b) => b.ratio.compareTo(a.ratio));
-
-    // 最后一次回调确保显示最终结果
     if (results.length > lastReportedCount) {
       onData?.call(results);
     }
 
-    return MonitorDataResult(data: results, dataDate: _parseDate(targetDate));
+    return MonitorDataResult(data: results, dataDate: _parseDate(fallbackDate));
   }
 
   /// 获取 K 线数据
