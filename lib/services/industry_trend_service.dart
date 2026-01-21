@@ -30,6 +30,51 @@ class IndustryTrendService extends ChangeNotifier {
   /// 获取某行业趋势
   IndustryTrendData? getTrend(String industry) => _trendData[industry];
 
+  /// 计算今日实时行业趋势
+  /// 使用股票现有的 ratio 字段（当前会话的分钟涨跌量比）
+  /// 返回按行业分组的今日数据点
+  Map<String, DailyRatioPoint> calculateTodayTrend(List<StockMonitorData> stocks) {
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    final result = <String, DailyRatioPoint>{};
+
+    // 按行业分组股票
+    final industryStocks = <String, List<StockMonitorData>>{};
+    for (final stock in stocks) {
+      final industry = stock.industry;
+      if (industry != null && industry.isNotEmpty) {
+        industryStocks.putIfAbsent(industry, () => []).add(stock);
+      }
+    }
+
+    // 计算每个行业的今日趋势
+    for (final entry in industryStocks.entries) {
+      final industry = entry.key;
+      final industryStockList = entry.value;
+
+      var ratioAboveCount = 0;
+      final totalStocks = industryStockList.length;
+
+      for (final stock in industryStockList) {
+        if (stock.ratio > 1.0) {
+          ratioAboveCount++;
+        }
+      }
+
+      if (totalStocks > 0) {
+        final ratioAbovePercent = (ratioAboveCount / totalStocks) * 100;
+        result[industry] = DailyRatioPoint(
+          date: todayDate,
+          ratioAbovePercent: ratioAbovePercent,
+          totalStocks: totalStocks,
+          ratioAboveCount: ratioAboveCount,
+        );
+      }
+    }
+
+    return result;
+  }
+
   /// 从缓存加载数据
   Future<void> load() async {
     try {
@@ -139,6 +184,12 @@ class IndustryTrendService extends ChangeNotifier {
       // 汇总每个行业每天的趋势数据
       final newTrendData = <String, IndustryTrendData>{};
 
+      // Pre-build stock code to index map to avoid O(n²) indexOf lookups
+      final stockCodeToIndex = <String, int>{};
+      for (var i = 0; i < stocks.length; i++) {
+        stockCodeToIndex[stocks[i].stock.code] = i;
+      }
+
       for (final entry in industryStocks.entries) {
         final industry = entry.key;
         final industryStockList = entry.value;
@@ -146,8 +197,8 @@ class IndustryTrendService extends ChangeNotifier {
         // 收集该行业所有股票的所有日期
         final allDates = <String>{};
         for (final stock in industryStockList) {
-          final stockIndex = stocks.indexOf(stock);
-          if (stockIndex >= 0 && stockDailyRatios.containsKey(stockIndex)) {
+          final stockIndex = stockCodeToIndex[stock.stock.code];
+          if (stockIndex != null && stockDailyRatios.containsKey(stockIndex)) {
             allDates.addAll(stockDailyRatios[stockIndex]!.keys);
           }
         }
@@ -159,8 +210,8 @@ class IndustryTrendService extends ChangeNotifier {
           var totalStocks = 0;
 
           for (final stock in industryStockList) {
-            final stockIndex = stocks.indexOf(stock);
-            if (stockIndex < 0) continue;
+            final stockIndex = stockCodeToIndex[stock.stock.code];
+            if (stockIndex == null) continue;
 
             final ratios = stockDailyRatios[stockIndex];
             if (ratios == null || !ratios.containsKey(dateKey)) continue;
