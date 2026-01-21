@@ -147,11 +147,26 @@ class StockTable extends StatelessWidget {
             width: _nameWidth,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                data.stock.name,
-                style: TextStyle(
-                  color: data.stock.isST ? Colors.orange : null,
-                  fontSize: 13,
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(
+                      text: data.stock.name,
+                      style: TextStyle(
+                        color: data.stock.isST ? Colors.orange : null,
+                        fontSize: 13,
+                      ),
+                    ),
+                    if (data.isPullback)
+                      const TextSpan(
+                        text: '*',
+                        style: TextStyle(
+                          color: upColor,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                  ],
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
