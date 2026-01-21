@@ -245,8 +245,9 @@ class _SimpleTrendPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round;
 
     final path = Path();
+    final divisor = data.length > 1 ? data.length - 1 : 1;
     for (var i = 0; i < data.length; i++) {
-      final x = chartArea.left + (i / (data.length - 1)) * chartArea.width;
+      final x = chartArea.left + (i / divisor) * chartArea.width;
       final y = chartArea.bottom -
           ((data[i] - adjustedMin) / adjustedRange) * chartArea.height;
 
