@@ -4,18 +4,34 @@ import 'package:flutter/material.dart';
 const Color _hotColor = Color(0xFFFF4444);   // 量比>=1 红
 const Color _coldColor = Color(0xFF00AA00);  // 量比<1 绿
 
+/// 涨跌分布颜色（从涨停到跌停）
+const List<Color> _changeColors = [
+  Color(0xFFFF0000),  // 涨停
+  Color(0xFFFF4444),  // >5%
+  Color(0xFFFF8888),  // 0~5%
+  Color(0xFF888888),  // 平
+  Color(0xFF88CC88),  // -5~0
+  Color(0xFF44AA44),  // <-5%
+  Color(0xFF00AA00),  // 跌停
+];
+
+/// 涨跌分布标签
+const List<String> _changeLabels = ['涨停', '>5%', '0~5%', '平', '-5~0', '<-5%', '跌停'];
+
 /// 板块热度条组件
-/// 显示行业名称和红绿进度条
+/// 显示行业名称、涨跌分布和量比热度
 class IndustryHeatBar extends StatelessWidget {
   final String industryName;
   final int hotCount;   // 量比 >= 1 的股票数量
   final int coldCount;  // 量比 < 1 的股票数量
+  final List<int>? changeDistribution;  // 涨跌分布 [涨停, >5%, 0~5%, 平, -5~0, <-5%, 跌停]
 
   const IndustryHeatBar({
     super.key,
     required this.industryName,
     required this.hotCount,
     required this.coldCount,
+    this.changeDistribution,
   });
 
   @override
@@ -32,7 +48,7 @@ class IndustryHeatBar extends StatelessWidget {
           Row(
             children: [
               Text(
-                '板块热度',
+                '板块',
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
@@ -47,7 +63,12 @@ class IndustryHeatBar extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          // 进度条
+          // 涨跌分布条
+          if (changeDistribution != null) ...[
+            _buildChangeDistributionBar(context),
+            const SizedBox(height: 8),
+          ],
+          // 量比热度条
           Row(
             children: [
               // 红色数量
@@ -97,6 +118,52 @@ class IndustryHeatBar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  /// 构建涨跌分布条
+  Widget _buildChangeDistributionBar(BuildContext context) {
+    final dist = changeDistribution!;
+
+    return Column(
+      children: [
+        // 标签和数字行
+        Row(
+          children: List.generate(7, (i) {
+            final count = dist[i];
+            return Expanded(
+              child: Text(
+                '${_changeLabels[i]}\n$count',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: count > 0
+                      ? Theme.of(context).colorScheme.onSurface
+                      : Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4),
+                ),
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 4),
+        // 进度条
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: SizedBox(
+            height: 8,
+            child: Row(
+              children: List.generate(7, (i) {
+                final count = dist[i];
+                if (count == 0) return const SizedBox.shrink();
+                return Expanded(
+                  flex: count,
+                  child: Container(color: _changeColors[i]),
+                );
+              }),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

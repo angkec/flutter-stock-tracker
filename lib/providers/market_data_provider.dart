@@ -70,6 +70,48 @@ class MarketDataProvider extends ChangeNotifier {
     return (hot: hot, cold: cold);
   }
 
+  /// 获取板块涨跌分布
+  /// 返回7个区间的股票数量: [涨停, >5%, 0~5%, 平, -5~0, <-5%, 跌停]
+  List<int>? getIndustryChangeDistribution(String? industry) {
+    if (industry == null || industry.isEmpty || _allData.isEmpty) {
+      return null;
+    }
+
+    int limitUp = 0;    // >= 9.8%
+    int up5 = 0;        // 5% ~ 9.8%
+    int up0to5 = 0;     // 0 < x < 5%
+    int flat = 0;       // == 0
+    int down0to5 = 0;   // -5% < x < 0
+    int down5 = 0;      // -9.8% < x <= -5%
+    int limitDown = 0;  // <= -9.8%
+
+    for (final data in _allData) {
+      if (data.industry != industry) continue;
+
+      final cp = data.changePercent;
+      if (cp >= 9.8) {
+        limitUp++;
+      } else if (cp >= 5) {
+        up5++;
+      } else if (cp > 0) {
+        up0to5++;
+      } else if (cp.abs() < 0.001) {
+        flat++;
+      } else if (cp > -5) {
+        down0to5++;
+      } else if (cp > -9.8) {
+        down5++;
+      } else {
+        limitDown++;
+      }
+    }
+
+    final total = limitUp + up5 + up0to5 + flat + down0to5 + down5 + limitDown;
+    if (total == 0) return null;
+
+    return [limitUp, up5, up0to5, flat, down0to5, down5, limitDown];
+  }
+
   /// 设置自选股代码（用于优先排序）
   void setWatchlistCodes(Set<String> codes) {
     _watchlistCodes = codes;

@@ -439,10 +439,13 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       );
     }
 
+    final changeDistribution = provider.getIndustryChangeDistribution(industry);
+
     return IndustryHeatBar(
       industryName: industry,
       hotCount: heat.hot,
       coldCount: heat.cold,
+      changeDistribution: changeDistribution,
     );
   }
 }
