@@ -111,9 +111,15 @@ class StockTable extends StatelessWidget {
     return GestureDetector(
       onLongPress: onLongPress != null ? () => onLongPress!(data) : null,
       onTap: () {
+        // 构建股票列表用于左右滑动切换
+        final stockList = stocks.map((s) => s.stock).toList();
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => StockDetailScreen(stock: data.stock),
+            builder: (_) => StockDetailScreen(
+              stock: data.stock,
+              stockList: stockList,
+              initialIndex: index,
+            ),
           ),
         );
       },

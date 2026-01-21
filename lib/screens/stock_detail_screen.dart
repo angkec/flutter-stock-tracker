@@ -22,7 +22,18 @@ enum ChartMode { minute, daily, weekly }
 class StockDetailScreen extends StatefulWidget {
   final Stock stock;
 
-  const StockDetailScreen({super.key, required this.stock});
+  /// 可选的股票列表，用于左右滑动切换
+  final List<Stock>? stockList;
+
+  /// 当前股票在列表中的索引
+  final int initialIndex;
+
+  const StockDetailScreen({
+    super.key,
+    required this.stock,
+    this.stockList,
+    this.initialIndex = 0,
+  });
 
   @override
   State<StockDetailScreen> createState() => _StockDetailScreenState();
@@ -46,16 +57,52 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
   ChartMode _chartMode = ChartMode.minute; // 默认显示分时
 
+  // 当前显示的股票索引和股票
+  late int _currentIndex;
+  late Stock _currentStock;
+  PageController? _pageController;
+
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex;
+    _currentStock = widget.stock;
+
+    // 如果有股票列表，初始化 PageController
+    if (widget.stockList != null && widget.stockList!.length > 1) {
+      _pageController = PageController(initialPage: _currentIndex);
+    }
+
     _connectAndLoad();
   }
 
   @override
   void dispose() {
     _client?.disconnect();
+    _pageController?.dispose();
     super.dispose();
+  }
+
+  /// 切换到指定索引的股票
+  void _switchToStock(int index) {
+    if (widget.stockList == null) return;
+    if (index < 0 || index >= widget.stockList!.length) return;
+    if (index == _currentIndex) return;
+
+    setState(() {
+      _currentIndex = index;
+      _currentStock = widget.stockList![index];
+      // 重置数据
+      _dailyBars = [];
+      _weeklyBars = [];
+      _todayBars = [];
+      _ratioHistory = [];
+      _klineError = null;
+      _ratioError = null;
+    });
+
+    // 重新加载数据
+    _loadData();
   }
 
   Future<void> _connectAndLoad() async {
@@ -137,15 +184,15 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
     try {
       final daily = await _client!.getSecurityBars(
-        market: widget.stock.market,
-        code: widget.stock.code,
+        market: _currentStock.market,
+        code: _currentStock.code,
         category: klineTypeDaily,
         start: 0,
         count: 30,
       );
       final weekly = await _client!.getSecurityBars(
-        market: widget.stock.market,
-        code: widget.stock.code,
+        market: _currentStock.market,
+        code: _currentStock.code,
         category: klineTypeWeekly,
         start: 0,
         count: 30,
@@ -183,8 +230,8 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       while (fetched < totalBars) {
         final count = (totalBars - fetched).clamp(0, 800);
         final bars = await _client!.getSecurityBars(
-          market: widget.stock.market,
-          code: widget.stock.code,
+          market: _currentStock.market,
+          code: _currentStock.code,
           category: klineType1Min,
           start: fetched,
           count: count,
@@ -241,11 +288,55 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasStockList = widget.stockList != null && widget.stockList!.length > 1;
+    final canGoPrev = hasStockList && _currentIndex > 0;
+    final canGoNext = hasStockList && _currentIndex < widget.stockList!.length - 1;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.stock.name} (${widget.stock.code})'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${_currentStock.name} (${_currentStock.code})',
+              style: const TextStyle(fontSize: 16),
+            ),
+            if (hasStockList)
+              Text(
+                '${_currentIndex + 1} / ${widget.stockList!.length}',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+              ),
+          ],
+        ),
+        actions: hasStockList
+            ? [
+                IconButton(
+                  icon: const Icon(Icons.chevron_left),
+                  onPressed: canGoPrev ? () => _switchToStock(_currentIndex - 1) : null,
+                  tooltip: '上一只',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_right),
+                  onPressed: canGoNext ? () => _switchToStock(_currentIndex + 1) : null,
+                  tooltip: '下一只',
+                ),
+              ]
+            : null,
       ),
-      body: _buildBody(),
+      body: GestureDetector(
+        onHorizontalDragEnd: hasStockList
+            ? (details) {
+                // 右滑（velocity > 0）看上一只，左滑（velocity < 0）看下一只
+                if (details.primaryVelocity == null) return;
+                if (details.primaryVelocity! > 300 && canGoPrev) {
+                  _switchToStock(_currentIndex - 1);
+                } else if (details.primaryVelocity! < -300 && canGoNext) {
+                  _switchToStock(_currentIndex + 1);
+                }
+              }
+            : null,
+        child: _buildBody(),
+      ),
     );
   }
 
@@ -382,7 +473,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       }
       return MinuteChart(
         bars: _todayBars,
-        preClose: widget.stock.preClose,
+        preClose: _currentStock.preClose,
       );
     }
 
@@ -424,7 +515,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
   Widget _buildIndustryHeatBar() {
     final provider = context.watch<MarketDataProvider>();
-    final industry = provider.industryService.getIndustry(widget.stock.code);
+    final industry = provider.industryService.getIndustry(_currentStock.code);
 
     if (industry == null) {
       return const SizedBox.shrink();
@@ -460,7 +551,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
     // 获取该股票的分钟量比
     final stockData = marketProvider.allData
-        .where((d) => d.stock.code == widget.stock.code)
+        .where((d) => d.stock.code == _currentStock.code)
         .firstOrNull;
     final minuteRatio = stockData?.ratio;
 
