@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
@@ -51,6 +52,15 @@ class MarketScreenState extends State<MarketScreen> {
   void searchByIndustry(String industry) {
     _searchController.text = industry;
     setState(() => _searchQuery = industry);
+  }
+
+  /// 跳转到行业详情页
+  void _navigateToIndustryDetail(String industry) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => IndustryDetailScreen(industry: industry),
+      ),
+    );
   }
 
   void _addToWatchlist(String code, String name) {
@@ -124,7 +134,7 @@ class MarketScreenState extends State<MarketScreen> {
                         isLoading: marketProvider.isLoading,
                         highlightCodes: watchlistService.watchlist.toSet(),
                         onLongPress: (data) => _addToWatchlist(data.stock.code, data.stock.name),
-                        onIndustryTap: searchByIndustry,
+                        onIndustryTap: _navigateToIndustryDetail,
                         industryTrendData: trendService.trendData,
                         todayTrendData: todayTrend,
                       ),
