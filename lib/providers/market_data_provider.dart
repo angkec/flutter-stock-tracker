@@ -316,7 +316,7 @@ class MarketDataProvider extends ChangeNotifier {
   }
 
   /// 刷新数据
-  Future<void> refresh() async {
+  Future<void> refresh({bool silent = false}) async {
     if (_isLoading) return;
 
     _isLoading = true;
@@ -329,6 +329,8 @@ class MarketDataProvider extends ChangeNotifier {
       // 确保连接
       final connected = await _pool.ensureConnected();
       if (!connected) {
+        _stage = RefreshStage.error;
+        _stageDescription = '无法连接到服务器';
         _errorMessage = '无法连接到服务器';
         _isLoading = false;
         notifyListeners();
@@ -337,8 +339,11 @@ class MarketDataProvider extends ChangeNotifier {
 
       // 获取所有股票
       final stocks = await _stockService.getAllStocks();
-      _total = stocks.length;
-      notifyListeners();
+
+      // Set initial stage
+      if (!silent) {
+        _updateProgress(RefreshStage.fetchMinuteData, 0, stocks.length);
+      }
 
       // 按自选股优先排序
       final prioritizedStocks = <Stock>[];
@@ -362,6 +367,9 @@ class MarketDataProvider extends ChangeNotifier {
         onProgress: (current, total) {
           _progress = current;
           _total = total;
+          if (!silent) {
+            _updateProgress(RefreshStage.fetchMinuteData, current, total);
+          }
           notifyListeners();
         },
         onData: (results) {
@@ -373,7 +381,12 @@ class MarketDataProvider extends ChangeNotifier {
       // 保存数据日期
       _dataDate = result.dataDate;
 
-      // 检测高质量回踩
+      // Update stage to daily bars
+      if (!silent) {
+        _updateProgress(RefreshStage.updateDailyBars, 0, orderedStocks.length);
+      }
+
+      // 检测高质量回踩 (this fetches daily bars)
       if (_pullbackService != null && _allData.isNotEmpty) {
         await _detectPullbacks();
       }
@@ -383,12 +396,20 @@ class MarketDataProvider extends ChangeNotifier {
         await _detectBreakouts();
       }
 
+      // Update stage to analyzing
+      if (!silent) {
+        _updateProgress(RefreshStage.analyzing, 0, 0);
+      }
+
       // 更新时间
       final now = DateTime.now();
       _updateTime = '${now.hour.toString().padLeft(2, '0')}:'
           '${now.minute.toString().padLeft(2, '0')}:'
           '${now.second.toString().padLeft(2, '0')}';
 
+      // Reset to idle
+      _stage = RefreshStage.idle;
+      _stageDescription = null;
       _isLoading = false;
       _progress = 0;
       _total = 0;
@@ -397,6 +418,8 @@ class MarketDataProvider extends ChangeNotifier {
       // 保存到缓存
       await _saveToCache();
     } catch (e) {
+      _stage = RefreshStage.error;
+      _stageDescription = '获取数据失败';
       _errorMessage = '获取数据失败: $e';
       _isLoading = false;
       _progress = 0;
