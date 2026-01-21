@@ -135,6 +135,12 @@ class IndustryTrendService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // 确保连接
+      final connected = await pool.ensureConnected();
+      if (!connected) {
+        throw Exception('无法连接到服务器');
+      }
+
       // 按行业分组股票
       final industryStocks = <String, List<StockMonitorData>>{};
       for (final stock in stocks) {
