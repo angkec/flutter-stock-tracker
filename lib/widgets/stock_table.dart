@@ -127,9 +127,12 @@ class StockTable extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 child: Row(
                   children: [
-                    Text(
-                      data.stock.code,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                    Expanded(
+                      child: Text(
+                        data.stock.code,
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     const SizedBox(width: 2),
                     Icon(
