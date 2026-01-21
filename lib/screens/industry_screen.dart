@@ -28,6 +28,9 @@ class _IndustryScreenState extends State<IndustryScreen> {
   IndustrySortMode _sortMode = IndustrySortMode.ratioPercent;
   bool _sortAscending = false; // false = 降序（默认），true = 升序
 
+  // 筛选状态
+  IndustryFilter _filter = const IndustryFilter();
+
   void _onSortModeChanged(IndustrySortMode mode) {
     setState(() {
       if (_sortMode == mode) {
@@ -39,6 +42,21 @@ class _IndustryScreenState extends State<IndustryScreen> {
         _sortAscending = false;
       }
     });
+  }
+
+  void _showFilterBottomSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => _FilterBottomSheet(
+        currentFilter: _filter,
+        onFilterChanged: (newFilter) {
+          setState(() {
+            _filter = newFilter;
+          });
+        },
+      ),
+    );
   }
 
   @override
@@ -201,6 +219,35 @@ class _IndustryScreenState extends State<IndustryScreen> {
     return statsList;
   }
 
+  /// 根据筛选条件过滤行业列表
+  List<IndustryStats> _applyFilter(
+    List<IndustryStats> stats,
+    IndustryTrendService trendService,
+    Map<String, DailyRatioPoint> todayTrend,
+  ) {
+    if (!_filter.hasActiveFilters) {
+      return stats;
+    }
+
+    return stats.where((stat) {
+      // 筛选今日占比
+      final todayRatio = todayTrend[stat.name]?.ratioAbovePercent;
+      if (!filterMatchesMinRatioPercent(todayRatio, _filter.minRatioAbovePercent)) {
+        return false;
+      }
+
+      // 筛选连续上升天数
+      if (_filter.consecutiveRisingDays != null) {
+        final trendData = _getTrendData(stat.name, trendService, todayTrend);
+        if (!filterMatchesConsecutiveRising(trendData, _filter.consecutiveRisingDays)) {
+          return false;
+        }
+      }
+
+      return true;
+    }).toList();
+  }
+
   /// 获取行业趋势数据（历史 + 今日）
   List<double> _getTrendData(
     String industry,
@@ -234,31 +281,47 @@ class _IndustryScreenState extends State<IndustryScreen> {
     final marketProvider = context.watch<MarketDataProvider>();
     final trendService = context.watch<IndustryTrendService>();
     final todayTrend = trendService.calculateTodayTrend(marketProvider.allData);
-    final stats = _calculateStats(marketProvider.allData, trendService, todayTrend);
+    final allStats = _calculateStats(marketProvider.allData, trendService, todayTrend);
+    final filteredStats = _applyFilter(allStats, trendService, todayTrend);
 
     // 决定是否显示更新按钮
     final showRefreshButton = trendService.missingDays > 3 && !trendService.isLoading;
+    final hasActiveFilter = _filter.hasActiveFilters;
 
     return Scaffold(
-      appBar: showRefreshButton
-          ? AppBar(
-              title: const Text('行业'),
-              automaticallyImplyLeading: false,
-              actions: [
-                TextButton.icon(
-                  onPressed: _manualRefreshTrend,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('更新趋势'),
-                ),
-              ],
-            )
-          : null,
+      appBar: AppBar(
+        title: Text(hasActiveFilter
+            ? '行业 (${filteredStats.length}/${allStats.length})'
+            : '行业'),
+        automaticallyImplyLeading: false,
+        actions: [
+          // 筛选按钮
+          IconButton(
+            onPressed: _showFilterBottomSheet,
+            icon: Badge(
+              isLabelVisible: hasActiveFilter,
+              child: Icon(
+                hasActiveFilter ? Icons.filter_alt : Icons.filter_alt_outlined,
+                size: 20,
+              ),
+            ),
+            tooltip: '筛选',
+          ),
+          // 更新趋势按钮
+          if (showRefreshButton)
+            TextButton.icon(
+              onPressed: _manualRefreshTrend,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('更新趋势'),
+            ),
+        ],
+      ),
       body: SafeArea(
         child: Column(
           children: [
             const StatusBar(),
             Expanded(
-              child: stats.isEmpty && !marketProvider.isLoading
+              child: filteredStats.isEmpty && !marketProvider.isLoading
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -351,11 +414,11 @@ class _IndustryScreenState extends State<IndustryScreen> {
                             onRefresh: () => marketProvider.refresh(),
                             child: ListView.builder(
                               physics: const AlwaysScrollableScrollPhysics(),
-                              itemCount: stats.length,
+                              itemCount: filteredStats.length,
                               itemExtent: 48,
                               itemBuilder: (context, index) => _buildRow(
                                 context,
-                                stats[index],
+                                filteredStats[index],
                                 index,
                                 trendService,
                                 todayTrend,
@@ -685,6 +748,216 @@ class _TrendSortHeader extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// 筛选底部面板
+class _FilterBottomSheet extends StatefulWidget {
+  final IndustryFilter currentFilter;
+  final ValueChanged<IndustryFilter> onFilterChanged;
+
+  const _FilterBottomSheet({
+    required this.currentFilter,
+    required this.onFilterChanged,
+  });
+
+  @override
+  State<_FilterBottomSheet> createState() => _FilterBottomSheetState();
+}
+
+class _FilterBottomSheetState extends State<_FilterBottomSheet> {
+  late bool _consecutiveRisingEnabled;
+  late int _consecutiveRisingDays;
+  late bool _minRatioEnabled;
+  late double _minRatioPercent;
+
+  static const List<int> _dayOptions = [3, 5, 7];
+  static const List<double> _percentOptions = [30, 40, 50, 60, 70];
+
+  @override
+  void initState() {
+    super.initState();
+    _consecutiveRisingEnabled = widget.currentFilter.consecutiveRisingDays != null;
+    _consecutiveRisingDays = widget.currentFilter.consecutiveRisingDays ?? 3;
+    _minRatioEnabled = widget.currentFilter.minRatioAbovePercent != null;
+    _minRatioPercent = widget.currentFilter.minRatioAbovePercent ?? 50.0;
+  }
+
+  void _applyFilter() {
+    final newFilter = IndustryFilter(
+      consecutiveRisingDays: _consecutiveRisingEnabled ? _consecutiveRisingDays : null,
+      minRatioAbovePercent: _minRatioEnabled ? _minRatioPercent : null,
+    );
+    widget.onFilterChanged(newFilter);
+    Navigator.of(context).pop();
+  }
+
+  void _clearFilter() {
+    widget.onFilterChanged(const IndustryFilter());
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 标题
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '筛选条件',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // 连续上升天数筛选
+            _buildFilterSection(
+              title: '连续上升天数',
+              subtitle: '筛选趋势连续N天上升的行业',
+              enabled: _consecutiveRisingEnabled,
+              onEnabledChanged: (value) {
+                setState(() {
+                  _consecutiveRisingEnabled = value;
+                });
+              },
+              child: Wrap(
+                spacing: 8,
+                children: _dayOptions.map((days) {
+                  final isSelected = _consecutiveRisingDays == days;
+                  return ChoiceChip(
+                    label: Text('$days天'),
+                    selected: isSelected,
+                    onSelected: _consecutiveRisingEnabled
+                        ? (selected) {
+                            if (selected) {
+                              setState(() {
+                                _consecutiveRisingDays = days;
+                              });
+                            }
+                          }
+                        : null,
+                  );
+                }).toList(),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // 今日占比筛选
+            _buildFilterSection(
+              title: '今日占比',
+              subtitle: '筛选今日量比>1股票占比超过X%的行业',
+              enabled: _minRatioEnabled,
+              onEnabledChanged: (value) {
+                setState(() {
+                  _minRatioEnabled = value;
+                });
+              },
+              child: Wrap(
+                spacing: 8,
+                children: _percentOptions.map((percent) {
+                  final isSelected = _minRatioPercent == percent;
+                  return ChoiceChip(
+                    label: Text('>${percent.toInt()}%'),
+                    selected: isSelected,
+                    onSelected: _minRatioEnabled
+                        ? (selected) {
+                            if (selected) {
+                              setState(() {
+                                _minRatioPercent = percent;
+                              });
+                            }
+                          }
+                        : null,
+                  );
+                }).toList(),
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            // 按钮
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _clearFilter,
+                    child: const Text('清除筛选'),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: _applyFilter,
+                    child: const Text('应用'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterSection({
+    required String title,
+    required String subtitle,
+    required bool enabled,
+    required ValueChanged<bool> onEnabledChanged,
+    required Widget child,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: enabled,
+              onChanged: onEnabledChanged,
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        AnimatedOpacity(
+          opacity: enabled ? 1.0 : 0.5,
+          duration: const Duration(milliseconds: 200),
+          child: IgnorePointer(
+            ignoring: !enabled,
+            child: child,
+          ),
+        ),
+      ],
     );
   }
 }

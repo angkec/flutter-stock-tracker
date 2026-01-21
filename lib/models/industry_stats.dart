@@ -87,3 +87,69 @@ class IndustryStats {
     return ratioAbove / total * 100;
   }
 }
+
+/// 行业筛选条件
+class IndustryFilter {
+  /// 连续上升天数筛选（null表示不筛选）
+  final int? consecutiveRisingDays;
+
+  /// 今日量比占比最小值筛选（null表示不筛选）
+  final double? minRatioAbovePercent;
+
+  const IndustryFilter({
+    this.consecutiveRisingDays,
+    this.minRatioAbovePercent,
+  });
+
+  /// 是否有激活的筛选条件
+  bool get hasActiveFilters =>
+      consecutiveRisingDays != null || minRatioAbovePercent != null;
+
+  /// 复制并更新筛选条件
+  IndustryFilter copyWith({
+    int? consecutiveRisingDays,
+    double? minRatioAbovePercent,
+    bool clearConsecutiveRisingDays = false,
+    bool clearMinRatioAbovePercent = false,
+  }) {
+    return IndustryFilter(
+      consecutiveRisingDays: clearConsecutiveRisingDays
+          ? null
+          : consecutiveRisingDays ?? this.consecutiveRisingDays,
+      minRatioAbovePercent: clearMinRatioAbovePercent
+          ? null
+          : minRatioAbovePercent ?? this.minRatioAbovePercent,
+    );
+  }
+}
+
+/// 计算连续上升天数（从最近一天往前数）
+/// 返回连续上升的天数（每天 ratioAbovePercent 大于前一天）
+int countConsecutiveRisingDays(List<double> data) {
+  if (data.length < 2) return 0;
+
+  int count = 0;
+  // 从最后往前检查
+  for (int i = data.length - 1; i > 0; i--) {
+    if (data[i] > data[i - 1]) {
+      count++;
+    } else {
+      break;
+    }
+  }
+
+  return count;
+}
+
+/// 检查趋势数据是否满足连续上升天数筛选条件
+bool filterMatchesConsecutiveRising(List<double> trendData, int? threshold) {
+  if (threshold == null) return true;
+  return countConsecutiveRisingDays(trendData) >= threshold;
+}
+
+/// 检查今日量比占比是否满足最小值筛选条件
+bool filterMatchesMinRatioPercent(double? todayRatioPercent, double? threshold) {
+  if (threshold == null) return true;
+  if (todayRatioPercent == null) return false;
+  return todayRatioPercent >= threshold;
+}
