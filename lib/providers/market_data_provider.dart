@@ -4,12 +4,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
+import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/services/pullback_service.dart';
 
 class MarketDataProvider extends ChangeNotifier {
   final TdxPool _pool;
   final StockService _stockService;
   final IndustryService _industryService;
+  PullbackService? _pullbackService;
 
   List<StockMonitorData> _allData = [];
   bool _isLoading = false;
@@ -68,6 +71,11 @@ class MarketDataProvider extends ChangeNotifier {
   /// 设置自选股代码（用于优先排序）
   void setWatchlistCodes(Set<String> codes) {
     _watchlistCodes = codes;
+  }
+
+  /// 设置回踩服务（用于检测高质量回踩）
+  void setPullbackService(PullbackService service) {
+    _pullbackService = service;
   }
 
   /// 从缓存加载数据
@@ -159,6 +167,11 @@ class MarketDataProvider extends ChangeNotifier {
         },
       );
 
+      // 检测高质量回踩
+      if (_pullbackService != null && _allData.isNotEmpty) {
+        await _detectPullbacks();
+      }
+
       // 更新时间
       final now = DateTime.now();
       _updateTime = '${now.hour.toString().padLeft(2, '0')}:'
@@ -179,5 +192,40 @@ class MarketDataProvider extends ChangeNotifier {
       _total = 0;
       notifyListeners();
     }
+  }
+
+  /// 检测高质量回踩
+  Future<void> _detectPullbacks() async {
+    if (_pullbackService == null || _allData.isEmpty) return;
+
+    // 获取所有股票信息
+    final stocks = _allData.map((d) => d.stock).toList();
+
+    // 批量获取日K数据（7根，用于回踩检测）
+    final dailyBarsMap = <String, List<dynamic>>{}; // code -> bars
+
+    await _pool.batchGetSecurityBarsStreaming(
+      stocks: stocks,
+      category: klineTypeDaily,
+      start: 0,
+      count: 7,
+      onStockBars: (index, bars) {
+        dailyBarsMap[stocks[index].code] = bars;
+      },
+    );
+
+    // 更新回踩标记
+    final updatedData = <StockMonitorData>[];
+    for (final data in _allData) {
+      final dailyBars = dailyBarsMap[data.stock.code];
+      final isPullback = dailyBars != null &&
+          dailyBars.length >= 7 &&
+          _pullbackService!.isPullback(dailyBars.cast());
+
+      updatedData.add(data.copyWith(isPullback: isPullback));
+    }
+
+    _allData = updatedData;
+    notifyListeners();
   }
 }

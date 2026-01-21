@@ -38,20 +38,25 @@ class MyApp extends StatelessWidget {
           service.load(); // 异步加载回踩配置
           return service;
         }),
-        ChangeNotifierProxyProvider3<TdxPool, StockService, IndustryService, MarketDataProvider>(
+        ChangeNotifierProxyProvider4<TdxPool, StockService, IndustryService, PullbackService, MarketDataProvider>(
           create: (context) {
             final pool = context.read<TdxPool>();
             final stockService = context.read<StockService>();
             final industryService = context.read<IndustryService>();
+            final pullbackService = context.read<PullbackService>();
             final provider = MarketDataProvider(
               pool: pool,
               stockService: stockService,
               industryService: industryService,
             );
+            provider.setPullbackService(pullbackService);
             provider.loadFromCache();
             return provider;
           },
-          update: (_, pool, stockService, industryService, previous) => previous!,
+          update: (_, pool, stockService, industryService, pullbackService, previous) {
+            previous!.setPullbackService(pullbackService);
+            return previous;
+          },
         ),
       ],
       child: MaterialApp(
