@@ -5,6 +5,7 @@ import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 
 void main() {
@@ -30,6 +31,11 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) {
           final service = WatchlistService();
           service.load(); // 异步加载自选股列表
+          return service;
+        }),
+        ChangeNotifierProvider(create: (_) {
+          final service = PullbackService();
+          service.load(); // 异步加载回踩配置
           return service;
         }),
         ChangeNotifierProxyProvider3<TdxPool, StockService, IndustryService, MarketDataProvider>(
