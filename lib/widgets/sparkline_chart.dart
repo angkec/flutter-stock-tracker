@@ -87,7 +87,7 @@ class SparklineChart extends StatelessWidget {
           lineColor: lineColor,
           strokeWidth: strokeWidth,
           referenceValue: referenceValue,
-          referenceLineColor: referenceLineColor ?? Colors.grey.withValues(alpha: 0.5),
+          referenceLineColor: referenceLineColor ?? Colors.grey,
         ),
       ),
     );
@@ -113,23 +113,8 @@ class _SparklinePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (data.isEmpty) return;
 
-    // 如果只有一个数据点，画一个点
-    if (data.length == 1) {
-      final paint = Paint()
-        ..color = lineColor
-        ..strokeWidth = strokeWidth
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(
-        Offset(size.width / 2, size.height / 2),
-        strokeWidth,
-        paint,
-      );
-      return;
-    }
-
     // 添加少量边距以避免线条贴边
     const padding = 2.0;
-    final effectiveWidth = size.width - padding * 2;
     final effectiveHeight = size.height - padding * 2;
 
     // 计算数据范围
@@ -154,27 +139,50 @@ class _SparklinePainter extends CustomPainter {
       valueRange = 1.0;
     }
 
-    // 计算点之间的水平间距
-    final xStep = effectiveWidth / (data.length - 1);
-
     // 将数据值转换为 Y 坐标
     double valueToY(double value) {
       return padding + (1 - (value - minValue) / valueRange) * effectiveHeight;
     }
 
-    // 绘制参考线（如果有）
+    // 绘制参考线（如果有）- 在绘制数据线之前绘制，这样数据线在参考线上方
     if (referenceValue != null) {
       final refY = valueToY(referenceValue!);
       final refPaint = Paint()
-        ..color = referenceLineColor
-        ..strokeWidth = 0.5
+        ..color = referenceLineColor.withValues(alpha: 0.6)
+        ..strokeWidth = 1.0
         ..style = PaintingStyle.stroke;
-      canvas.drawLine(
-        Offset(padding, refY),
-        Offset(size.width - padding, refY),
-        refPaint,
-      );
+      // 使用虚线效果 - 稍长的dash更容易看到
+      const dashWidth = 3.0;
+      const dashSpace = 2.0;
+      var x = padding;
+      while (x < size.width - padding) {
+        canvas.drawLine(
+          Offset(x, refY),
+          Offset((x + dashWidth).clamp(0, size.width - padding), refY),
+          refPaint,
+        );
+        x += dashWidth + dashSpace;
+      }
     }
+
+    // 如果只有一个数据点，画一个点
+    if (data.length == 1) {
+      final paint = Paint()
+        ..color = lineColor
+        ..strokeWidth = strokeWidth
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(
+        Offset(size.width / 2, size.height / 2),
+        strokeWidth,
+        paint,
+      );
+      return;
+    }
+
+    final effectiveWidth = size.width - padding * 2;
+
+    // 计算点之间的水平间距
+    final xStep = effectiveWidth / (data.length - 1);
 
     // 创建数据线画笔
     final paint = Paint()
