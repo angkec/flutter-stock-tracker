@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 
 /// 量比颜色
-const Color _upColor = Color(0xFFFF4444);   // ≥1 红
-const Color _downColor = Color(0xFF00AA00); // <1 绿
+const Color _upColor = AppColors.stockUp;   // ≥1 红
+const Color _downColor = AppColors.stockDown; // <1 绿
 
 /// 星期名称
 const List<String> _weekdays = ['', '周一', '周二', '周三', '周四', '周五', '周六', '周日'];

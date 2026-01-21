@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 
 /// 板块热度颜色
-const Color _hotColor = Color(0xFFFF4444);   // 量比>=1 红
-const Color _coldColor = Color(0xFF00AA00);  // 量比<1 绿
+const Color _hotColor = AppColors.stockUp;   // 量比>=1 红
+const Color _coldColor = AppColors.stockDown;  // 量比<1 绿
 
 /// 涨跌分布颜色（从涨停到跌停）
 const List<Color> _changeColors = [
-  Color(0xFFFF0000),  // 涨停
-  Color(0xFFFF4444),  // >5%
-  Color(0xFFFF8888),  // 0~5%
-  Color(0xFF888888),  // 平
-  Color(0xFF88CC88),  // -5~0
-  Color(0xFF44AA44),  // <-5%
-  Color(0xFF00AA00),  // 跌停
+  AppColors.limitUp,    // 涨停
+  AppColors.up5,        // >5%
+  AppColors.up0to5,     // 0~5%
+  AppColors.flat,       // 平
+  AppColors.down0to5,   // -5~0
+  AppColors.down5,      // <-5%
+  AppColors.limitDown,  // 跌停
 ];
 
 /// 涨跌分布标签
