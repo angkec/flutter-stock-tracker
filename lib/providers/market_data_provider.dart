@@ -80,6 +80,16 @@ class MarketDataProvider extends ChangeNotifier {
   String? get lastFetchDate => _lastFetchDate;
   int get minuteDataCacheCount => _minuteDataCache.length;
 
+  // Cache info getters
+  int get dailyBarsCacheCount => _dailyBarsCache.length;
+  String get dailyBarsCacheSize => _formatSize(_estimateDailyBarsSize());
+  String get minuteDataCacheSize => _formatSize(_estimateMinuteDataSize());
+  String? get industryDataCacheSize => _industryService.isLoaded
+      ? _formatSize(_estimateIndustryDataSize())
+      : null;
+  bool get industryDataLoaded => _industryService.isLoaded;
+  String get totalCacheSizeFormatted => _formatSize(_estimateTotalSize());
+
   /// 获取板块热度（量比>=1 和 <1 的股票数量）
   /// 返回 (hotCount, coldCount)，如果行业为空或无数据返回 null
   ({int hot, int cold})? getIndustryHeat(String? industry) {
@@ -520,5 +530,66 @@ class MarketDataProvider extends ChangeNotifier {
 
     _allData = updatedData;
     notifyListeners();
+  }
+
+  // Size estimation methods
+  int _estimateDailyBarsSize() {
+    int total = 0;
+    for (final bars in _dailyBarsCache.values) {
+      total += bars.length * 50; // ~50 bytes per bar
+    }
+    return total;
+  }
+
+  int _estimateMinuteDataSize() {
+    int total = 0;
+    for (final data in _minuteDataCache.values) {
+      total += data.length * 40; // ~40 bytes per minute data
+    }
+    return total;
+  }
+
+  int _estimateIndustryDataSize() {
+    // Rough estimate: ~100KB for industry data
+    return 100 * 1024;
+  }
+
+  int _estimateTotalSize() {
+    return _estimateDailyBarsSize() +
+        _estimateMinuteDataSize() +
+        (_industryService.isLoaded ? _estimateIndustryDataSize() : 0);
+  }
+
+  String _formatSize(int bytes) {
+    if (bytes < 1024) return '<1KB';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)}KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)}MB';
+  }
+
+  // Clear cache methods
+  Future<void> clearDailyBarsCache() async {
+    _dailyBarsCache.clear();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_dailyBarsCacheKey);
+    notifyListeners();
+  }
+
+  Future<void> clearMinuteDataCache() async {
+    _minuteDataCache.clear();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_minuteDataCacheKey);
+    notifyListeners();
+  }
+
+  Future<void> clearIndustryDataCache() async {
+    // IndustryService may not have clearCache, so just reload
+    // For now, just notify - the industry data is loaded fresh on startup
+    notifyListeners();
+  }
+
+  Future<void> clearAllCache() async {
+    await clearDailyBarsCache();
+    await clearMinuteDataCache();
+    await clearIndustryDataCache();
   }
 }

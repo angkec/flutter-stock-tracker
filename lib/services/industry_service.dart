@@ -4,12 +4,17 @@ import 'package:flutter/services.dart';
 
 class IndustryService {
   Map<String, String> _data = {};
+  bool _isLoaded = false;
+
+  /// 是否已加载
+  bool get isLoaded => _isLoaded;
 
   /// 从 assets 加载行业数据
   Future<void> load() async {
     final jsonStr = await rootBundle.loadString('assets/sw_industry.json');
     final Map<String, dynamic> json = jsonDecode(jsonStr);
     _data = json.map((k, v) => MapEntry(k, v.toString()));
+    _isLoaded = true;
   }
 
   /// 根据股票代码获取行业
