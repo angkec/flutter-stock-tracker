@@ -65,6 +65,18 @@ class StockService {
 
   // 最大有效量比阈值 (超过此值认为是涨停/跌停/异常)
   static const double maxValidRatio = 50.0;
+
+  /// 格式化日期为 "YYYY-MM-DD" 字符串
+  static String _formatDate(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  }
+
+  /// 解析 "YYYY-MM-DD" 字符串为 DateTime
+  static DateTime _parseDate(String dateStr) {
+    final parts = dateStr.split('-');
+    return DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+  }
+
   // 最小K线数量 (少于此值认为是停盘或数据不足)
   static const int minBarsCount = 10;
 
@@ -148,38 +160,61 @@ class StockService {
 
   /// 批量获取股票监控数据 (并行，流式返回)
   /// [onData] 当有新的有效数据时回调，返回当前所有有效结果
-  Future<List<StockMonitorData>> batchGetMonitorData(
+  /// 返回 MonitorDataResult，包含数据和实际数据日期
+  /// 如果今天无数据，会自动回退到最近的交易日
+  Future<MonitorDataResult> batchGetMonitorData(
     List<Stock> stocks, {
     IndustryService? industryService,
     void Function(int current, int total)? onProgress,
     void Function(List<StockMonitorData> results)? onData,
   }) async {
     final today = DateTime.now();
-    final results = <StockMonitorData>[];
+    final todayKey = _formatDate(today);
+    final allDates = <String>{};  // 收集所有日期
+    final stockBarsMap = <int, List<KLine>>{};  // 暂存所有K线
     var completed = 0;
     final total = stocks.length;
 
-    // 用于跟踪上次回调的结果数量
+    // 第一遍：收集数据和日期
+    await _pool.batchGetSecurityBarsStreaming(
+      stocks: stocks,
+      category: klineType1Min,
+      start: 0,
+      count: 240,
+      onStockBars: (index, bars) {
+        completed++;
+        onProgress?.call(completed, total);
+        stockBarsMap[index] = bars;
+        for (final bar in bars) {
+          allDates.add(_formatDate(bar.datetime));
+        }
+      },
+    );
+
+    // 确定使用哪个日期：优先今天，否则用最近的日期
+    final sortedDates = allDates.toList()..sort((a, b) => b.compareTo(a));
+    final targetDate = sortedDates.contains(todayKey)
+        ? todayKey
+        : (sortedDates.isNotEmpty ? sortedDates.first : todayKey);
+
+    // 第二遍：用目标日期过滤并计算
+    final results = <StockMonitorData>[];
     var lastReportedCount = 0;
     const reportThreshold = 50; // 每增加50个有效结果就回调一次
 
-    // 处理单个股票的K线数据
-    void processStockBars(int index, List<KLine> bars) {
-      completed++;
-      onProgress?.call(completed, total);
+    for (final entry in stockBarsMap.entries) {
+      final index = entry.key;
+      final bars = entry.value;
 
-      // 只保留当日的K线
-      final todayBars = bars.where((bar) =>
-          bar.datetime.year == today.year &&
-          bar.datetime.month == today.month &&
-          bar.datetime.day == today.day).toList();
+      // 只保留目标日期的K线
+      final targetBars = bars.where((bar) => _formatDate(bar.datetime) == targetDate).toList();
 
-      if (todayBars.isEmpty) return;
+      if (targetBars.isEmpty) continue;
 
-      final ratio = calculateRatio(todayBars);
-      if (ratio == null) return;
+      final ratio = calculateRatio(targetBars);
+      if (ratio == null) continue;
 
-      final changePercent = calculateChangePercent(todayBars, stocks[index].preClose);
+      final changePercent = calculateChangePercent(targetBars, stocks[index].preClose);
 
       results.add(StockMonitorData(
         stock: stocks[index],
@@ -198,15 +233,6 @@ class StockService {
       }
     }
 
-    // 并行获取所有股票的K线
-    await _pool.batchGetSecurityBarsStreaming(
-      stocks: stocks,
-      category: klineType1Min,
-      start: 0,
-      count: 240,
-      onStockBars: processStockBars,
-    );
-
     // 最终结果排序
     results.sort((a, b) => b.ratio.compareTo(a.ratio));
 
@@ -215,7 +241,7 @@ class StockService {
       onData?.call(results);
     }
 
-    return results;
+    return MonitorDataResult(data: results, dataDate: _parseDate(targetDate));
   }
 
   /// 获取 K 线数据
