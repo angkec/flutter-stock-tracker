@@ -14,8 +14,7 @@ const double _codeWidth = 95;
 const double _nameWidth = 100;
 const double _changeWidth = 75;
 const double _ratioWidth = 65;
-const double _industryWidth = 80;
-const double _trendWidth = 65;
+const double _industryWidth = 135; // 包含行业标签和趋势折线
 const double _rowHeight = 44;
 
 /// 格式化量比
@@ -80,8 +79,6 @@ class StockTable extends StatelessWidget {
     );
   }
 
-  bool get _showTrendColumn => industryTrendData != null || todayTrendData != null;
-
   Widget _buildHeader(BuildContext context) {
     return Container(
       height: _rowHeight,
@@ -101,7 +98,6 @@ class StockTable extends StatelessWidget {
           _buildHeaderCell('涨跌幅', _changeWidth, numeric: true),
           _buildHeaderCell('量比', _ratioWidth, numeric: true),
           _buildHeaderCell('行业', _industryWidth),
-          if (_showTrendColumn) _buildHeaderCell('趋势', _trendWidth),
         ],
       ),
     );
@@ -223,7 +219,7 @@ class StockTable extends StatelessWidget {
               ),
             ),
           ),
-          // 行业列
+          // 行业列（包含行业标签和趋势折线）
           SizedBox(
             width: _industryWidth,
             child: Padding(
@@ -233,39 +229,40 @@ class StockTable extends StatelessWidget {
                       onTap: onIndustryTap != null
                           ? () => onIndustryTap!(data.industry!)
                           : null,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .secondaryContainer,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          data.industry!,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSecondaryContainer,
+                      child: Row(
+                        children: [
+                          // 行业标签
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .secondaryContainer,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text(
+                              data.industry!,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSecondaryContainer,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                          const SizedBox(width: 4),
+                          // 趋势折线图
+                          Expanded(
+                            child: _buildTrendSparkline(data.industry),
+                          ),
+                        ],
                       ),
                     )
                   : const Text('-', style: TextStyle(fontSize: 13)),
             ),
           ),
-          // 趋势列
-          if (_showTrendColumn)
-            SizedBox(
-              width: _trendWidth,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: _buildTrendSparkline(data.industry),
-              ),
-            ),
         ],
       ),
       ),
@@ -299,8 +296,8 @@ class StockTable extends StatelessWidget {
 
     return SparklineChart(
       data: points,
-      width: 56,
-      height: 24,
+      width: 50,
+      height: 20,
       referenceValue: 50,
     );
   }
@@ -336,8 +333,7 @@ class StockTable extends StatelessWidget {
       );
     }
 
-    final totalWidth = _codeWidth + _nameWidth + _changeWidth + _ratioWidth + _industryWidth +
-        (_showTrendColumn ? _trendWidth : 0);
+    const totalWidth = _codeWidth + _nameWidth + _changeWidth + _ratioWidth + _industryWidth;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
