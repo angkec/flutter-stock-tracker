@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/screens/data_management_screen.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
 
 /// 市场状态枚举
@@ -196,53 +197,75 @@ class StatusBar extends StatelessWidget {
 
   Widget _buildRefreshArea(BuildContext context, MarketDataProvider provider) {
     if (provider.isLoading) {
-      // 加载中：显示小进度指示器 + 数字
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          if (provider.total > 0) ...[
+      // 加载中：显示小进度指示器 + 阶段描述
+      return GestureDetector(
+        onLongPress: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const DataManagementScreen()),
+          );
+        },
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
             const SizedBox(width: 6),
             Text(
-              '${provider.progress}/${provider.total}',
+              provider.stageDescription ?? '${provider.progress}/${provider.total}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontFamily: 'monospace',
                     fontSize: 10,
                   ),
             ),
           ],
-        ],
+        ),
       );
     } else if (provider.errorMessage != null) {
-      // 错误：显示红色重试按钮
-      return SizedBox(
-        width: 32,
-        height: 32,
-        child: IconButton(
-          padding: EdgeInsets.zero,
-          onPressed: () => provider.refresh(),
-          icon: Icon(
-            Icons.refresh,
-            size: 20,
-            color: Theme.of(context).colorScheme.error,
+      // 错误：显示橙色重试按钮
+      return GestureDetector(
+        onLongPress: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const DataManagementScreen()),
+          );
+        },
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            onPressed: () => provider.refresh(),
+            icon: const Icon(
+              Icons.refresh,
+              size: 20,
+              color: Colors.orange,
+            ),
+            tooltip: '重试',
           ),
-          tooltip: '重试',
         ),
       );
     } else {
       // 空闲：显示刷新按钮
-      return SizedBox(
-        width: 32,
-        height: 32,
-        child: IconButton(
-          padding: EdgeInsets.zero,
-          onPressed: () => provider.refresh(),
-          icon: const Icon(Icons.refresh, size: 20),
-          tooltip: '刷新数据',
+      return GestureDetector(
+        onLongPress: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const DataManagementScreen()),
+          );
+        },
+        child: SizedBox(
+          width: 32,
+          height: 32,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            onPressed: () => provider.refresh(),
+            icon: const Icon(Icons.refresh, size: 20),
+            tooltip: '刷新数据 (长按管理缓存)',
+          ),
         ),
       );
     }
