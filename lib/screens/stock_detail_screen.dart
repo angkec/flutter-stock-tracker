@@ -336,28 +336,51 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
             : null,
       ),
       body: hasStockList
-          ? PageView.builder(
-              controller: _pageController,
-              physics: const PageScrollPhysics(),
-              itemCount: widget.stockList!.length,
-              onPageChanged: (index) {
-                if (index != _currentIndex) {
-                  _switchToStock(index);
-                }
-              },
-              itemBuilder: (context, index) {
-                // 当前页显示完整内容
-                if (index == _currentIndex) {
-                  return _buildBody();
-                }
-                // 相邻页显示占位（保持简单以避免手势冲突）
-                return Center(
-                  child: Text(
-                    widget.stockList![index].name,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
+          ? GestureDetector(
+              onHorizontalDragUpdate: (details) {
+                // 手动控制 PageView 跟随手指移动
+                _pageController?.position.moveTo(
+                  _pageController!.position.pixels - details.delta.dx,
                 );
               },
+              onHorizontalDragEnd: (details) {
+                final velocity = details.primaryVelocity ?? 0;
+                if (velocity > 300 && canGoPrev) {
+                  _animateToStock(_currentIndex - 1);
+                } else if (velocity < -300 && canGoNext) {
+                  _animateToStock(_currentIndex + 1);
+                } else {
+                  // 回弹到当前页
+                  _pageController?.animateToPage(
+                    _currentIndex,
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                  );
+                }
+              },
+              child: PageView.builder(
+                controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: widget.stockList!.length,
+                onPageChanged: (index) {
+                  if (index != _currentIndex) {
+                    _switchToStock(index);
+                  }
+                },
+                itemBuilder: (context, index) {
+                  // 当前页显示完整内容
+                  if (index == _currentIndex) {
+                    return _buildBody();
+                  }
+                  // 相邻页显示占位
+                  return Center(
+                    child: Text(
+                      widget.stockList![index].name,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  );
+                },
+              ),
             )
           : _buildBody(),
     );
