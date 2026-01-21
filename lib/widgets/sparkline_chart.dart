@@ -61,19 +61,31 @@ class SparklineChart extends StatelessWidget {
       return SizedBox(width: chartWidth, height: chartHeight);
     }
 
-    // 确定趋势颜色
+    // 确定线条颜色
     final Color lineColor;
-    if (data.length < 2) {
-      lineColor = flatColor ?? _kFlatColor;
-    } else {
-      final first = data.first;
-      final last = data.last;
-      if (last > first) {
+    final last = data.last;
+    if (referenceValue != null) {
+      // 如果有参考值，根据最新值与参考值的比较来决定颜色
+      if (last > referenceValue!) {
         lineColor = upColor ?? _kUpColor;
-      } else if (last < first) {
+      } else if (last < referenceValue!) {
         lineColor = downColor ?? _kDownColor;
       } else {
         lineColor = flatColor ?? _kFlatColor;
+      }
+    } else {
+      // 没有参考值时，根据首尾趋势决定颜色
+      if (data.length < 2) {
+        lineColor = flatColor ?? _kFlatColor;
+      } else {
+        final first = data.first;
+        if (last > first) {
+          lineColor = upColor ?? _kUpColor;
+        } else if (last < first) {
+          lineColor = downColor ?? _kDownColor;
+        } else {
+          lineColor = flatColor ?? _kFlatColor;
+        }
       }
     }
 
