@@ -21,6 +21,7 @@ class IndustryScreen extends StatefulWidget {
 
 class _IndustryScreenState extends State<IndustryScreen> {
   bool _hasCheckedTrend = false;
+  bool _hasMarketDataWhenChecked = false; // 检查时是否有市场数据
   int _fetchProgress = 0;
   int _fetchTotal = 0;
 
@@ -75,8 +76,35 @@ class _IndustryScreenState extends State<IndustryScreen> {
 
     // 只有当有数据时才检查刷新
     if (marketProvider.allData.isNotEmpty) {
+      _hasMarketDataWhenChecked = true;
       await trendService.checkAndRefresh(pool, marketProvider.allData);
     }
+  }
+
+  /// 在build中检查是否需要重新触发趋势检查
+  void _maybeRecheckTrend(MarketDataProvider marketProvider) {
+    // 如果之前检查时没有市场数据，但现在有了，需要重新检查
+    if (_hasCheckedTrend && !_hasMarketDataWhenChecked && marketProvider.allData.isNotEmpty) {
+      _checkAndRefreshTrend();
+    }
+  }
+
+  /// 检查是否需要显示刷新按钮
+  /// 显示条件：有市场数据 且 (缺失天数>3 或 历史趋势数据为空)
+  bool _shouldShowRefreshButton(
+    MarketDataProvider marketProvider,
+    IndustryTrendService trendService,
+  ) {
+    if (trendService.isLoading) return false;
+    if (marketProvider.allData.isEmpty) return false;
+
+    // 如果历史趋势数据为空，需要刷新
+    if (trendService.trendData.isEmpty) return true;
+
+    // 如果缺失天数>3，需要手动刷新
+    if (trendService.missingDays > 3) return true;
+
+    return false;
   }
 
   Future<void> _manualRefreshTrend() async {
@@ -280,12 +308,16 @@ class _IndustryScreenState extends State<IndustryScreen> {
   Widget build(BuildContext context) {
     final marketProvider = context.watch<MarketDataProvider>();
     final trendService = context.watch<IndustryTrendService>();
+
+    // 检查是否需要重新触发趋势检查
+    _maybeRecheckTrend(marketProvider);
+
     final todayTrend = trendService.calculateTodayTrend(marketProvider.allData);
     final allStats = _calculateStats(marketProvider.allData, trendService, todayTrend);
     final filteredStats = _applyFilter(allStats, trendService, todayTrend);
 
     // 决定是否显示更新按钮
-    final showRefreshButton = trendService.missingDays > 3 && !trendService.isLoading;
+    final showRefreshButton = _shouldShowRefreshButton(marketProvider, trendService);
     final hasActiveFilter = _filter.hasActiveFilters;
 
     return Scaffold(
