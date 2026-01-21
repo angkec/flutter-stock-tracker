@@ -1,9 +1,5 @@
 import 'package:flutter/material.dart';
-
-/// 默认颜色常量
-const Color _kUpColor = Color(0xFFFF4444); // 涨 - 红
-const Color _kDownColor = Color(0xFF00AA00); // 跌 - 绿
-const Color _kFlatColor = Colors.grey;
+import 'package:stock_rtwatcher/theme/app_colors.dart';
 
 /// 迷你折线图组件，用于显示趋势
 ///
@@ -65,16 +61,16 @@ class SparklineChart extends StatelessWidget {
     // 确定线条颜色（用于无参考值时的整条线颜色）
     final Color lineColor;
     if (data.length < 2) {
-      lineColor = flatColor ?? _kFlatColor;
+      lineColor = flatColor ?? AppColors.stockFlat;
     } else {
       final first = data.first;
       final last = data.last;
       if (last > first) {
-        lineColor = upColor ?? _kUpColor;
+        lineColor = upColor ?? AppColors.stockUp;
       } else if (last < first) {
-        lineColor = downColor ?? _kDownColor;
+        lineColor = downColor ?? AppColors.stockDown;
       } else {
-        lineColor = flatColor ?? _kFlatColor;
+        lineColor = flatColor ?? AppColors.stockFlat;
       }
     }
 
@@ -86,8 +82,8 @@ class SparklineChart extends StatelessWidget {
         painter: _SparklinePainter(
           data: data,
           lineColor: lineColor,
-          upColor: upColor ?? _kUpColor,
-          downColor: downColor ?? _kDownColor,
+          upColor: upColor ?? AppColors.stockUp,
+          downColor: downColor ?? AppColors.stockDown,
           strokeWidth: strokeWidth,
           referenceValue: referenceValue,
           referenceLineColor: referenceLineColor ?? Colors.grey,
