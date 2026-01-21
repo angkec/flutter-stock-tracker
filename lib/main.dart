@@ -6,6 +6,8 @@ import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
+import 'package:stock_rtwatcher/services/breakout_service.dart';
+import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 
 void main() {
@@ -38,23 +40,36 @@ class MyApp extends StatelessWidget {
           service.load(); // 异步加载回踩配置
           return service;
         }),
-        ChangeNotifierProxyProvider4<TdxPool, StockService, IndustryService, PullbackService, MarketDataProvider>(
+        ChangeNotifierProvider(create: (_) {
+          final service = BreakoutService();
+          service.load(); // 异步加载突破配置
+          return service;
+        }),
+        ChangeNotifierProvider(create: (_) {
+          final service = IndustryTrendService();
+          service.load(); // 异步加载行业趋势缓存
+          return service;
+        }),
+        ChangeNotifierProxyProvider5<TdxPool, StockService, IndustryService, PullbackService, BreakoutService, MarketDataProvider>(
           create: (context) {
             final pool = context.read<TdxPool>();
             final stockService = context.read<StockService>();
             final industryService = context.read<IndustryService>();
             final pullbackService = context.read<PullbackService>();
+            final breakoutService = context.read<BreakoutService>();
             final provider = MarketDataProvider(
               pool: pool,
               stockService: stockService,
               industryService: industryService,
             );
             provider.setPullbackService(pullbackService);
+            provider.setBreakoutService(breakoutService);
             provider.loadFromCache();
             return provider;
           },
-          update: (_, pool, stockService, industryService, pullbackService, previous) {
+          update: (_, pool, stockService, industryService, pullbackService, breakoutService, previous) {
             previous!.setPullbackService(pullbackService);
+            previous.setBreakoutService(breakoutService);
             return previous;
           },
         ),
