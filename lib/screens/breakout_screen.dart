@@ -1,34 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:stock_rtwatcher/models/pullback_config.dart';
+import 'package:stock_rtwatcher/models/breakout_config.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
-import 'package:stock_rtwatcher/services/pullback_service.dart';
+import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
-import 'package:stock_rtwatcher/widgets/pullback_config_dialog.dart';
+import 'package:stock_rtwatcher/widgets/breakout_config_dialog.dart';
 
-/// 回踩页面 - 显示所有高质量回踩的股票
-class PullbackScreen extends StatelessWidget {
+/// 放量突破页面 - 显示所有放量突破后回踩的股票
+class BreakoutScreen extends StatelessWidget {
   final void Function(String industry)? onIndustryTap;
 
-  const PullbackScreen({super.key, this.onIndustryTap});
-
-  String _dropModeText(DropMode mode) {
-    switch (mode) {
-      case DropMode.todayDown:
-        return '今跌';
-      case DropMode.belowYesterdayHigh:
-        return '低昨高';
-      case DropMode.none:
-        return '';
-    }
-  }
+  const BreakoutScreen({super.key, this.onIndustryTap});
 
   void _showConfigDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => const PullbackConfigDialog(),
-    );
+    showBreakoutConfigSheet(context);
   }
 
   void _handleLongPress(BuildContext context, dynamic data) {
@@ -59,27 +45,29 @@ class PullbackScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<MarketDataProvider>();
-    final pullbackService = context.watch<PullbackService>();
+    final breakoutService = context.watch<BreakoutService>();
     final watchlist = context.watch<WatchlistService>();
 
-    // 筛选出回踩股票
-    final pullbackStocks = provider.allData
-        .where((data) => data.isPullback)
+    // 筛选出突破股票
+    final breakoutStocks = provider.allData
+        .where((data) => data.isBreakout)
         .toList();
+
+    final config = breakoutService.config;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('单日回踩'),
+        title: const Text('多日回踩'),
         actions: [
           // 重算按钮
           IconButton(
             icon: const Icon(Icons.calculate_outlined),
-            tooltip: '重算回踩',
+            tooltip: '重算突破',
             onPressed: () {
-              final success = provider.recalculatePullbacks();
+              final success = provider.recalculateBreakouts();
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(success ? '已重算回踩' : '请先在全市场页面刷新数据'),
+                  content: Text(success ? '已重算突破' : '请先在全市场页面刷新数据'),
                   duration: const Duration(seconds: 2),
                 ),
               );
@@ -105,17 +93,19 @@ class PullbackScreen extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    '昨涨>${(pullbackService.config.minYesterdayGain * 100).toStringAsFixed(0)}% '
-                    '量>${pullbackService.config.volumeMultiplier}x '
-                    '${_dropModeText(pullbackService.config.dropMode)} '
-                    '跌<${(pullbackService.config.maxDropRatio * 100).toStringAsFixed(0)}% '
-                    '日量比<${pullbackService.config.maxDailyRatio} '
-                    '分量比>${pullbackService.config.minMinuteRatio}',
+                    '量>${config.breakVolumeMultiplier}x '
+                    'MA${config.maBreakDays} '
+                    '前高${config.highBreakDays}天 '
+                    '${config.maxUpperShadowRatio > 0 ? "上引<${config.maxUpperShadowRatio.toStringAsFixed(1)} " : ""}'
+                    '回${config.minPullbackDays}-${config.maxPullbackDays}天 '
+                    '跌<${(config.maxTotalDrop * 100).toStringAsFixed(0)}%'
+                    '(${config.dropReferencePoint == DropReferencePoint.breakoutClose ? "收" : "高"}) '
+                    '${config.filterSurgeAfterPullback ? "滤涨>${(config.surgeThreshold * 100).toStringAsFixed(0)}%" : ""}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),
                 Text(
-                  '${pullbackStocks.length}只',
+                  '${breakoutStocks.length}只',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -125,7 +115,7 @@ class PullbackScreen extends StatelessWidget {
           ),
           // 股票列表
           Expanded(
-            child: pullbackStocks.isEmpty
+            child: breakoutStocks.isEmpty
                 ? Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -153,7 +143,7 @@ class PullbackScreen extends StatelessWidget {
                     ),
                   )
                 : StockTable(
-                    stocks: pullbackStocks,
+                    stocks: breakoutStocks,
                     highlightCodes: watchlist.watchlist.toSet(),
                     onLongPress: (data) => _handleLongPress(context, data),
                     onIndustryTap: onIndustryTap,

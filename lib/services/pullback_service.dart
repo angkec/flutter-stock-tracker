@@ -86,9 +86,23 @@ class PullbackService extends ChangeNotifier {
       return false;
     }
 
-    // 4. 今日下跌：今日收盘 < 今日开盘
-    if (today.close >= today.open) {
-      return false;
+    // 4. 今日下跌条件（根据配置）
+    switch (_config.dropMode) {
+      case DropMode.todayDown:
+        // 今日下跌：今日收盘 < 今日开盘
+        if (today.close >= today.open) {
+          return false;
+        }
+        break;
+      case DropMode.belowYesterdayHigh:
+        // 今日低于昨日最高点：今日收盘 < 昨日最高
+        if (today.close >= yesterday.high) {
+          return false;
+        }
+        break;
+      case DropMode.none:
+        // 无条件，跳过
+        break;
     }
 
     // 5. 跌幅限制：今日跌幅 < 昨日涨幅 × maxDropRatio
@@ -98,10 +112,10 @@ class PullbackService extends ChangeNotifier {
       return false;
     }
 
-    // 6. 量比要求：今日日K量比 > minDailyRatio
-    // 日K量比 = 今日成交量 / 前5日均量
-    final todayRatio = today.volume / avg5Volume;
-    if (todayRatio <= _config.minDailyRatio) {
+    // 6. 量比要求：今日日K量比 <= maxDailyRatio（缩量回踩）
+    // 日K量比 = 今日成交量 / 昨日成交量
+    final todayRatio = today.volume / yesterday.volume;
+    if (todayRatio > _config.maxDailyRatio) {
       return false;
     }
 

@@ -12,6 +12,7 @@ class StockMonitorData {
   final double changePercent;  // 当日涨跌幅 (%)
   final String? industry;      // 申万行业
   final bool isPullback;       // 是否为高质量回踩
+  final bool isBreakout;       // 是否为突破
 
   StockMonitorData({
     required this.stock,
@@ -19,16 +20,18 @@ class StockMonitorData {
     required this.changePercent,
     this.industry,
     this.isPullback = false,
+    this.isBreakout = false,
   });
 
   /// 创建带有回踩标记的副本
-  StockMonitorData copyWith({bool? isPullback}) {
+  StockMonitorData copyWith({bool? isPullback, bool? isBreakout}) {
     return StockMonitorData(
       stock: stock,
       ratio: ratio,
       changePercent: changePercent,
       industry: industry,
       isPullback: isPullback ?? this.isPullback,
+      isBreakout: isBreakout ?? this.isBreakout,
     );
   }
 
@@ -38,6 +41,7 @@ class StockMonitorData {
     'changePercent': changePercent,
     'industry': industry,
     'isPullback': isPullback,
+    'isBreakout': isBreakout,
   };
 
   factory StockMonitorData.fromJson(Map<String, dynamic> json) => StockMonitorData(
@@ -46,6 +50,7 @@ class StockMonitorData {
     changePercent: (json['changePercent'] as num).toDouble(),
     industry: json['industry'] as String?,
     isPullback: json['isPullback'] as bool? ?? false,
+    isBreakout: json['isBreakout'] as bool? ?? false,
   );
 }
 

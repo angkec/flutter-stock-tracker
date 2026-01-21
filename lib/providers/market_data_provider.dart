@@ -7,12 +7,14 @@ import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
+import 'package:stock_rtwatcher/services/breakout_service.dart';
 
 class MarketDataProvider extends ChangeNotifier {
   final TdxPool _pool;
   final StockService _stockService;
   final IndustryService _industryService;
   PullbackService? _pullbackService;
+  BreakoutService? _breakoutService;
 
   List<StockMonitorData> _allData = [];
   bool _isLoading = false;
@@ -24,6 +26,9 @@ class MarketDataProvider extends ChangeNotifier {
 
   // Watchlist codes for priority sorting
   Set<String> _watchlistCodes = {};
+
+  // 缓存日K数据用于重算回踩
+  Map<String, List<dynamic>> _dailyBarsCache = {};
 
   MarketDataProvider({
     required TdxPool pool,
@@ -120,6 +125,11 @@ class MarketDataProvider extends ChangeNotifier {
   /// 设置回踩服务（用于检测高质量回踩）
   void setPullbackService(PullbackService service) {
     _pullbackService = service;
+  }
+
+  /// 设置突破回踩服务（用于检测突破回踩）
+  void setBreakoutService(BreakoutService service) {
+    _breakoutService = service;
   }
 
   /// 从缓存加载数据
@@ -226,6 +236,11 @@ class MarketDataProvider extends ChangeNotifier {
         await _detectPullbacks();
       }
 
+      // 检测突破回踩
+      if (_breakoutService != null && _allData.isNotEmpty) {
+        await _detectBreakouts();
+      }
+
       // 更新时间
       final now = DateTime.now();
       _updateTime = '${now.hour.toString().padLeft(2, '0')}:'
@@ -248,7 +263,7 @@ class MarketDataProvider extends ChangeNotifier {
     }
   }
 
-  /// 检测高质量回踩
+  /// 检测高质量回踩（下载日K数据）
   Future<void> _detectPullbacks() async {
     if (_pullbackService == null || _allData.isEmpty) return;
 
@@ -256,28 +271,83 @@ class MarketDataProvider extends ChangeNotifier {
     final stocks = _allData.map((d) => d.stock).toList();
 
     // 批量获取日K数据（7根，用于回踩检测）
-    final dailyBarsMap = <String, List<dynamic>>{}; // code -> bars
+    _dailyBarsCache.clear();
 
     await _pool.batchGetSecurityBarsStreaming(
       stocks: stocks,
       category: klineTypeDaily,
       start: 0,
-      count: 7,
+      count: 15,
       onStockBars: (index, bars) {
-        dailyBarsMap[stocks[index].code] = bars;
+        _dailyBarsCache[stocks[index].code] = bars;
       },
     );
 
-    // 更新回踩标记
+    // 使用缓存数据计算回踩
+    _applyPullbackDetection();
+  }
+
+  /// 重算回踩（使用缓存的日K数据，不重新下载）
+  /// 返回 true 表示成功重算，false 表示缓存为空需要先刷新
+  bool recalculatePullbacks() {
+    if (_pullbackService == null || _allData.isEmpty || _dailyBarsCache.isEmpty) {
+      return false;
+    }
+    _applyPullbackDetection();
+    return true;
+  }
+
+  /// 应用回踩检测逻辑
+  void _applyPullbackDetection() {
+    if (_pullbackService == null) return;
+
     final updatedData = <StockMonitorData>[];
     for (final data in _allData) {
-      final dailyBars = dailyBarsMap[data.stock.code];
+      final dailyBars = _dailyBarsCache[data.stock.code];
       final isPullback = dailyBars != null &&
           dailyBars.length >= 7 &&
           _pullbackService!.isPullback(dailyBars.cast()) &&
-          data.ratio >= _pullbackService!.config.minMinuteRatio;  // 检查分钟量比
+          data.ratio >= _pullbackService!.config.minMinuteRatio;
 
-      updatedData.add(data.copyWith(isPullback: isPullback));
+      updatedData.add(data.copyWith(isPullback: isPullback, isBreakout: data.isBreakout));
+    }
+
+    _allData = updatedData;
+    notifyListeners();
+  }
+
+  /// 检测突破回踩
+  Future<void> _detectBreakouts() async {
+    if (_breakoutService == null || _allData.isEmpty || _dailyBarsCache.isEmpty) return;
+    _applyBreakoutDetection();
+  }
+
+  /// 重算突破回踩（使用缓存的日K数据，不重新下载）
+  /// 返回 true 表示成功重算，false 表示缓存为空需要先刷新
+  bool recalculateBreakouts() {
+    if (_breakoutService == null || _allData.isEmpty || _dailyBarsCache.isEmpty) {
+      return false;
+    }
+    _applyBreakoutDetection();
+    return true;
+  }
+
+  /// 应用突破回踩检测逻辑
+  void _applyBreakoutDetection() {
+    if (_breakoutService == null) return;
+
+    final updatedData = <StockMonitorData>[];
+    for (final data in _allData) {
+      final dailyBars = _dailyBarsCache[data.stock.code];
+      final isBreakout = dailyBars != null &&
+          dailyBars.isNotEmpty &&
+          _breakoutService!.isBreakoutPullback(
+            dailyBars.cast(),
+            data.ratio,
+            data.changePercent / 100,  // 转换为小数
+          );
+
+      updatedData.add(data.copyWith(isPullback: data.isPullback, isBreakout: isBreakout));
     }
 
     _allData = updatedData;

@@ -151,13 +151,14 @@ class IndustryTrendService extends ChangeNotifier {
       }
 
       // 获取所有股票的分钟K线数据
-      // category=8 是分钟K线，count=7200 约30天
+      // TDX API 限制每次最多约800根K线，约4天数据
       final stockList = stocks.map((s) => s.stock).toList();
+
       final allBars = await pool.batchGetSecurityBars(
         stocks: stockList,
         category: klineType1Min,
         start: 0,
-        count: 7200,
+        count: 800,
         onProgress: onProgress,
       );
 

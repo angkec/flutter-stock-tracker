@@ -85,7 +85,13 @@ class _IndustryScreenState extends State<IndustryScreen> {
   void _maybeRecheckTrend(MarketDataProvider marketProvider) {
     // 如果之前检查时没有市场数据，但现在有了，需要重新检查
     if (_hasCheckedTrend && !_hasMarketDataWhenChecked && marketProvider.allData.isNotEmpty) {
-      _checkAndRefreshTrend();
+      // 使用 addPostFrameCallback 避免在 build 中调用 setState
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _checkAndRefreshTrend();
+        }
+      });
+      _hasMarketDataWhenChecked = true; // 防止重复触发
     }
   }
 

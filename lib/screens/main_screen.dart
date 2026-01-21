@@ -4,6 +4,7 @@ import 'package:stock_rtwatcher/screens/watchlist_screen.dart';
 import 'package:stock_rtwatcher/screens/market_screen.dart';
 import 'package:stock_rtwatcher/screens/industry_screen.dart';
 import 'package:stock_rtwatcher/screens/pullback_screen.dart';
+import 'package:stock_rtwatcher/screens/breakout_screen.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -35,6 +36,7 @@ class _MainScreenState extends State<MainScreen> {
       MarketScreen(key: _marketScreenKey),
       IndustryScreen(onIndustryTap: _goToMarketAndSearchIndustry),
       PullbackScreen(onIndustryTap: _goToMarketAndSearchIndustry),
+      BreakoutScreen(onIndustryTap: _goToMarketAndSearchIndustry),
     ];
   }
 
@@ -71,7 +73,12 @@ class _MainScreenState extends State<MainScreen> {
           NavigationDestination(
             icon: Icon(Icons.trending_down_outlined),
             selectedIcon: Icon(Icons.trending_down),
-            label: '回踩',
+            label: '单日回踩',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.trending_up_outlined),
+            selectedIcon: Icon(Icons.trending_up),
+            label: '多日回踩',
           ),
         ],
       ),

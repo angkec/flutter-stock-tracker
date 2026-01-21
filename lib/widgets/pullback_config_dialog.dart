@@ -17,6 +17,7 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
   late TextEditingController _dropController;
   late TextEditingController _ratioController;
   late TextEditingController _minuteRatioController;
+  late DropMode _dropMode;
 
   @override
   void initState() {
@@ -32,11 +33,12 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
       text: (config.maxDropRatio * 100).toStringAsFixed(0),
     );
     _ratioController = TextEditingController(
-      text: config.minDailyRatio.toStringAsFixed(2),
+      text: config.maxDailyRatio.toStringAsFixed(2),
     );
     _minuteRatioController = TextEditingController(
       text: config.minMinuteRatio.toStringAsFixed(2),
     );
+    _dropMode = config.dropMode;
   }
 
   @override
@@ -60,8 +62,9 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
       volumeMultiplier: volume,
       minYesterdayGain: gain,
       maxDropRatio: drop,
-      minDailyRatio: ratio,
+      maxDailyRatio: ratio,
       minMinuteRatio: minuteRatio,
+      dropMode: _dropMode,
     );
 
     context.read<PullbackService>().updateConfig(newConfig);
@@ -73,8 +76,9 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
     _volumeController.text = defaults.volumeMultiplier.toStringAsFixed(1);
     _gainController.text = (defaults.minYesterdayGain * 100).toStringAsFixed(0);
     _dropController.text = (defaults.maxDropRatio * 100).toStringAsFixed(0);
-    _ratioController.text = defaults.minDailyRatio.toStringAsFixed(2);
+    _ratioController.text = defaults.maxDailyRatio.toStringAsFixed(2);
     _minuteRatioController.text = defaults.minMinuteRatio.toStringAsFixed(2);
+    setState(() => _dropMode = defaults.dropMode);
   }
 
   @override
@@ -99,6 +103,8 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
               suffix: '%',
             ),
             const SizedBox(height: 16),
+            _buildDropModeSelector(),
+            const SizedBox(height: 16),
             _buildTextField(
               controller: _dropController,
               label: '最大跌幅比例',
@@ -108,8 +114,8 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
             const SizedBox(height: 16),
             _buildTextField(
               controller: _ratioController,
-              label: '最小日K量比',
-              hint: '今日成交量 / 前5日均量',
+              label: '最大日K量比',
+              hint: '今日成交量 / 昨日成交量（缩量回踩）',
               suffix: '',
             ),
             const SizedBox(height: 16),
@@ -155,6 +161,35 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
         suffixText: suffix,
         border: const OutlineInputBorder(),
       ),
+    );
+  }
+
+  Widget _buildDropModeSelector() {
+    return DropdownButtonFormField<DropMode>(
+      initialValue: _dropMode,
+      decoration: const InputDecoration(
+        labelText: '今日下跌条件',
+        border: OutlineInputBorder(),
+      ),
+      items: const [
+        DropdownMenuItem(
+          value: DropMode.todayDown,
+          child: Text('今日下跌'),
+        ),
+        DropdownMenuItem(
+          value: DropMode.belowYesterdayHigh,
+          child: Text('低于昨日最高'),
+        ),
+        DropdownMenuItem(
+          value: DropMode.none,
+          child: Text('无'),
+        ),
+      ],
+      onChanged: (value) {
+        if (value != null) {
+          setState(() => _dropMode = value);
+        }
+      },
     );
   }
 }
