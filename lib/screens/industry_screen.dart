@@ -24,6 +24,23 @@ class _IndustryScreenState extends State<IndustryScreen> {
   int _fetchProgress = 0;
   int _fetchTotal = 0;
 
+  // 排序状态
+  IndustrySortMode _sortMode = IndustrySortMode.ratioPercent;
+  bool _sortAscending = false; // false = 降序（默认），true = 升序
+
+  void _onSortModeChanged(IndustrySortMode mode) {
+    setState(() {
+      if (_sortMode == mode) {
+        // 如果点击同一列，切换排序方向
+        _sortAscending = !_sortAscending;
+      } else {
+        // 切换到新列，默认降序
+        _sortMode = mode;
+        _sortAscending = false;
+      }
+    });
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -99,7 +116,11 @@ class _IndustryScreenState extends State<IndustryScreen> {
   }
 
   /// 计算行业统计
-  List<IndustryStats> _calculateStats(List<StockMonitorData> data) {
+  List<IndustryStats> _calculateStats(
+    List<StockMonitorData> data,
+    IndustryTrendService trendService,
+    Map<String, DailyRatioPoint> todayTrend,
+  ) {
     final Map<String, List<StockMonitorData>> grouped = {};
 
     for (final stock in data) {
@@ -138,8 +159,45 @@ class _IndustryScreenState extends State<IndustryScreen> {
       );
     }
 
-    final statsList = result.values.toList()
-      ..sort((a, b) => b.ratioSortValue.compareTo(a.ratioSortValue));
+    final statsList = result.values.toList();
+
+    // 根据排序模式排序
+    statsList.sort((a, b) {
+      double aValue, bValue;
+
+      switch (_sortMode) {
+        case IndustrySortMode.ratioPercent:
+          aValue = a.ratioSortValue;
+          bValue = b.ratioSortValue;
+          break;
+        case IndustrySortMode.trendSlope:
+          final aTrend = _getTrendData(a.name, trendService, todayTrend);
+          final bTrend = _getTrendData(b.name, trendService, todayTrend);
+          aValue = calculateTrendSlope(aTrend);
+          bValue = calculateTrendSlope(bTrend);
+          break;
+        case IndustrySortMode.todayChange:
+          final aHistorical = trendService.getTrend(a.name);
+          final bHistorical = trendService.getTrend(b.name);
+          aValue = calculateTodayChange(
+            todayTrend[a.name],
+            aHistorical?.points ?? [],
+          );
+          bValue = calculateTodayChange(
+            todayTrend[b.name],
+            bHistorical?.points ?? [],
+          );
+          break;
+      }
+
+      // 处理 infinity 情况
+      if (aValue.isInfinite && bValue.isInfinite) return 0;
+      if (aValue.isInfinite) return _sortAscending ? 1 : -1;
+      if (bValue.isInfinite) return _sortAscending ? -1 : 1;
+
+      final comparison = aValue.compareTo(bValue);
+      return _sortAscending ? comparison : -comparison;
+    });
 
     return statsList;
   }
@@ -176,8 +234,8 @@ class _IndustryScreenState extends State<IndustryScreen> {
   Widget build(BuildContext context) {
     final marketProvider = context.watch<MarketDataProvider>();
     final trendService = context.watch<IndustryTrendService>();
-    final stats = _calculateStats(marketProvider.allData);
     final todayTrend = trendService.calculateTodayTrend(marketProvider.allData);
+    final stats = _calculateStats(marketProvider.allData, trendService, todayTrend);
 
     // 决定是否显示更新按钮
     final showRefreshButton = trendService.missingDays > 3 && !trendService.isLoading;
@@ -254,18 +312,17 @@ class _IndustryScreenState extends State<IndustryScreen> {
                                   ),
                                 ),
                               ),
+                              // 量比列 - 可点击排序
                               Expanded(
-                                child: Center(
-                                  child: Text(
-                                    '量比',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
+                                child: _SortableHeader(
+                                  title: '量比',
+                                  sortMode: IndustrySortMode.ratioPercent,
+                                  currentMode: _sortMode,
+                                  isAscending: _sortAscending,
+                                  onTap: () => _onSortModeChanged(IndustrySortMode.ratioPercent),
                                 ),
                               ),
+                              // 趋势列 - 可点击排序（两种模式）
                               SizedBox(
                                 width: 60,
                                 child: Center(
@@ -277,13 +334,13 @@ class _IndustryScreenState extends State<IndustryScreen> {
                                             strokeWidth: 2,
                                           ),
                                         )
-                                      : Text(
-                                          '趋势',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                          ),
+                                      : _TrendSortHeader(
+                                          currentMode: _sortMode,
+                                          isAscending: _sortAscending,
+                                          onTrendSlopeTap: () =>
+                                              _onSortModeChanged(IndustrySortMode.trendSlope),
+                                          onTodayChangeTap: () =>
+                                              _onSortModeChanged(IndustrySortMode.todayChange),
                                         ),
                                 ),
                               ),
@@ -516,6 +573,117 @@ class _ProgressDialogState extends State<_ProgressDialog> {
             total > 0 ? '($progress/$total)' : '准备中...',
             style: Theme.of(context).textTheme.bodySmall,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 可排序的表头组件
+class _SortableHeader extends StatelessWidget {
+  final String title;
+  final IndustrySortMode sortMode;
+  final IndustrySortMode currentMode;
+  final bool isAscending;
+  final VoidCallback onTap;
+
+  const _SortableHeader({
+    required this.title,
+    required this.sortMode,
+    required this.currentMode,
+    required this.isAscending,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = currentMode == sortMode;
+    final color = isActive
+        ? Theme.of(context).colorScheme.primary
+        : Theme.of(context).colorScheme.onSurfaceVariant;
+
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          if (isActive) ...[
+            const SizedBox(width: 2),
+            Icon(
+              isAscending ? Icons.arrow_upward : Icons.arrow_downward,
+              size: 12,
+              color: color,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 趋势排序表头（支持两种排序模式）
+class _TrendSortHeader extends StatelessWidget {
+  final IndustrySortMode currentMode;
+  final bool isAscending;
+  final VoidCallback onTrendSlopeTap;
+  final VoidCallback onTodayChangeTap;
+
+  const _TrendSortHeader({
+    required this.currentMode,
+    required this.isAscending,
+    required this.onTrendSlopeTap,
+    required this.onTodayChangeTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isTrendSlope = currentMode == IndustrySortMode.trendSlope;
+    final isTodayChange = currentMode == IndustrySortMode.todayChange;
+    final isActive = isTrendSlope || isTodayChange;
+    final color = isActive
+        ? Theme.of(context).colorScheme.primary
+        : Theme.of(context).colorScheme.onSurfaceVariant;
+
+    return GestureDetector(
+      onTap: () {
+        // 循环切换：无 -> 斜率 -> 今变 -> 斜率 -> ...
+        if (isTrendSlope) {
+          onTodayChangeTap();
+        } else {
+          onTrendSlopeTap();
+        }
+      },
+      behavior: HitTestBehavior.opaque,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            isTodayChange ? '今变' : '趋势',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          if (isActive) ...[
+            const SizedBox(width: 2),
+            Icon(
+              isAscending ? Icons.arrow_upward : Icons.arrow_downward,
+              size: 12,
+              color: color,
+            ),
+          ],
         ],
       ),
     );
