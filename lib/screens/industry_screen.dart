@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/models/industry_stats.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -328,7 +329,14 @@ class _IndustryScreenState extends State<IndustryScreen> {
     final trendData = _getTrendData(stats.name, trendService, todayTrend);
 
     return GestureDetector(
-      onTap: widget.onIndustryTap != null
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => IndustryDetailScreen(industry: stats.name),
+          ),
+        );
+      },
+      onLongPress: widget.onIndustryTap != null
           ? () => widget.onIndustryTap!(stats.name)
           : null,
       child: Container(
