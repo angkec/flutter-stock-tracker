@@ -286,6 +286,18 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     }
   }
 
+  /// 通过 PageController 切换页面（带动画）
+  void _animateToStock(int index) {
+    if (_pageController == null) return;
+    if (index < 0 || index >= widget.stockList!.length) return;
+
+    _pageController!.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasStockList = widget.stockList != null && widget.stockList!.length > 1;
@@ -312,31 +324,46 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
             ? [
                 IconButton(
                   icon: const Icon(Icons.chevron_left),
-                  onPressed: canGoPrev ? () => _switchToStock(_currentIndex - 1) : null,
+                  onPressed: canGoPrev ? () => _animateToStock(_currentIndex - 1) : null,
                   tooltip: '上一只',
                 ),
                 IconButton(
                   icon: const Icon(Icons.chevron_right),
-                  onPressed: canGoNext ? () => _switchToStock(_currentIndex + 1) : null,
+                  onPressed: canGoNext ? () => _animateToStock(_currentIndex + 1) : null,
                   tooltip: '下一只',
                 ),
               ]
             : null,
       ),
-      body: GestureDetector(
-        onHorizontalDragEnd: hasStockList
-            ? (details) {
-                // 右滑（velocity > 0）看上一只，左滑（velocity < 0）看下一只
-                if (details.primaryVelocity == null) return;
-                if (details.primaryVelocity! > 300 && canGoPrev) {
-                  _switchToStock(_currentIndex - 1);
-                } else if (details.primaryVelocity! < -300 && canGoNext) {
-                  _switchToStock(_currentIndex + 1);
+      body: hasStockList
+          ? PageView.builder(
+              controller: _pageController,
+              itemCount: widget.stockList!.length,
+              onPageChanged: (index) {
+                if (index != _currentIndex) {
+                  _switchToStock(index);
                 }
-              }
-            : null,
-        child: _buildBody(),
-      ),
+              },
+              itemBuilder: (context, index) {
+                // 只有当前页和相邻页才显示内容，其他页显示占位
+                final distance = (index - _currentIndex).abs();
+                if (distance > 1) {
+                  return Center(
+                    child: Text(
+                      widget.stockList![index].name,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  );
+                }
+                // 当前页显示完整内容
+                if (index == _currentIndex) {
+                  return _buildBody();
+                }
+                // 相邻页显示加载中的占位
+                return const Center(child: CircularProgressIndicator());
+              },
+            )
+          : _buildBody(),
     );
   }
 
