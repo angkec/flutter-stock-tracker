@@ -49,6 +49,14 @@ class StockMonitorData {
   );
 }
 
+/// 监控数据结果（包含数据日期）
+class MonitorDataResult {
+  final List<StockMonitorData> data;
+  final DateTime dataDate;  // 实际数据日期
+
+  MonitorDataResult({required this.data, required this.dataDate});
+}
+
 /// 股票服务
 class StockService {
   final TdxPool _pool;
