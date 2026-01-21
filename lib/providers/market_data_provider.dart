@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,6 +51,9 @@ class MarketDataProvider extends ChangeNotifier {
 
   // 缓存日K数据用于重算回踩
   Map<String, List<dynamic>> _dailyBarsCache = {};
+
+  // Timer for debounce saving
+  Timer? _saveDebounceTimer;
 
   MarketDataProvider({
     required TdxPool pool,
@@ -203,6 +207,24 @@ class MarketDataProvider extends ChangeNotifier {
         }
         notifyListeners();
       }
+
+      // Load daily bars cache
+      final dailyBarsJson = prefs.getString(_dailyBarsCacheKey);
+      if (dailyBarsJson != null) {
+        try {
+          final Map<String, dynamic> data = jsonDecode(dailyBarsJson);
+          _dailyBarsCache = data.map((k, v) => MapEntry(
+            k,
+            (v as List).toList()  // Keep as List<dynamic>
+          ));
+        } catch (e) {
+          debugPrint('Failed to load daily bars cache: $e');
+          await prefs.remove(_dailyBarsCacheKey);
+        }
+      }
+
+      // Load last fetch date
+      _lastFetchDate = prefs.getString(_lastFetchDateKey);
     } catch (e) {
       debugPrint('Failed to load cache: $e');
     }
@@ -223,6 +245,30 @@ class MarketDataProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('Failed to save cache: $e');
     }
+  }
+
+  /// Persist daily bars cache to SharedPreferences
+  Future<void> _persistDailyBarsCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = _dailyBarsCache.map((k, v) => MapEntry(k, v));
+      await prefs.setString(_dailyBarsCacheKey, jsonEncode(data));
+
+      // Update last fetch date
+      final today = DateTime.now().toString().substring(0, 10);
+      await prefs.setString(_lastFetchDateKey, today);
+      _lastFetchDate = today;
+    } catch (e) {
+      debugPrint('Failed to persist daily bars cache: $e');
+    }
+  }
+
+  /// Schedule persistence with debounce
+  void _schedulePersist() {
+    _saveDebounceTimer?.cancel();
+    _saveDebounceTimer = Timer(const Duration(milliseconds: 500), () {
+      _persistDailyBarsCache();
+    });
   }
 
   /// 刷新数据
@@ -334,6 +380,9 @@ class MarketDataProvider extends ChangeNotifier {
         _dailyBarsCache[stocks[index].code] = bars;
       },
     );
+
+    // Schedule persistence of daily bars cache
+    _schedulePersist();
 
     // 使用缓存数据计算回踩
     _applyPullbackDetection();
