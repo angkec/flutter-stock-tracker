@@ -9,6 +9,14 @@ import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 
+enum RefreshStage {
+  idle,           // 空闲
+  fetchMinuteData, // 拉取分时数据
+  updateDailyBars, // 更新日K数据
+  analyzing,       // 分析计算
+  error,          // 错误
+}
+
 class MarketDataProvider extends ChangeNotifier {
   final TdxPool _pool;
   final StockService _stockService;
@@ -23,6 +31,19 @@ class MarketDataProvider extends ChangeNotifier {
   String? _updateTime;
   DateTime? _dataDate;
   String? _errorMessage;
+
+  // Refresh stage tracking
+  RefreshStage _stage = RefreshStage.idle;
+  String? _stageDescription;  // "拉取分时 32/156"
+  int _stageProgress = 0;     // 当前进度
+  int _stageTotal = 0;        // 总数
+  String? _lastFetchDate;     // "2026-01-21" for incremental fetching
+
+  // Cache keys
+  static const String _dailyBarsCacheKey = 'daily_bars_cache_v1';
+  static const String _minuteDataCacheKey = 'minute_data_cache_v1';
+  static const String _minuteDataDateKey = 'minute_data_date';
+  static const String _lastFetchDateKey = 'last_fetch_date';
 
   // Watchlist codes for priority sorting
   Set<String> _watchlistCodes = {};
@@ -47,6 +68,9 @@ class MarketDataProvider extends ChangeNotifier {
   DateTime? get dataDate => _dataDate;
   String? get errorMessage => _errorMessage;
   IndustryService get industryService => _industryService;
+  RefreshStage get stage => _stage;
+  String? get stageDescription => _stageDescription;
+  String? get lastFetchDate => _lastFetchDate;
 
   /// 获取板块热度（量比>=1 和 <1 的股票数量）
   /// 返回 (hotCount, coldCount)，如果行业为空或无数据返回 null
@@ -130,6 +154,34 @@ class MarketDataProvider extends ChangeNotifier {
   /// 设置突破回踩服务（用于检测突破回踩）
   void setBreakoutService(BreakoutService service) {
     _breakoutService = service;
+  }
+
+  void _updateProgress(RefreshStage stage, int current, int total) {
+    _stage = stage;
+    _stageProgress = current;
+    _stageTotal = total;
+    _stageDescription = _formatStageDescription(stage, current, total);
+    notifyListeners();
+  }
+
+  String _formatStageDescription(RefreshStage stage, int current, int total) {
+    switch (stage) {
+      case RefreshStage.fetchMinuteData:
+        return '拉取分时 $current/$total';
+      case RefreshStage.updateDailyBars:
+        return '更新日K $current/$total';
+      case RefreshStage.analyzing:
+        return '分析计算...';
+      case RefreshStage.error:
+        return _stageDescription ?? '刷新失败';
+      case RefreshStage.idle:
+        return '';
+    }
+  }
+
+  bool _isFirstFetchToday() {
+    final today = DateTime.now().toString().substring(0, 10);
+    return _lastFetchDate != today;
   }
 
   /// 从缓存加载数据
