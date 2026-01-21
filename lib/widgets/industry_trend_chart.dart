@@ -107,8 +107,8 @@ class _IndustryTrendPainter extends CustomPainter {
     // 绘制趋势线
     _drawTrendLine(canvas, chartArea, values, adjustedMin, adjustedRange);
 
-    // 绘制最后一个数据点和标签
-    _drawLastPoint(canvas, chartArea, values, adjustedMin, adjustedRange);
+    // 绘制所有数据点和百分比标签
+    _drawAllPoints(canvas, chartArea, values, adjustedMin, adjustedRange);
 
     // 绘制日期标签
     _drawDateLabels(canvas, chartArea, size);
@@ -192,41 +192,110 @@ class _IndustryTrendPainter extends CustomPainter {
     canvas.drawPath(path, linePaint);
   }
 
-  /// 绘制最后一个数据点和数值标签
-  void _drawLastPoint(
+  /// 绘制所有数据点和数值标签
+  void _drawAllPoints(
     Canvas canvas,
     Rect chartArea,
     List<double> values,
     double adjustedMin,
     double adjustedRange,
   ) {
-    final lastX = chartArea.right;
-    final lastY = chartArea.bottom -
-        ((values.last - adjustedMin) / adjustedRange) * chartArea.height;
+    final divisor = values.length > 1 ? values.length - 1 : 1;
 
-    // 绘制高亮圆点
+    // 圆点画笔
     final dotPaint = Paint()
       ..color = lineColor
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset(lastX, lastY), 4, dotPaint);
 
-    // 绘制数值标签
-    final valuePainter = TextPainter(
-      text: TextSpan(
-        text: '${values.last.toStringAsFixed(0)}%',
-        style: TextStyle(
-          color: lineColor,
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
+    // 白色边框画笔（让圆点更明显）
+    final dotBorderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    // 计算所有点的位置
+    final points = <Offset>[];
+    for (var i = 0; i < values.length; i++) {
+      final x = chartArea.left + (i / divisor) * chartArea.width;
+      final y = chartArea.bottom -
+          ((values[i] - adjustedMin) / adjustedRange) * chartArea.height;
+      points.add(Offset(x, y));
+    }
+
+    // 绘制所有圆点
+    for (var i = 0; i < points.length; i++) {
+      final point = points[i];
+      final isLast = i == points.length - 1;
+      final radius = isLast ? 5.0 : 3.5;
+
+      // 先画白色边框
+      canvas.drawCircle(point, radius, dotBorderPaint);
+      // 再画填充圆点
+      canvas.drawCircle(point, radius, dotPaint);
+    }
+
+    // 绘制百分比标签
+    for (var i = 0; i < values.length; i++) {
+      final point = points[i];
+      final value = values[i];
+      final isLast = i == points.length - 1;
+
+      // 确定标签位置：交替上下放置以避免重叠
+      // 如果值 > 50 且不是太靠近顶部，放下面；否则放上面
+      final bool placeBelow;
+      if (i == 0) {
+        // 第一个点：如果值高就放下面
+        placeBelow = value > 50;
+      } else if (isLast) {
+        // 最后一个点：放在左边而不是上下
+        placeBelow = false;
+      } else {
+        // 中间点：交替放置，或根据值位置
+        placeBelow = i % 2 == 0;
+      }
+
+      final valuePainter = TextPainter(
+        text: TextSpan(
+          text: '${value.toStringAsFixed(0)}%',
+          style: TextStyle(
+            color: lineColor,
+            fontSize: isLast ? 11 : 9,
+            fontWeight: isLast ? FontWeight.bold : FontWeight.normal,
+          ),
         ),
-      ),
-      textDirection: TextDirection.ltr,
-    );
-    valuePainter.layout();
-    valuePainter.paint(
-      canvas,
-      Offset(lastX - valuePainter.width - 8, lastY - valuePainter.height / 2),
-    );
+        textDirection: TextDirection.ltr,
+      );
+      valuePainter.layout();
+
+      Offset labelOffset;
+      if (isLast) {
+        // 最后一个点的标签放在左边
+        labelOffset = Offset(
+          point.dx - valuePainter.width - 8,
+          point.dy - valuePainter.height / 2,
+        );
+      } else if (placeBelow) {
+        // 标签放在点下方
+        labelOffset = Offset(
+          point.dx - valuePainter.width / 2,
+          point.dy + 6,
+        );
+      } else {
+        // 标签放在点上方
+        labelOffset = Offset(
+          point.dx - valuePainter.width / 2,
+          point.dy - valuePainter.height - 6,
+        );
+      }
+
+      // 确保标签不超出图表区域
+      labelOffset = Offset(
+        labelOffset.dx.clamp(chartArea.left, chartArea.right - valuePainter.width),
+        labelOffset.dy.clamp(chartArea.top - 4, chartArea.bottom - valuePainter.height + 4),
+      );
+
+      valuePainter.paint(canvas, labelOffset);
+    }
   }
 
   /// 格式化日期为 MM/dd 格式
