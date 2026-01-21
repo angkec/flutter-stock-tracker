@@ -82,7 +82,8 @@ class PullbackScreen extends StatelessWidget {
                     '昨涨>${(pullbackService.config.minYesterdayGain * 100).toStringAsFixed(0)}% '
                     '量>${pullbackService.config.volumeMultiplier}x '
                     '跌<${(pullbackService.config.maxDropRatio * 100).toStringAsFixed(0)}% '
-                    '量比>${pullbackService.config.minDailyRatio}',
+                    '日量比>${pullbackService.config.minDailyRatio} '
+                    '分量比>${pullbackService.config.minMinuteRatio}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),

@@ -274,7 +274,8 @@ class MarketDataProvider extends ChangeNotifier {
       final dailyBars = dailyBarsMap[data.stock.code];
       final isPullback = dailyBars != null &&
           dailyBars.length >= 7 &&
-          _pullbackService!.isPullback(dailyBars.cast());
+          _pullbackService!.isPullback(dailyBars.cast()) &&
+          data.ratio >= _pullbackService!.config.minMinuteRatio;  // 检查分钟量比
 
       updatedData.add(data.copyWith(isPullback: isPullback));
     }

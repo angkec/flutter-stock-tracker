@@ -16,6 +16,7 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
   late TextEditingController _gainController;
   late TextEditingController _dropController;
   late TextEditingController _ratioController;
+  late TextEditingController _minuteRatioController;
 
   @override
   void initState() {
@@ -33,6 +34,9 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
     _ratioController = TextEditingController(
       text: config.minDailyRatio.toStringAsFixed(2),
     );
+    _minuteRatioController = TextEditingController(
+      text: config.minMinuteRatio.toStringAsFixed(2),
+    );
   }
 
   @override
@@ -41,6 +45,7 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
     _gainController.dispose();
     _dropController.dispose();
     _ratioController.dispose();
+    _minuteRatioController.dispose();
     super.dispose();
   }
 
@@ -49,12 +54,14 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
     final gain = (double.tryParse(_gainController.text) ?? 3) / 100;
     final drop = (double.tryParse(_dropController.text) ?? 50) / 100;
     final ratio = double.tryParse(_ratioController.text) ?? 0.85;
+    final minuteRatio = double.tryParse(_minuteRatioController.text) ?? 0.8;
 
     final newConfig = PullbackConfig(
       volumeMultiplier: volume,
       minYesterdayGain: gain,
       maxDropRatio: drop,
       minDailyRatio: ratio,
+      minMinuteRatio: minuteRatio,
     );
 
     context.read<PullbackService>().updateConfig(newConfig);
@@ -67,6 +74,7 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
     _gainController.text = (defaults.minYesterdayGain * 100).toStringAsFixed(0);
     _dropController.text = (defaults.maxDropRatio * 100).toStringAsFixed(0);
     _ratioController.text = defaults.minDailyRatio.toStringAsFixed(2);
+    _minuteRatioController.text = defaults.minMinuteRatio.toStringAsFixed(2);
   }
 
   @override
@@ -102,6 +110,13 @@ class _PullbackConfigDialogState extends State<PullbackConfigDialog> {
               controller: _ratioController,
               label: '最小日K量比',
               hint: '今日成交量 / 前5日均量',
+              suffix: '',
+            ),
+            const SizedBox(height: 16),
+            _buildTextField(
+              controller: _minuteRatioController,
+              label: '最小分钟量比',
+              hint: '分钟涨量 / 分钟跌量',
               suffix: '',
             ),
           ],
