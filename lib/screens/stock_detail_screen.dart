@@ -338,6 +338,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       body: hasStockList
           ? PageView.builder(
               controller: _pageController,
+              physics: const PageScrollPhysics(),
               itemCount: widget.stockList!.length,
               onPageChanged: (index) {
                 if (index != _currentIndex) {
@@ -345,22 +346,17 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
                 }
               },
               itemBuilder: (context, index) {
-                // 只有当前页和相邻页才显示内容，其他页显示占位
-                final distance = (index - _currentIndex).abs();
-                if (distance > 1) {
-                  return Center(
-                    child: Text(
-                      widget.stockList![index].name,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  );
-                }
                 // 当前页显示完整内容
                 if (index == _currentIndex) {
                   return _buildBody();
                 }
-                // 相邻页显示加载中的占位
-                return const Center(child: CircularProgressIndicator());
+                // 相邻页显示占位（保持简单以避免手势冲突）
+                return Center(
+                  child: Text(
+                    widget.stockList![index].name,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                );
               },
             )
           : _buildBody(),
@@ -407,6 +403,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     return RefreshIndicator(
       onRefresh: _loadData,
       child: SingleChildScrollView(
+        primary: false,
         physics: const AlwaysScrollableScrollPhysics(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
