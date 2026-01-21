@@ -9,6 +9,7 @@ import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 
 void main() {
   runApp(const MyApp());
@@ -76,13 +77,9 @@ class MyApp extends StatelessWidget {
       ],
       child: MaterialApp(
         title: '盯喵',
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.blue,
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-        ),
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: ThemeMode.system,
         home: const MainScreen(),
       ),
     );
