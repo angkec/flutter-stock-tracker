@@ -286,23 +286,33 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     }
   }
 
-  /// 通过 PageController 切换页面（带动画）
+  /// 通过 PageController 切换页面（带动画，支持循环）
   void _animateToStock(int index) {
-    if (_pageController == null) return;
-    if (index < 0 || index >= widget.stockList!.length) return;
+    if (_pageController == null || widget.stockList == null) return;
 
-    _pageController!.animateToPage(
-      index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+    final length = widget.stockList!.length;
+    // 循环处理索引
+    final targetIndex = index < 0
+        ? length - 1
+        : (index >= length ? 0 : index);
+
+    // 跨越边界时直接跳转（无法平滑动画）
+    if ((index < 0 && _currentIndex == 0) ||
+        (index >= length && _currentIndex == length - 1)) {
+      _pageController!.jumpToPage(targetIndex);
+      _switchToStock(targetIndex);
+    } else {
+      _pageController!.animateToPage(
+        targetIndex,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final hasStockList = widget.stockList != null && widget.stockList!.length > 1;
-    final canGoPrev = hasStockList && _currentIndex > 0;
-    final canGoNext = hasStockList && _currentIndex < widget.stockList!.length - 1;
 
     return Scaffold(
       appBar: AppBar(
@@ -324,12 +334,12 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
             ? [
                 IconButton(
                   icon: const Icon(Icons.chevron_left),
-                  onPressed: canGoPrev ? () => _animateToStock(_currentIndex - 1) : null,
+                  onPressed: () => _animateToStock(_currentIndex - 1),
                   tooltip: '上一只',
                 ),
                 IconButton(
                   icon: const Icon(Icons.chevron_right),
-                  onPressed: canGoNext ? () => _animateToStock(_currentIndex + 1) : null,
+                  onPressed: () => _animateToStock(_currentIndex + 1),
                   tooltip: '下一只',
                 ),
               ]
@@ -345,9 +355,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
               },
               onHorizontalDragEnd: (details) {
                 final velocity = details.primaryVelocity ?? 0;
-                if (velocity > 300 && canGoPrev) {
+                if (velocity > 300) {
                   _animateToStock(_currentIndex - 1);
-                } else if (velocity < -300 && canGoNext) {
+                } else if (velocity < -300) {
                   _animateToStock(_currentIndex + 1);
                 } else {
                   // 回弹到当前页
