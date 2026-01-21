@@ -19,6 +19,7 @@ class MarketDataProvider extends ChangeNotifier {
   int _progress = 0;
   int _total = 0;
   String? _updateTime;
+  DateTime? _dataDate;
   String? _errorMessage;
 
   // Watchlist codes for priority sorting
@@ -38,6 +39,7 @@ class MarketDataProvider extends ChangeNotifier {
   int get progress => _progress;
   int get total => _total;
   String? get updateTime => _updateTime;
+  DateTime? get dataDate => _dataDate;
   String? get errorMessage => _errorMessage;
   IndustryService get industryService => _industryService;
 
@@ -84,6 +86,7 @@ class MarketDataProvider extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final jsonStr = prefs.getString('market_data_cache');
       final timeStr = prefs.getString('market_data_time');
+      final dateStr = prefs.getString('market_data_date');
 
       if (jsonStr != null) {
         final List<dynamic> jsonList = json.decode(jsonStr);
@@ -91,6 +94,9 @@ class MarketDataProvider extends ChangeNotifier {
             .map((e) => StockMonitorData.fromJson(e as Map<String, dynamic>))
             .toList();
         _updateTime = timeStr;
+        if (dateStr != null) {
+          _dataDate = DateTime.tryParse(dateStr);
+        }
         notifyListeners();
       }
     } catch (e) {
@@ -106,6 +112,9 @@ class MarketDataProvider extends ChangeNotifier {
       await prefs.setString('market_data_cache', json.encode(jsonList));
       if (_updateTime != null) {
         await prefs.setString('market_data_time', _updateTime!);
+      }
+      if (_dataDate != null) {
+        await prefs.setString('market_data_date', _dataDate!.toIso8601String());
       }
     } catch (e) {
       debugPrint('Failed to save cache: $e');
@@ -153,7 +162,7 @@ class MarketDataProvider extends ChangeNotifier {
       _allData = [];
 
       // 批量获取数据（渐进式更新）
-      await _stockService.batchGetMonitorData(
+      final result = await _stockService.batchGetMonitorData(
         orderedStocks,
         industryService: _industryService,
         onProgress: (current, total) {
@@ -166,6 +175,9 @@ class MarketDataProvider extends ChangeNotifier {
           notifyListeners();
         },
       );
+
+      // 保存数据日期
+      _dataDate = result.dataDate;
 
       // 检测高质量回踩
       if (_pullbackService != null && _allData.isNotEmpty) {
