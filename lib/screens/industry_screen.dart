@@ -161,34 +161,33 @@ class _IndustryScreenState extends State<IndustryScreen> {
 
     final statsList = result.values.toList();
 
-    // 根据排序模式排序
-    statsList.sort((a, b) {
-      double aValue, bValue;
-
+    // Pre-compute sort values to avoid repeated calculations during sort
+    // For N items, sort performs O(N log N) comparisons, so pre-computing
+    // reduces function calls from O(N log N) to O(N)
+    final Map<String, double> sortValues = {};
+    for (final stats in statsList) {
       switch (_sortMode) {
         case IndustrySortMode.ratioPercent:
-          aValue = a.ratioSortValue;
-          bValue = b.ratioSortValue;
+          sortValues[stats.name] = stats.ratioSortValue;
           break;
         case IndustrySortMode.trendSlope:
-          final aTrend = _getTrendData(a.name, trendService, todayTrend);
-          final bTrend = _getTrendData(b.name, trendService, todayTrend);
-          aValue = calculateTrendSlope(aTrend);
-          bValue = calculateTrendSlope(bTrend);
+          final trendData = _getTrendData(stats.name, trendService, todayTrend);
+          sortValues[stats.name] = calculateTrendSlope(trendData);
           break;
         case IndustrySortMode.todayChange:
-          final aHistorical = trendService.getTrend(a.name);
-          final bHistorical = trendService.getTrend(b.name);
-          aValue = calculateTodayChange(
-            todayTrend[a.name],
-            aHistorical?.points ?? [],
-          );
-          bValue = calculateTodayChange(
-            todayTrend[b.name],
-            bHistorical?.points ?? [],
+          final historical = trendService.getTrend(stats.name);
+          sortValues[stats.name] = calculateTodayChange(
+            todayTrend[stats.name],
+            historical?.points ?? [],
           );
           break;
       }
+    }
+
+    // Sort using pre-computed values
+    statsList.sort((a, b) {
+      final aValue = sortValues[a.name] ?? 0.0;
+      final bValue = sortValues[b.name] ?? 0.0;
 
       // 处理 infinity 情况
       if (aValue.isInfinite && bValue.isInfinite) return 0;
