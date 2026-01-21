@@ -606,6 +606,7 @@ class _IndustryScreenState extends State<IndustryScreen> {
                         data: trendData,
                         width: 56,
                         height: 24,
+                        referenceValue: 50,
                       )
                     : Text(
                         '-',

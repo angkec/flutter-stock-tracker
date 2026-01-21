@@ -33,6 +33,12 @@ class SparklineChart extends StatelessWidget {
   /// 线条宽度
   final double strokeWidth;
 
+  /// 参考线值（如 50 表示 50%），null 表示不显示
+  final double? referenceValue;
+
+  /// 参考线颜色
+  final Color? referenceLineColor;
+
   const SparklineChart({
     super.key,
     required this.data,
@@ -42,6 +48,8 @@ class SparklineChart extends StatelessWidget {
     this.downColor,
     this.flatColor,
     this.strokeWidth = 1.5,
+    this.referenceValue,
+    this.referenceLineColor,
   });
 
   @override
@@ -78,6 +86,8 @@ class SparklineChart extends StatelessWidget {
           data: data,
           lineColor: lineColor,
           strokeWidth: strokeWidth,
+          referenceValue: referenceValue,
+          referenceLineColor: referenceLineColor ?? Colors.grey.withValues(alpha: 0.5),
         ),
       ),
     );
@@ -88,11 +98,15 @@ class _SparklinePainter extends CustomPainter {
   final List<double> data;
   final Color lineColor;
   final double strokeWidth;
+  final double? referenceValue;
+  final Color referenceLineColor;
 
   _SparklinePainter({
     required this.data,
     required this.lineColor,
     required this.strokeWidth,
+    this.referenceValue,
+    required this.referenceLineColor,
   });
 
   @override
@@ -113,18 +127,26 @@ class _SparklinePainter extends CustomPainter {
       return;
     }
 
-    // 计算数据范围
-    double minValue = data.first;
-    double maxValue = data.first;
-    for (final value in data) {
-      if (value < minValue) minValue = value;
-      if (value > maxValue) maxValue = value;
-    }
-
     // 添加少量边距以避免线条贴边
     const padding = 2.0;
     final effectiveWidth = size.width - padding * 2;
     final effectiveHeight = size.height - padding * 2;
+
+    // 计算数据范围
+    // 如果有参考值，使用 0-100 作为固定范围
+    double minValue;
+    double maxValue;
+    if (referenceValue != null) {
+      minValue = 0;
+      maxValue = 100;
+    } else {
+      minValue = data.first;
+      maxValue = data.first;
+      for (final value in data) {
+        if (value < minValue) minValue = value;
+        if (value > maxValue) maxValue = value;
+      }
+    }
 
     // 处理所有值相同的情况
     double valueRange = maxValue - minValue;
@@ -140,7 +162,21 @@ class _SparklinePainter extends CustomPainter {
       return padding + (1 - (value - minValue) / valueRange) * effectiveHeight;
     }
 
-    // 创建画笔
+    // 绘制参考线（如果有）
+    if (referenceValue != null) {
+      final refY = valueToY(referenceValue!);
+      final refPaint = Paint()
+        ..color = referenceLineColor
+        ..strokeWidth = 0.5
+        ..style = PaintingStyle.stroke;
+      canvas.drawLine(
+        Offset(padding, refY),
+        Offset(size.width - padding, refY),
+        refPaint,
+      );
+    }
+
+    // 创建数据线画笔
     final paint = Paint()
       ..color = lineColor
       ..strokeWidth = strokeWidth
@@ -158,7 +194,7 @@ class _SparklinePainter extends CustomPainter {
       path.lineTo(x, y);
     }
 
-    // 绘制线条
+    // 绘制数据线
     canvas.drawPath(path, paint);
   }
 
@@ -166,6 +202,8 @@ class _SparklinePainter extends CustomPainter {
   bool shouldRepaint(covariant _SparklinePainter oldDelegate) {
     return oldDelegate.data != data ||
         oldDelegate.lineColor != lineColor ||
-        oldDelegate.strokeWidth != strokeWidth;
+        oldDelegate.strokeWidth != strokeWidth ||
+        oldDelegate.referenceValue != referenceValue ||
+        oldDelegate.referenceLineColor != referenceLineColor;
   }
 }
