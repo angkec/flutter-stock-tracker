@@ -151,16 +151,38 @@ class IndustryTrendService extends ChangeNotifier {
       }
 
       // 获取所有股票的分钟K线数据
-      // TDX API 限制每次最多约800根K线，约4天数据
+      // TDX API 限制每次最多约800根K线，需要分页获取
+      // 每页800根约4天，获取4页约16天数据
       final stockList = stocks.map((s) => s.stock).toList();
+      const int barsPerPage = 800;
+      const int totalPages = 4; // 4页 * 800根 ≈ 16天
 
-      final allBars = await pool.batchGetSecurityBars(
-        stocks: stockList,
-        category: klineType1Min,
-        start: 0,
-        count: 800,
-        onProgress: onProgress,
-      );
+      // 存储所有股票的合并K线数据
+      final allBars = List<List<KLine>>.generate(stockList.length, (_) => []);
+      var totalCompleted = 0;
+      final totalRequests = stockList.length * totalPages;
+
+      for (var page = 0; page < totalPages; page++) {
+        final start = page * barsPerPage;
+
+        final pageBars = await pool.batchGetSecurityBars(
+          stocks: stockList,
+          category: klineType1Min,
+          start: start,
+          count: barsPerPage,
+          onProgress: (current, total) {
+            totalCompleted = page * stockList.length + current;
+            onProgress?.call(totalCompleted, totalRequests);
+          },
+        );
+
+        // 合并数据（新数据在前，旧数据在后）
+        for (var i = 0; i < pageBars.length; i++) {
+          if (pageBars[i].isNotEmpty) {
+            allBars[i].addAll(pageBars[i]);
+          }
+        }
+      }
 
       // 计算每只股票每天的量比
       final stockDailyRatios = <int, Map<String, double>>{}; // stockIndex -> {dateKey -> ratio}
