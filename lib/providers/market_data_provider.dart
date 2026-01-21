@@ -52,6 +52,9 @@ class MarketDataProvider extends ChangeNotifier {
   // 缓存日K数据用于重算回踩
   Map<String, List<dynamic>> _dailyBarsCache = {};
 
+  // 缓存分时数据
+  Map<String, List<dynamic>> _minuteDataCache = {};
+
   // Timer for debounce saving
   Timer? _saveDebounceTimer;
 
@@ -75,6 +78,7 @@ class MarketDataProvider extends ChangeNotifier {
   RefreshStage get stage => _stage;
   String? get stageDescription => _stageDescription;
   String? get lastFetchDate => _lastFetchDate;
+  int get minuteDataCacheCount => _minuteDataCache.length;
 
   /// 获取板块热度（量比>=1 和 <1 的股票数量）
   /// 返回 (hotCount, coldCount)，如果行业为空或无数据返回 null
@@ -225,6 +229,31 @@ class MarketDataProvider extends ChangeNotifier {
 
       // Load last fetch date
       _lastFetchDate = prefs.getString(_lastFetchDateKey);
+
+      // Load minute data cache (with daily auto-clear)
+      final minuteCacheDate = prefs.getString(_minuteDataDateKey);
+      final today = DateTime.now().toString().substring(0, 10);
+
+      if (minuteCacheDate == today) {
+        // Same day - load cache
+        final minuteJson = prefs.getString(_minuteDataCacheKey);
+        if (minuteJson != null) {
+          try {
+            final Map<String, dynamic> data = jsonDecode(minuteJson);
+            _minuteDataCache = data.map((k, v) => MapEntry(
+              k,
+              (v as List).toList()
+            ));
+          } catch (e) {
+            debugPrint('Failed to load minute data cache: $e');
+            await prefs.remove(_minuteDataCacheKey);
+          }
+        }
+      } else {
+        // Different day - clear cache
+        await prefs.remove(_minuteDataCacheKey);
+        await prefs.setString(_minuteDataDateKey, today);
+      }
     } catch (e) {
       debugPrint('Failed to load cache: $e');
     }
@@ -263,11 +292,26 @@ class MarketDataProvider extends ChangeNotifier {
     }
   }
 
+  /// Persist minute data cache to SharedPreferences
+  Future<void> _persistMinuteDataCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = _minuteDataCache.map((k, v) => MapEntry(k, v));
+      await prefs.setString(_minuteDataCacheKey, jsonEncode(data));
+
+      final today = DateTime.now().toString().substring(0, 10);
+      await prefs.setString(_minuteDataDateKey, today);
+    } catch (e) {
+      debugPrint('Failed to persist minute data cache: $e');
+    }
+  }
+
   /// Schedule persistence with debounce
   void _schedulePersist() {
     _saveDebounceTimer?.cancel();
     _saveDebounceTimer = Timer(const Duration(milliseconds: 500), () {
       _persistDailyBarsCache();
+      _persistMinuteDataCache();
     });
   }
 
