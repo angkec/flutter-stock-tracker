@@ -6,6 +6,7 @@ import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
+import 'package:stock_rtwatcher/services/backtest_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
@@ -49,6 +50,11 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) {
           final service = IndustryTrendService();
           service.load(); // 异步加载行业趋势缓存
+          return service;
+        }),
+        ChangeNotifierProvider(create: (_) {
+          final service = BacktestService();
+          service.loadConfig(); // 异步加载回测配置
           return service;
         }),
         ChangeNotifierProxyProvider5<TdxPool, StockService, IndustryService, PullbackService, BreakoutService, MarketDataProvider>(
