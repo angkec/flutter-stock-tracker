@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
-import 'package:stock_rtwatcher/models/pullback_config.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
@@ -12,7 +11,6 @@ import 'package:stock_rtwatcher/widgets/minute_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
 import 'package:stock_rtwatcher/widgets/industry_heat_bar.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
-import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:provider/provider.dart';
 
 /// K线图显示模式
@@ -450,8 +448,6 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
               errorMessage: _ratioError,
               onRetry: _loadRatioHistory,
             ),
-            const Divider(),
-            _buildPullbackScoreCard(),
             const SizedBox(height: 24),
           ],
         ),
@@ -601,205 +597,4 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     );
   }
 
-  Widget _buildPullbackScoreCard() {
-    final pullbackService = context.watch<PullbackService>();
-    final config = pullbackService.config;
-    final marketProvider = context.watch<MarketDataProvider>();
-
-    // 获取该股票的分钟量比
-    final stockData = marketProvider.allData
-        .where((d) => d.stock.code == _currentStock.code)
-        .firstOrNull;
-    final minuteRatio = stockData?.ratio;
-
-    // 需要至少7根日K线
-    if (_dailyBars.length < 7) {
-      return Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '回踩条件检测',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _isLoadingKLine ? '加载中...' : '日K数据不足，无法检测',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.grey,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // 取最后7根K线
-    final bars = _dailyBars.length > 7
-        ? _dailyBars.sublist(_dailyBars.length - 7)
-        : _dailyBars;
-
-    final prev5 = bars.sublist(0, 5);
-    final yesterday = bars[5];
-    final today = bars[6];
-
-    // 计算各项指标
-    final avg5Volume = prev5.map((b) => b.volume).reduce((a, b) => a + b) / 5;
-    final yesterdayVolumeRatio = yesterday.volume / avg5Volume;
-    final yesterdayGain = (yesterday.close - yesterday.open) / yesterday.open;
-    final todayDrop = today.close < today.open
-        ? (today.open - today.close) / today.open
-        : 0.0;
-    final dropRatio = yesterdayGain > 0 ? todayDrop / yesterdayGain : 0.0;
-    final dailyRatio = today.volume / yesterday.volume;
-    final isTodayShrink = today.volume < yesterday.volume;
-    final isTodayDown = today.close < today.open;
-    final isBelowYesterdayHigh = today.close < yesterday.high;
-
-    // 判断各项是否通过
-    final pass1 = yesterdayVolumeRatio > config.volumeMultiplier;
-    final pass2 = yesterdayGain > config.minYesterdayGain;
-    final pass3 = isTodayShrink;
-    // pass4 根据 dropMode 决定
-    final bool pass4;
-    switch (config.dropMode) {
-      case DropMode.todayDown:
-        pass4 = isTodayDown;
-        break;
-      case DropMode.belowYesterdayHigh:
-        pass4 = isBelowYesterdayHigh;
-        break;
-      case DropMode.none:
-        pass4 = true;
-        break;
-    }
-    final pass5 = dropRatio < config.maxDropRatio;
-    final pass6 = dailyRatio <= config.maxDailyRatio;
-    final pass7 = minuteRatio != null && minuteRatio >= config.minMinuteRatio;
-
-    final allPass = pass1 && pass2 && pass3 && pass4 && pass5 && pass6 && pass7;
-
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                '回踩条件检测',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: allPass ? Colors.green : Colors.grey,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  allPass ? '符合' : '不符合',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _buildScoreRow(
-            '昨日放量',
-            '${yesterdayVolumeRatio.toStringAsFixed(2)}x',
-            '>${config.volumeMultiplier}x',
-            pass1,
-          ),
-          _buildScoreRow(
-            '昨日涨幅',
-            '${(yesterdayGain * 100).toStringAsFixed(2)}%',
-            '>${(config.minYesterdayGain * 100).toStringAsFixed(0)}%',
-            pass2,
-          ),
-          _buildScoreRow(
-            '今日缩量',
-            isTodayShrink ? '是' : '否',
-            '是',
-            pass3,
-          ),
-          if (config.dropMode != DropMode.none)
-            _buildScoreRow(
-              config.dropMode == DropMode.todayDown ? '今日下跌' : '低于昨高',
-              config.dropMode == DropMode.todayDown
-                  ? (isTodayDown ? '是' : '否')
-                  : (isBelowYesterdayHigh ? '是' : '否'),
-              '是',
-              pass4,
-            ),
-          _buildScoreRow(
-            '跌幅/涨幅',
-            '${(dropRatio * 100).toStringAsFixed(1)}%',
-            '<${(config.maxDropRatio * 100).toStringAsFixed(0)}%',
-            pass5,
-          ),
-          _buildScoreRow(
-            '日K量比',
-            dailyRatio.toStringAsFixed(2),
-            '<=${config.maxDailyRatio}',
-            pass6,
-          ),
-          _buildScoreRow(
-            '分钟量比',
-            minuteRatio?.toStringAsFixed(2) ?? '-',
-            '>=${config.minMinuteRatio}',
-            pass7,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScoreRow(String label, String value, String condition, bool pass) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Icon(
-            pass ? Icons.check_circle : Icons.cancel,
-            size: 16,
-            color: pass ? Colors.green : Colors.red,
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 70,
-            child: Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-          SizedBox(
-            width: 70,
-            child: Text(
-              value,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: pass ? Colors.green : Colors.red,
-              ),
-            ),
-          ),
-          Text(
-            condition,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Colors.grey,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
