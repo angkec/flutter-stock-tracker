@@ -583,6 +583,82 @@ class BreakoutService extends ChangeNotifier {
     return breakoutIndices;
   }
 
+  /// 查找近似命中的突破日（差1-2个条件）
+  /// 返回 Map<索引, 失败条件数>
+  Map<int, int> findNearMissBreakoutDays(List<KLine> dailyBars, {int maxFailedConditions = 2}) {
+    final nearMisses = <int, int>{};
+
+    if (dailyBars.length < 6) {
+      return nearMisses;
+    }
+
+    for (int i = 5; i < dailyBars.length; i++) {
+      final bar = dailyBars[i];
+      int failedCount = 0;
+
+      // 1. 必须是上涨日（这是基本条件，不计入失败数）
+      if (!bar.isUp) {
+        continue;
+      }
+
+      // 2. 放量检测
+      final prev5 = dailyBars.sublist(i - 5, i);
+      final avg5Volume = prev5.map((b) => b.volume).reduce((a, b) => a + b) / 5;
+      final volumeMultiple = bar.volume / avg5Volume;
+      if (volumeMultiple <= _config.breakVolumeMultiplier) {
+        // 如果量比太低（不到要求的60%），跳过
+        if (volumeMultiple < _config.breakVolumeMultiplier * 0.6) {
+          continue;
+        }
+        failedCount++;
+      }
+
+      // 3. 均线突破检测
+      if (_config.maBreakDays > 0 && i >= _config.maBreakDays) {
+        final maStart = i - _config.maBreakDays;
+        final maBars = dailyBars.sublist(maStart, i);
+        final ma = maBars.map((b) => b.close).reduce((a, b) => a + b) / _config.maBreakDays;
+        if (bar.close <= ma) {
+          failedCount++;
+        }
+      }
+
+      // 4. 前高突破检测
+      if (_config.highBreakDays > 0 && i >= _config.highBreakDays) {
+        final highStart = i - _config.highBreakDays;
+        final highBars = dailyBars.sublist(highStart, i);
+        final maxHigh = highBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
+        if (bar.close <= maxHigh) {
+          failedCount++;
+        }
+      }
+
+      // 5. 上引线检测
+      if (_config.maxUpperShadowRatio > 0) {
+        final bodyLength = (bar.close - bar.open).abs();
+        final upperShadow = bar.high - bar.close;
+        if (bodyLength > 0) {
+          final ratio = upperShadow / bodyLength;
+          if (ratio > _config.maxUpperShadowRatio) {
+            failedCount++;
+          }
+        }
+      }
+
+      // 6. 回踩检测
+      if (!_hasValidPullbackAfter(dailyBars, i, bar)) {
+        failedCount++;
+      }
+
+      // 如果失败条件数在1-maxFailedConditions之间，记录为近似命中
+      if (failedCount >= 1 && failedCount <= maxFailedConditions) {
+        nearMisses[i] = failedCount;
+      }
+    }
+
+    return nearMisses;
+  }
+
   /// 检查突破日后是否有符合条件的回踩
   /// [dailyBars] 日K数据
   /// [breakoutIdx] 突破日索引

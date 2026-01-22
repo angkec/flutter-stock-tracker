@@ -607,17 +607,25 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         ),
       );
     }
-    // 计算突破日标记（仅日K）
+    // 计算突破日标记和近似命中（仅日K）
     final breakoutService = context.read<BreakoutService>();
     Set<int>? markedIndices;
+    Map<int, int>? nearMissIndices;
     if (_chartMode == ChartMode.daily && _dailyBars.isNotEmpty) {
       markedIndices = breakoutService.findBreakoutDays(_dailyBars);
+      // 计算近似命中（差1-2个条件的日K）
+      nearMissIndices = breakoutService.findNearMissBreakoutDays(_dailyBars);
+      // 从近似命中中移除已经是突破日的索引
+      if (markedIndices.isNotEmpty) {
+        nearMissIndices.removeWhere((key, _) => markedIndices!.contains(key));
+      }
     }
 
     return KLineChart(
       bars: _chartMode == ChartMode.daily ? _dailyBars : _weeklyBars,
       ratios: _chartMode == ChartMode.daily ? _ratioHistory : null,
       markedIndices: markedIndices,
+      nearMissIndices: nearMissIndices,
       getDetectionResult: _chartMode == ChartMode.daily
           ? (index) => breakoutService.getDetectionResult(_dailyBars, index)
           : null,

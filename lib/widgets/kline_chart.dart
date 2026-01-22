@@ -14,6 +14,7 @@ class KLineChart extends StatefulWidget {
   final List<DailyRatio>? ratios; // 量比数据，用于显示选中日期的量比
   final double height;
   final Set<int>? markedIndices; // 需要标记的K线索引（如突破日）
+  final Map<int, int>? nearMissIndices; // 近似命中的K线索引及失败条件数
   final BreakoutDetectionResult? Function(int index)? getDetectionResult; // 获取检测结果的回调
 
   const KLineChart({
@@ -22,6 +23,7 @@ class KLineChart extends StatefulWidget {
     this.ratios,
     this.height = 280,
     this.markedIndices,
+    this.nearMissIndices,
     this.getDetectionResult,
   });
 
@@ -97,6 +99,17 @@ class _KLineChartState extends State<KLineChart> {
                     .toSet();
               }
 
+              // 调整 nearMissIndices 为可见范围内的索引
+              Map<int, int>? visibleNearMissIndices;
+              if (widget.nearMissIndices != null) {
+                visibleNearMissIndices = {};
+                for (final entry in widget.nearMissIndices!.entries) {
+                  if (entry.key >= _startIndex && entry.key < endIndex) {
+                    visibleNearMissIndices[entry.key - _startIndex] = entry.value;
+                  }
+                }
+              }
+
               // 调整 selectedIndex 为可见范围内的索引
               int? visibleSelectedIndex;
               if (_selectedIndex != null &&
@@ -122,6 +135,7 @@ class _KLineChartState extends State<KLineChart> {
                         ratios: widget.ratios,
                         selectedIndex: visibleSelectedIndex,
                         markedIndices: visibleMarkedIndices,
+                        nearMissIndices: visibleNearMissIndices,
                         crosshairColor: crosshairColor,
                         startIndex: _startIndex, // 传递起始索引用于日期匹配
                       ),
@@ -346,6 +360,7 @@ class _KLinePainter extends CustomPainter {
   final List<DailyRatio>? ratios;
   final int? selectedIndex;
   final Set<int>? markedIndices;
+  final Map<int, int>? nearMissIndices; // 近似命中的索引及失败条件数
   final Color crosshairColor;
   final int startIndex; // 可见范围的起始索引（用于日期匹配）
 
@@ -354,6 +369,7 @@ class _KLinePainter extends CustomPainter {
     this.ratios,
     this.selectedIndex,
     this.markedIndices,
+    this.nearMissIndices,
     this.crosshairColor = Colors.white,
     this.startIndex = 0,
   });
@@ -571,6 +587,40 @@ class _KLinePainter extends CustomPainter {
           ..close();
         canvas.drawPath(path, markerPaint);
       }
+      // === 近似命中标记 ===
+      else if (nearMissIndices != null && nearMissIndices!.containsKey(i)) {
+        final failedCount = nearMissIndices![i]!;
+        final markerPaint = Paint()
+          ..color = Colors.orange.withValues(alpha: 0.4) // 浅色
+          ..style = PaintingStyle.fill;
+
+        // 在K线上方画一个浅色小三角形
+        final markerY = highY - 6;
+        final path = Path()
+          ..moveTo(x, markerY)
+          ..lineTo(x - 4, markerY - 6)
+          ..lineTo(x + 4, markerY - 6)
+          ..close();
+        canvas.drawPath(path, markerPaint);
+
+        // 在三角形内显示差几条（失败条件数）
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: '$failedCount',
+            style: const TextStyle(
+              color: Colors.orange,
+              fontSize: 8,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        textPainter.paint(
+          canvas,
+          Offset(x - textPainter.width / 2, markerY - 5 - textPainter.height / 2),
+        );
+      }
 
       // === 量比柱 ===
       final dateKey = '${bar.datetime.year}-${bar.datetime.month}-${bar.datetime.day}';
@@ -621,6 +671,7 @@ class _KLinePainter extends CustomPainter {
            oldDelegate.ratios != ratios ||
            oldDelegate.selectedIndex != selectedIndex ||
            oldDelegate.markedIndices != markedIndices ||
+           oldDelegate.nearMissIndices != nearMissIndices ||
            oldDelegate.crosshairColor != crosshairColor ||
            oldDelegate.startIndex != startIndex;
   }
