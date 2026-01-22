@@ -7,6 +7,7 @@ import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 import 'package:stock_rtwatcher/widgets/breakout_config_dialog.dart';
+import 'package:stock_rtwatcher/screens/backtest_screen.dart';
 
 /// 放量突破页面 - 显示所有放量突破后回踩的股票
 class BreakoutScreen extends StatelessWidget {
@@ -64,16 +65,15 @@ class BreakoutScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('多日回踩'),
         actions: [
-          // 重算按钮
+          // 回测分析按钮
           IconButton(
-            icon: const Icon(Icons.calculate_outlined),
-            tooltip: '重算突破',
+            icon: const Icon(Icons.analytics_outlined),
+            tooltip: '回测分析',
             onPressed: () {
-              final success = provider.recalculateBreakouts();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(success ? '已重算突破' : '请先在全市场页面刷新数据'),
-                  duration: const Duration(seconds: 2),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const BacktestScreen(),
                 ),
               );
             },
