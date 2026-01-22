@@ -12,12 +12,14 @@ class KLineChart extends StatefulWidget {
   final List<KLine> bars;
   final List<DailyRatio>? ratios; // 量比数据，用于显示选中日期的量比
   final double height;
+  final Set<int>? markedIndices; // 需要标记的K线索引（如突破日）
 
   const KLineChart({
     super.key,
     required this.bars,
     this.ratios,
     this.height = 280,
+    this.markedIndices,
   });
 
   @override
@@ -57,6 +59,7 @@ class _KLineChartState extends State<KLineChart> {
                   painter: _KLinePainter(
                     bars: widget.bars,
                     selectedIndex: _selectedIndex,
+                    markedIndices: widget.markedIndices,
                   ),
                 ),
               );
@@ -157,8 +160,9 @@ class _KLineChartState extends State<KLineChart> {
 class _KLinePainter extends CustomPainter {
   final List<KLine> bars;
   final int? selectedIndex;
+  final Set<int>? markedIndices;
 
-  _KLinePainter({required this.bars, this.selectedIndex});
+  _KLinePainter({required this.bars, this.selectedIndex, this.markedIndices});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -317,6 +321,22 @@ class _KLinePainter extends CustomPainter {
         ),
         volumePaint,
       );
+
+      // === 突破日标记 ===
+      if (markedIndices != null && markedIndices!.contains(i)) {
+        final markerPaint = Paint()
+          ..color = Colors.orange
+          ..style = PaintingStyle.fill;
+
+        // 在K线上方画一个小三角形
+        final markerY = highY - 6;
+        final path = Path()
+          ..moveTo(x, markerY)
+          ..lineTo(x - 4, markerY - 6)
+          ..lineTo(x + 4, markerY - 6)
+          ..close();
+        canvas.drawPath(path, markerPaint);
+      }
     }
 
     // 绘制底部日期
@@ -342,6 +362,8 @@ class _KLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _KLinePainter oldDelegate) {
-    return oldDelegate.bars != bars || oldDelegate.selectedIndex != selectedIndex;
+    return oldDelegate.bars != bars ||
+           oldDelegate.selectedIndex != selectedIndex ||
+           oldDelegate.markedIndices != markedIndices;
   }
 }

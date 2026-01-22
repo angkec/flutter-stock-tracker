@@ -185,4 +185,76 @@ class BreakoutService extends ChangeNotifier {
     // 没有找到符合条件的突破日
     return false;
   }
+
+  /// 检测哪些K线是突破日（符合放量突破条件）
+  /// 返回符合条件的K线索引列表
+  Set<int> findBreakoutDays(List<KLine> dailyBars) {
+    final breakoutIndices = <int>{};
+
+    // 需要至少6根K线（5根算均量 + 1根突破日）
+    if (dailyBars.length < 6) {
+      return breakoutIndices;
+    }
+
+    for (int i = 5; i < dailyBars.length; i++) {
+      final bar = dailyBars[i];
+
+      // 1. 必须是上涨日（close > open）
+      if (!bar.isUp) {
+        continue;
+      }
+
+      // 2. 计算前5日均量
+      final prev5 = dailyBars.sublist(i - 5, i);
+      final avg5Volume = prev5.map((b) => b.volume).reduce((a, b) => a + b) / 5;
+
+      // 成交量 > 前5日均量 × breakVolumeMultiplier
+      if (bar.volume <= avg5Volume * _config.breakVolumeMultiplier) {
+        continue;
+      }
+
+      // 3. 如果 maBreakDays > 0，检查收盘价 > N日均线
+      if (_config.maBreakDays > 0) {
+        if (i < _config.maBreakDays) {
+          continue;
+        }
+        final maStart = i - _config.maBreakDays;
+        final maBars = dailyBars.sublist(maStart, i);
+        final ma = maBars.map((b) => b.close).reduce((a, b) => a + b) / _config.maBreakDays;
+        if (bar.close <= ma) {
+          continue;
+        }
+      }
+
+      // 4. 如果 highBreakDays > 0，检查收盘价 > 前N日最高价
+      if (_config.highBreakDays > 0) {
+        if (i < _config.highBreakDays) {
+          continue;
+        }
+        final highStart = i - _config.highBreakDays;
+        final highBars = dailyBars.sublist(highStart, i);
+        final maxHigh = highBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
+        if (bar.close <= maxHigh) {
+          continue;
+        }
+      }
+
+      // 5. 检查上引线/实体比例
+      if (_config.maxUpperShadowRatio > 0) {
+        final bodyLength = (bar.close - bar.open).abs();
+        final upperShadow = bar.high - bar.close;
+        if (bodyLength > 0) {
+          final ratio = upperShadow / bodyLength;
+          if (ratio > _config.maxUpperShadowRatio) {
+            continue;
+          }
+        }
+      }
+
+      // 所有突破条件都满足
+      breakoutIndices.add(i);
+    }
+
+    return breakoutIndices;
+  }
 }

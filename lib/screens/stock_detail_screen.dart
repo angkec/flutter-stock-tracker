@@ -11,6 +11,7 @@ import 'package:stock_rtwatcher/widgets/minute_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
 import 'package:stock_rtwatcher/widgets/industry_heat_bar.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:provider/provider.dart';
 
 /// K线图显示模式
@@ -560,9 +561,17 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         ),
       );
     }
+    // 计算突破日标记（仅日K）
+    Set<int>? markedIndices;
+    if (_chartMode == ChartMode.daily && _dailyBars.isNotEmpty) {
+      final breakoutService = context.read<BreakoutService>();
+      markedIndices = breakoutService.findBreakoutDays(_dailyBars);
+    }
+
     return KLineChart(
       bars: _chartMode == ChartMode.daily ? _dailyBars : _weeklyBars,
       ratios: _chartMode == ChartMode.daily ? _ratioHistory : null,
+      markedIndices: markedIndices,
     );
   }
 
