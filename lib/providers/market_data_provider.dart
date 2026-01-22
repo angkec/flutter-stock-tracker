@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -82,6 +84,16 @@ class MarketDataProvider extends ChangeNotifier {
 
   // Cache info getters
   int get dailyBarsCacheCount => _dailyBarsCache.length;
+
+  /// 获取日K缓存数据（用于回测）
+  Map<String, List<KLine>> get dailyBarsCache {
+    return _dailyBarsCache.map((k, v) => MapEntry(k, v.cast<KLine>()));
+  }
+
+  /// 获取股票数据映射（用于回测）
+  Map<String, StockMonitorData> get stockDataMap {
+    return {for (final data in _allData) data.stock.code: data};
+  }
   String get dailyBarsCacheSize => _formatSize(_estimateDailyBarsSize());
   String get minuteDataCacheSize => _formatSize(_estimateMinuteDataSize());
   String? get industryDataCacheSize => _industryService.isLoaded
@@ -197,11 +209,6 @@ class MarketDataProvider extends ChangeNotifier {
     }
   }
 
-  bool _isFirstFetchToday() {
-    final today = DateTime.now().toString().substring(0, 10);
-    return _lastFetchDate != today;
-  }
-
   /// 从缓存加载数据
   Future<void> loadFromCache() async {
     try {
@@ -229,7 +236,9 @@ class MarketDataProvider extends ChangeNotifier {
           final Map<String, dynamic> data = jsonDecode(dailyBarsJson);
           _dailyBarsCache = data.map((k, v) => MapEntry(
             k,
-            (v as List).toList()  // Keep as List<dynamic>
+            (v as List).map((item) =>
+              item is Map<String, dynamic> ? KLine.fromJson(item) : item
+            ).toList(),
           ));
         } catch (e) {
           debugPrint('Failed to load daily bars cache: $e');
@@ -252,7 +261,9 @@ class MarketDataProvider extends ChangeNotifier {
             final Map<String, dynamic> data = jsonDecode(minuteJson);
             _minuteDataCache = data.map((k, v) => MapEntry(
               k,
-              (v as List).toList()
+              (v as List).map((item) =>
+                item is Map<String, dynamic> ? KLine.fromJson(item) : item
+              ).toList(),
             ));
           } catch (e) {
             debugPrint('Failed to load minute data cache: $e');
@@ -290,7 +301,11 @@ class MarketDataProvider extends ChangeNotifier {
   Future<void> _persistDailyBarsCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final data = _dailyBarsCache.map((k, v) => MapEntry(k, v));
+      // Convert KLine objects to JSON
+      final data = _dailyBarsCache.map((k, v) => MapEntry(
+        k,
+        v.map((bar) => bar is KLine ? bar.toJson() : bar).toList(),
+      ));
       await prefs.setString(_dailyBarsCacheKey, jsonEncode(data));
 
       // Update last fetch date
@@ -306,7 +321,11 @@ class MarketDataProvider extends ChangeNotifier {
   Future<void> _persistMinuteDataCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final data = _minuteDataCache.map((k, v) => MapEntry(k, v));
+      // Convert KLine objects to JSON
+      final data = _minuteDataCache.map((k, v) => MapEntry(
+        k,
+        v.map((bar) => bar is KLine ? bar.toJson() : bar).toList(),
+      ));
       await prefs.setString(_minuteDataCacheKey, jsonEncode(data));
 
       final today = DateTime.now().toString().substring(0, 10);
@@ -327,6 +346,8 @@ class MarketDataProvider extends ChangeNotifier {
 
   /// 刷新数据
   Future<void> refresh({bool silent = false}) async {
+    print('🔍 [MarketDataProvider.refresh] Called at ${DateTime.now()}, isLoading=$_isLoading');
+    developer.log('[MarketDataProvider.refresh] Called at ${DateTime.now()}, isLoading=$_isLoading');
     if (_isLoading) return;
 
     _isLoading = true;
@@ -348,7 +369,11 @@ class MarketDataProvider extends ChangeNotifier {
       }
 
       // 获取所有股票
+      print('🔍 [MarketDataProvider.refresh] Getting all stocks...');
+      developer.log('[MarketDataProvider.refresh] Getting all stocks...');
       final stocks = await _stockService.getAllStocks();
+      print('🔍 [MarketDataProvider.refresh] Got ${stocks.length} stocks');
+      developer.log('[MarketDataProvider.refresh] Got ${stocks.length} stocks');
 
       // Set initial stage
       if (!silent) {
@@ -369,6 +394,7 @@ class MarketDataProvider extends ChangeNotifier {
 
       // 清空旧数据，准备渐进式更新
       _allData = [];
+      _minuteDataCache.clear();
 
       // 批量获取数据（渐进式更新）
       final result = await _stockService.batchGetMonitorData(
@@ -386,10 +412,20 @@ class MarketDataProvider extends ChangeNotifier {
           _allData = results;
           notifyListeners();
         },
+        onBarsData: (code, bars) {
+          // 缓存原始分时K线数据
+          _minuteDataCache[code] = bars;
+        },
       );
 
       // 保存数据日期
       _dataDate = result.dataDate;
+      developer.log('[MarketDataProvider.refresh] Got ${result.data.length} results, dataDate=${result.dataDate}, _allData=${_allData.length}');
+
+      // Debug: if no results, set a temporary error message
+      if (result.data.isEmpty && _allData.isEmpty) {
+        _errorMessage = '调试: 获取到0条数据 (日期: ${result.dataDate})';
+      }
 
       // Update stage to daily bars
       if (!silent) {
@@ -439,40 +475,59 @@ class MarketDataProvider extends ChangeNotifier {
   }
 
   /// 检测高质量回踩（下载日K数据）
+  /// 增量更新：如果当天已拉取过且缓存不为空，跳过重新拉取
   Future<void> _detectPullbacks() async {
     if (_pullbackService == null || _allData.isEmpty) return;
 
-    // 获取所有股票信息
-    final stocks = _allData.map((d) => d.stock).toList();
+    // 检查是否需要重新拉取日K数据
+    final today = DateTime.now().toString().substring(0, 10);
+    final needFetchDaily = _lastFetchDate != today || _dailyBarsCache.isEmpty;
 
-    // 批量获取日K数据（7根，用于回踩检测）
-    _dailyBarsCache.clear();
+    if (needFetchDaily) {
+      // 获取所有股票信息
+      final stocks = _allData.map((d) => d.stock).toList();
 
-    await _pool.batchGetSecurityBarsStreaming(
-      stocks: stocks,
-      category: klineTypeDaily,
-      start: 0,
-      count: 15,
-      onStockBars: (index, bars) {
-        _dailyBarsCache[stocks[index].code] = bars;
-      },
-    );
+      // 批量获取日K数据（15根，用于回踩检测）
+      _dailyBarsCache.clear();
+      var completed = 0;
+      final total = stocks.length;
 
-    // Schedule persistence of daily bars cache
-    _schedulePersist();
+      await _pool.batchGetSecurityBarsStreaming(
+        stocks: stocks,
+        category: klineTypeDaily,
+        start: 0,
+        count: 60,
+        onStockBars: (index, bars) {
+          _dailyBarsCache[stocks[index].code] = bars;
+          completed++;
+          _updateProgress(RefreshStage.updateDailyBars, completed, total);
+        },
+      );
+      // Schedule persistence of daily bars cache
+      _schedulePersist();
+    } else {
+      // 跳过日K拉取，直接显示完成
+      _updateProgress(RefreshStage.updateDailyBars, _dailyBarsCache.length, _dailyBarsCache.length);
+    }
 
     // 使用缓存数据计算回踩
     _applyPullbackDetection();
   }
 
   /// 重算回踩（使用缓存的日K数据，不重新下载）
-  /// 返回 true 表示成功重算，false 表示缓存为空需要先刷新
-  bool recalculatePullbacks() {
-    if (_pullbackService == null || _allData.isEmpty || _dailyBarsCache.isEmpty) {
-      return false;
+  /// 返回 null 表示成功，否则返回缺失数据的描述
+  String? recalculatePullbacks() {
+    if (_pullbackService == null) {
+      return '回踩服务未初始化';
+    }
+    if (_allData.isEmpty) {
+      return '缺失分钟数据，请先刷新';
+    }
+    if (_dailyBarsCache.isEmpty) {
+      return '缺失日K数据，请先刷新';
     }
     _applyPullbackDetection();
-    return true;
+    return null;
   }
 
   /// 应用回踩检测逻辑
@@ -501,13 +556,19 @@ class MarketDataProvider extends ChangeNotifier {
   }
 
   /// 重算突破回踩（使用缓存的日K数据，不重新下载）
-  /// 返回 true 表示成功重算，false 表示缓存为空需要先刷新
-  bool recalculateBreakouts() {
-    if (_breakoutService == null || _allData.isEmpty || _dailyBarsCache.isEmpty) {
-      return false;
+  /// 返回 null 表示成功，否则返回缺失数据的描述
+  String? recalculateBreakouts() {
+    if (_breakoutService == null) {
+      return '突破服务未初始化';
+    }
+    if (_allData.isEmpty) {
+      return '缺失分钟数据，请先刷新';
+    }
+    if (_dailyBarsCache.isEmpty) {
+      return '缺失日K数据，请先刷新';
     }
     _applyBreakoutDetection();
-    return true;
+    return null;
   }
 
   /// 应用突破回踩检测逻辑
