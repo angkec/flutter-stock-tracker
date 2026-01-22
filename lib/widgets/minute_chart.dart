@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
 
-/// 分时图颜色
-const Color _priceLineColor = Colors.white;
-const Color _avgLineColor = Color(0xFFFFD700); // 黄色均价线
+/// 分时图颜色 - 均价线（黄色/金色在两种主题下都清晰）
+const Color _avgLineColor = Color(0xFFFFD700);
 
 /// 分时图组件
 class MinuteChart extends StatelessWidget {
@@ -28,6 +27,11 @@ class MinuteChart extends StatelessWidget {
       );
     }
 
+    // 根据主题选择价格线颜色
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final priceLineColor = isDark ? Colors.white : AppColors.lightPrimary;
+    final gradientColor = isDark ? Colors.white : AppColors.lightPrimary;
+
     return SizedBox(
       height: height,
       child: LayoutBuilder(
@@ -37,6 +41,8 @@ class MinuteChart extends StatelessWidget {
             painter: _MinuteChartPainter(
               bars: bars,
               preClose: preClose,
+              priceLineColor: priceLineColor,
+              gradientColor: gradientColor,
             ),
           );
         },
@@ -48,10 +54,14 @@ class MinuteChart extends StatelessWidget {
 class _MinuteChartPainter extends CustomPainter {
   final List<KLine> bars;
   final double preClose;
+  final Color priceLineColor;
+  final Color gradientColor;
 
   _MinuteChartPainter({
     required this.bars,
     required this.preClose,
+    required this.priceLineColor,
+    required this.gradientColor,
   });
 
   @override
@@ -171,9 +181,9 @@ class _MinuteChartPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     canvas.drawPath(avgPath, avgPaint);
 
-    // 绘制价格线（白色）
+    // 绘制价格线
     final pricePaint = Paint()
-      ..color = _priceLineColor
+      ..color = priceLineColor
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
     canvas.drawPath(pricePath, pricePaint);
@@ -193,8 +203,8 @@ class _MinuteChartPainter extends CustomPainter {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.white.withValues(alpha: 0.1),
-            Colors.white.withValues(alpha: 0.0),
+            gradientColor.withValues(alpha: 0.15),
+            gradientColor.withValues(alpha: 0.0),
           ],
         ).createShader(Rect.fromLTWH(0, 0, size.width, priceBottom));
 
@@ -267,6 +277,9 @@ class _MinuteChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _MinuteChartPainter oldDelegate) {
-    return oldDelegate.bars != bars || oldDelegate.preClose != preClose;
+    return oldDelegate.bars != bars ||
+        oldDelegate.preClose != preClose ||
+        oldDelegate.priceLineColor != priceLineColor ||
+        oldDelegate.gradientColor != gradientColor;
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
@@ -165,24 +166,37 @@ class StockService {
 
   /// 批量获取股票监控数据 (并行，流式返回)
   /// [onData] 当有新的有效数据时回调，返回当前所有有效结果
+  /// [onBarsData] 当获取到单只股票K线时回调，用于缓存原始数据
   /// 返回 MonitorDataResult，包含数据和实际数据日期
-  /// 如果今天无数据，会自动回退到最近的交易日
+  /// 如果今天数据不足（<10根K线），会自动回退到最近的交易日
   Future<MonitorDataResult> batchGetMonitorData(
     List<Stock> stocks, {
     IndustryService? industryService,
     void Function(int current, int total)? onProgress,
     void Function(List<StockMonitorData> results)? onData,
+    void Function(String code, List<KLine> bars)? onBarsData,
   }) async {
+    // Use print for console visibility
+    print('🔍 [batchGetMonitorData] Called with ${stocks.length} stocks at ${DateTime.now()}');
+    developer.log('[batchGetMonitorData] Called with ${stocks.length} stocks at ${DateTime.now()}');
+
     final today = DateTime.now();
-    final allDates = <String>{};  // 收集所有日期（用于回退）
-    final stockBarsMap = <int, List<KLine>>{};  // 暂存所有K线（用于回退）
+    final todayKey = _formatDate(today);
+    final allDates = <String>{};  // 收集所有日期
+    final stockBarsMap = <int, List<KLine>>{};  // 暂存所有K线
     final results = <StockMonitorData>[];
     var completed = 0;
     final total = stocks.length;
     var lastReportedCount = 0;
     const reportThreshold = 50;
 
-    // 第一遍：边下载边处理今天的数据，同时收集所有日期用于可能的回退
+    // 统计今日数据情况
+    int todayValidCount = 0;  // 今日数据充足的股票数
+
+    // 第一遍：下载数据并统计
+    developer.log('[batchGetMonitorData] Starting data fetch for ${stocks.length} stocks');
+    int emptyBarsCount = 0;
+
     await _pool.batchGetSecurityBarsStreaming(
       stocks: stocks,
       category: klineType1Min,
@@ -192,70 +206,91 @@ class StockService {
         completed++;
         onProgress?.call(completed, total);
 
-        // 收集所有日期和数据（用于回退）
+        if (bars.isEmpty) {
+          emptyBarsCount++;
+        }
+
+        // 保存数据和收集日期
         stockBarsMap[index] = bars;
         for (final bar in bars) {
           allDates.add(_formatDate(bar.datetime));
         }
 
-        // 立即处理今天的数据
+        // 回调原始K线数据用于缓存
+        onBarsData?.call(stocks[index].code, bars);
+
+        // 统计今日数据情况
         final todayBars = bars.where((bar) =>
             bar.datetime.year == today.year &&
             bar.datetime.month == today.month &&
             bar.datetime.day == today.day).toList();
 
-        if (todayBars.isEmpty) return;
-
-        final ratio = calculateRatio(todayBars);
-        if (ratio == null) return;
-
-        final changePercent = calculateChangePercent(todayBars, stocks[index].preClose);
-
-        results.add(StockMonitorData(
-          stock: stocks[index],
-          ratio: ratio,
-          changePercent: changePercent ?? 0.0,
-          industry: industryService?.getIndustry(stocks[index].code),
-        ));
-
-        // 达到阈值时回调
-        if (results.length >= lastReportedCount + reportThreshold) {
-          lastReportedCount = results.length;
-          final sorted = List<StockMonitorData>.from(results)
-            ..sort((a, b) => b.ratio.compareTo(a.ratio));
-          onData?.call(sorted);
+        if (todayBars.length >= minBarsCount) {
+          todayValidCount++;
         }
       },
     );
 
-    // 如果今天有数据，直接返回
-    if (results.isNotEmpty) {
-      results.sort((a, b) => b.ratio.compareTo(a.ratio));
-      if (results.length > lastReportedCount) {
-        onData?.call(results);
+    print('🔍 [batchGetMonitorData] Fetch complete: stockBarsMap=${stockBarsMap.length}, emptyBars=$emptyBarsCount');
+    developer.log('[batchGetMonitorData] Fetch complete: stockBarsMap=${stockBarsMap.length}, emptyBars=$emptyBarsCount');
+
+    // 确定使用哪个日期的数据
+    // 如果今日有效数据的股票数 < 总数的10%，则认为今日数据不足，使用回退日期
+    final useFallback = todayValidCount < stocks.length * 0.1;
+
+    print('🔍 [batchGetMonitorData] todayValidCount=$todayValidCount, total=${stocks.length}, useFallback=$useFallback');
+    print('🔍 [batchGetMonitorData] allDates count=${allDates.length}, dates=${allDates.take(5)}');
+    developer.log('[batchGetMonitorData] todayValidCount=$todayValidCount, total=${stocks.length}, useFallback=$useFallback');
+    developer.log('[batchGetMonitorData] allDates count=${allDates.length}, dates=${allDates.take(5)}');
+
+    String targetDate;
+    DateTime resultDate;
+
+    if (useFallback) {
+      // 找到最近的有效日期（非今天）
+      final sortedDates = allDates.toList()..sort((a, b) => b.compareTo(a));
+      final fallbackDates = sortedDates.where((d) => d != todayKey).toList();
+      print('🔍 [batchGetMonitorData] sortedDates=${sortedDates.take(5)}, fallbackDates=${fallbackDates.take(5)}');
+      developer.log('[batchGetMonitorData] sortedDates=${sortedDates.take(5)}, fallbackDates=${fallbackDates.take(5)}');
+      if (fallbackDates.isEmpty) {
+        // 没有历史数据可用
+        print('🔍 [batchGetMonitorData] No fallback dates available!');
+        developer.log('[batchGetMonitorData] No fallback dates available!');
+        return MonitorDataResult(data: [], dataDate: today);
       }
-      return MonitorDataResult(data: results, dataDate: today);
+      targetDate = fallbackDates.first;
+      resultDate = _parseDate(targetDate);
+      print('🔍 [batchGetMonitorData] Using fallback date: $targetDate');
+      developer.log('[batchGetMonitorData] Using fallback date: $targetDate');
+    } else {
+      targetDate = todayKey;
+      resultDate = today;
+      print('🔍 [batchGetMonitorData] Using today: $targetDate');
+      developer.log('[batchGetMonitorData] Using today: $targetDate');
     }
 
-    // 今天没数据，回退到最近的日期重新处理
-    final sortedDates = allDates.toList()..sort((a, b) => b.compareTo(a));
-    if (sortedDates.isEmpty) {
-      return MonitorDataResult(data: [], dataDate: today);
-    }
-
-    final fallbackDate = sortedDates.first;
-    lastReportedCount = 0;
+    // 使用选定日期的数据计算
+    int emptyTargetBars = 0;
+    int nullRatioCount = 0;
+    int processedCount = 0;
 
     for (final entry in stockBarsMap.entries) {
       final index = entry.key;
       final bars = entry.value;
 
-      final targetBars = bars.where((bar) => _formatDate(bar.datetime) == fallbackDate).toList();
-      if (targetBars.isEmpty) continue;
+      final targetBars = bars.where((bar) => _formatDate(bar.datetime) == targetDate).toList();
+      if (targetBars.isEmpty) {
+        emptyTargetBars++;
+        continue;
+      }
 
       final ratio = calculateRatio(targetBars);
-      if (ratio == null) continue;
+      if (ratio == null) {
+        nullRatioCount++;
+        continue;
+      }
 
+      processedCount++;
       final changePercent = calculateChangePercent(targetBars, stocks[index].preClose);
 
       results.add(StockMonitorData(
@@ -265,6 +300,7 @@ class StockService {
         industry: industryService?.getIndustry(stocks[index].code),
       ));
 
+      // 达到阈值时回调
       if (results.length >= lastReportedCount + reportThreshold) {
         lastReportedCount = results.length;
         final sorted = List<StockMonitorData>.from(results)
@@ -273,12 +309,17 @@ class StockService {
       }
     }
 
+    print('🔍 [batchGetMonitorData] Processing stats: emptyTargetBars=$emptyTargetBars, nullRatio=$nullRatioCount, processed=$processedCount');
+    developer.log('[batchGetMonitorData] Processing stats: emptyTargetBars=$emptyTargetBars, nullRatio=$nullRatioCount, processed=$processedCount');
+
     results.sort((a, b) => b.ratio.compareTo(a.ratio));
+    print('🔍 [batchGetMonitorData] Final results count: ${results.length}, targetDate: $targetDate, stockBarsMap=${stockBarsMap.length}');
+    developer.log('[batchGetMonitorData] Final results count: ${results.length}, targetDate: $targetDate, stockBarsMap=${stockBarsMap.length}');
     if (results.length > lastReportedCount) {
       onData?.call(results);
     }
 
-    return MonitorDataResult(data: results, dataDate: _parseDate(fallbackDate));
+    return MonitorDataResult(data: results, dataDate: resultDate);
   }
 
   /// 获取 K 线数据

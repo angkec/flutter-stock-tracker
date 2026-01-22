@@ -44,6 +44,15 @@ class StockTable extends StatelessWidget {
   /// 今日实时行业趋势数据，key 为行业名称
   final Map<String, DailyRatioPoint>? todayTrendData;
 
+  /// 是否显示行业列
+  final bool showIndustry;
+
+  /// 是否显示表头（用于外部固定表头的场景）
+  final bool showHeader;
+
+  /// 底部内边距（用于避免被底部元素遮挡）
+  final double bottomPadding;
+
   const StockTable({
     super.key,
     required this.stocks,
@@ -53,6 +62,9 @@ class StockTable extends StatelessWidget {
     this.onIndustryTap,
     this.industryTrendData,
     this.todayTrendData,
+    this.showIndustry = true,
+    this.showHeader = true,
+    this.bottomPadding = 0,
   });
 
   void _copyToClipboard(BuildContext context, String code, String name) {
@@ -80,7 +92,7 @@ class StockTable extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
+  Widget _buildHeader(BuildContext context, {bool withIndustry = true}) {
     return Container(
       height: _rowHeight,
       decoration: BoxDecoration(
@@ -98,10 +110,54 @@ class StockTable extends StatelessWidget {
           _buildHeaderCell('名称', _nameWidth),
           _buildHeaderCell('涨跌幅', _changeWidth, numeric: true),
           _buildHeaderCell('量比', _ratioWidth, numeric: true),
-          _buildHeaderCell('行业', _industryWidth),
+          if (withIndustry) _buildHeaderCell('行业', _industryWidth),
         ],
       ),
     );
+  }
+
+  /// 构建独立的表头组件（用于外部固定表头）
+  static Widget buildStandaloneHeader(BuildContext context, {bool showIndustry = true}) {
+    return Container(
+      height: _rowHeight,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).dividerColor,
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          _buildStaticHeaderCell(context, '代码', _codeWidth),
+          _buildStaticHeaderCell(context, '名称', _nameWidth),
+          _buildStaticHeaderCell(context, '涨跌幅', _changeWidth, numeric: true),
+          _buildStaticHeaderCell(context, '量比', _ratioWidth, numeric: true),
+          if (showIndustry) _buildStaticHeaderCell(context, '行业', _industryWidth),
+        ],
+      ),
+    );
+  }
+
+  static Widget _buildStaticHeaderCell(BuildContext context, String text, double width, {bool numeric = false}) {
+    return SizedBox(
+      width: width,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Text(
+          text,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          textAlign: numeric ? TextAlign.right : TextAlign.left,
+        ),
+      ),
+    );
+  }
+
+  /// 获取表格总宽度
+  static double getTotalWidth({bool showIndustry = true}) {
+    return _codeWidth + _nameWidth + _changeWidth + _ratioWidth + (showIndustry ? _industryWidth : 0);
   }
 
   Widget _buildRow(BuildContext context, StockMonitorData data, int index) {
@@ -233,49 +289,50 @@ class StockTable extends StatelessWidget {
             ),
           ),
           // 行业列（包含行业标签和趋势折线）
-          SizedBox(
-            width: _industryWidth,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: data.industry != null
-                  ? GestureDetector(
-                      onTap: onIndustryTap != null
-                          ? () => onIndustryTap!(data.industry!)
-                          : null,
-                      child: Row(
-                        children: [
-                          // 行业标签
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .secondaryContainer,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              data.industry!,
-                              style: TextStyle(
-                                fontSize: 11,
+          if (showIndustry)
+            SizedBox(
+              width: _industryWidth,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: data.industry != null
+                    ? GestureDetector(
+                        onTap: onIndustryTap != null
+                            ? () => onIndustryTap!(data.industry!)
+                            : null,
+                        child: Row(
+                          children: [
+                            // 行业标签
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
                                 color: Theme.of(context)
                                     .colorScheme
-                                    .onSecondaryContainer,
+                                    .secondaryContainer,
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              overflow: TextOverflow.ellipsis,
+                              child: Text(
+                                data.industry!,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSecondaryContainer,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 4),
-                          // 趋势折线图
-                          Expanded(
-                            child: _buildTrendSparkline(data.industry),
-                          ),
-                        ],
-                      ),
-                    )
-                  : const Text('-', style: TextStyle(fontSize: 13)),
+                            const SizedBox(width: 4),
+                            // 趋势折线图
+                            Expanded(
+                              child: _buildTrendSparkline(data.industry),
+                            ),
+                          ],
+                        ),
+                      )
+                    : const Text('-', style: TextStyle(fontSize: 13)),
+              ),
             ),
-          ),
         ],
       ),
       ),
@@ -346,7 +403,7 @@ class StockTable extends StatelessWidget {
       );
     }
 
-    const totalWidth = _codeWidth + _nameWidth + _changeWidth + _ratioWidth + _industryWidth;
+    final totalWidth = getTotalWidth(showIndustry: showIndustry);
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
@@ -354,10 +411,11 @@ class StockTable extends StatelessWidget {
         width: totalWidth,
         child: Column(
           children: [
-            _buildHeader(context),
+            if (showHeader) _buildHeader(context, withIndustry: showIndustry),
             Expanded(
               child: ListView.builder(
                 physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.only(bottom: bottomPadding),
                 itemCount: stocks.length,
                 itemExtent: _rowHeight,
                 itemBuilder: (context, index) => _buildRow(context, stocks[index], index),

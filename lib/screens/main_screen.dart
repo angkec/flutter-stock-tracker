@@ -4,6 +4,7 @@ import 'package:stock_rtwatcher/screens/watchlist_screen.dart';
 import 'package:stock_rtwatcher/screens/market_screen.dart';
 import 'package:stock_rtwatcher/screens/industry_screen.dart';
 import 'package:stock_rtwatcher/screens/breakout_screen.dart';
+import 'package:stock_rtwatcher/theme/app_theme.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -27,6 +28,22 @@ class _MainScreenState extends State<MainScreen> {
 
   late final List<Widget> _screens;
 
+  /// 获取当前 Tab 对应的 AppTab 枚举
+  AppTab get _currentTab {
+    switch (_currentIndex) {
+      case 0:
+        return AppTab.watchlist;
+      case 1:
+        return AppTab.market;
+      case 2:
+        return AppTab.industry;
+      case 3:
+        return AppTab.breakout;
+      default:
+        return AppTab.market;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -40,40 +57,54 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
+    final brightness = Theme.of(context).brightness;
+    final tabTheme = AppTheme.forTab(_currentTab, brightness);
+
+    return AnimatedTheme(
+      data: tabTheme,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      child: Builder(
+        builder: (context) {
+          final theme = Theme.of(context);
+          return Scaffold(
+            body: IndexedStack(
+              index: _currentIndex,
+              children: _screens,
+            ),
+            bottomNavigationBar: NavigationBar(
+              selectedIndex: _currentIndex,
+              indicatorColor: theme.colorScheme.primary.withValues(alpha: 0.2),
+              onDestinationSelected: (index) {
+                setState(() {
+                  _currentIndex = index;
+                });
+              },
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.star_outline),
+                  selectedIcon: Icon(Icons.star),
+                  label: '自选',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.show_chart_outlined),
+                  selectedIcon: Icon(Icons.show_chart),
+                  label: '全市场',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.category_outlined),
+                  selectedIcon: Icon(Icons.category),
+                  label: '行业',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.trending_up_outlined),
+                  selectedIcon: Icon(Icons.trending_up),
+                  label: '回踩',
+                ),
+              ],
+            ),
+          );
         },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.star_outline),
-            selectedIcon: Icon(Icons.star),
-            label: '自选',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.show_chart_outlined),
-            selectedIcon: Icon(Icons.show_chart),
-            label: '全市场',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.category_outlined),
-            selectedIcon: Icon(Icons.category),
-            label: '行业',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.trending_up_outlined),
-            selectedIcon: Icon(Icons.trending_up),
-            label: '回踩',
-          ),
-        ],
       ),
     );
   }

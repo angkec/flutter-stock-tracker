@@ -157,6 +157,45 @@ class BreakoutService extends ChangeNotifier {
         continue;
       }
 
+      // 7a. 最大单日跌幅检查（回踩阶段单天相对于参考点的最大跌幅）
+      if (_config.maxSingleDayDrop > 0) {
+        bool exceedsSingleDayDrop = false;
+        for (final bar in pullbackBars) {
+          final dayDrop = (referencePrice - bar.low) / referencePrice;
+          if (dayDrop > _config.maxSingleDayDrop) {
+            exceedsSingleDayDrop = true;
+            break;
+          }
+        }
+        if (exceedsSingleDayDrop) {
+          continue;
+        }
+      }
+
+      // 7b. 最大单日涨幅检查（回踩阶段单天相对于参考点的最大涨幅）
+      if (_config.maxSingleDayGain > 0) {
+        bool exceedsSingleDayGain = false;
+        for (final bar in pullbackBars) {
+          final dayGain = (bar.high - referencePrice) / referencePrice;
+          if (dayGain > _config.maxSingleDayGain) {
+            exceedsSingleDayGain = true;
+            break;
+          }
+        }
+        if (exceedsSingleDayGain) {
+          continue;
+        }
+      }
+
+      // 7c. 最大总涨幅检查（回踩期间的最大涨幅）
+      if (_config.maxTotalGain > 0) {
+        final maxHigh = pullbackBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
+        final totalGain = (maxHigh - referencePrice) / referencePrice;
+        if (totalGain > _config.maxTotalGain) {
+          continue;
+        }
+      }
+
       // 8. 平均量比：回踩期间平均成交量 / 突破日成交量 <= maxAvgVolumeRatio
       final avgPullbackVolume =
           pullbackBars.map((b) => b.volume).reduce((a, b) => a + b) /
@@ -186,7 +225,288 @@ class BreakoutService extends ChangeNotifier {
     return false;
   }
 
-  /// 检测哪些K线是突破日（符合放量突破条件）
+  /// 获取指定日期的突破检测详细结果
+  /// [dailyBars] 日K数据（按时间升序）
+  /// [index] 要检测的K线索引
+  BreakoutDetectionResult? getDetectionResult(List<KLine> dailyBars, int index) {
+    // 需要至少6根K线（5根算均量 + 当前日）
+    if (dailyBars.length < 6 || index < 5 || index >= dailyBars.length) {
+      return null;
+    }
+
+    final bar = dailyBars[index];
+
+    // 1. 上涨日检测
+    final isUpDay = DetectionItem(
+      name: '上涨日',
+      passed: bar.isUp,
+      detail: bar.isUp ? '收盘 > 开盘' : '收盘 ≤ 开盘',
+    );
+
+    // 2. 放量检测
+    final prev5 = dailyBars.sublist(index - 5, index);
+    final avg5Volume = prev5.map((b) => b.volume).reduce((a, b) => a + b) / 5;
+    final volumeMultiple = bar.volume / avg5Volume;
+    final volumeCheck = DetectionItem(
+      name: '放量',
+      passed: volumeMultiple > _config.breakVolumeMultiplier,
+      detail: '${volumeMultiple.toStringAsFixed(2)}倍 (需>${_config.breakVolumeMultiplier})',
+    );
+
+    // 3. 均线突破检测
+    DetectionItem? maBreakCheck;
+    if (_config.maBreakDays > 0) {
+      if (index >= _config.maBreakDays) {
+        final maStart = index - _config.maBreakDays;
+        final maBars = dailyBars.sublist(maStart, index);
+        final ma = maBars.map((b) => b.close).reduce((a, b) => a + b) / _config.maBreakDays;
+        maBreakCheck = DetectionItem(
+          name: '突破${_config.maBreakDays}日均线',
+          passed: bar.close > ma,
+          detail: '收盘${bar.close.toStringAsFixed(2)} ${bar.close > ma ? ">" : "≤"} MA${ma.toStringAsFixed(2)}',
+        );
+      } else {
+        maBreakCheck = DetectionItem(
+          name: '突破${_config.maBreakDays}日均线',
+          passed: false,
+          detail: '数据不足',
+        );
+      }
+    }
+
+    // 4. 前高突破检测
+    DetectionItem? highBreakCheck;
+    if (_config.highBreakDays > 0) {
+      if (index >= _config.highBreakDays) {
+        final highStart = index - _config.highBreakDays;
+        final highBars = dailyBars.sublist(highStart, index);
+        final maxHigh = highBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
+        highBreakCheck = DetectionItem(
+          name: '突破前${_config.highBreakDays}日高点',
+          passed: bar.close > maxHigh,
+          detail: '收盘${bar.close.toStringAsFixed(2)} ${bar.close > maxHigh ? ">" : "≤"} 高点${maxHigh.toStringAsFixed(2)}',
+        );
+      } else {
+        highBreakCheck = DetectionItem(
+          name: '突破前${_config.highBreakDays}日高点',
+          passed: false,
+          detail: '数据不足',
+        );
+      }
+    }
+
+    // 5. 上引线检测
+    DetectionItem? upperShadowCheck;
+    if (_config.maxUpperShadowRatio > 0) {
+      final bodyLength = (bar.close - bar.open).abs();
+      final upperShadow = bar.high - bar.close.clamp(bar.open, bar.high);
+      final ratio = bodyLength > 0 ? upperShadow / bodyLength : 0.0;
+      upperShadowCheck = DetectionItem(
+        name: '上引线比例',
+        passed: ratio <= _config.maxUpperShadowRatio,
+        detail: '${ratio.toStringAsFixed(2)} (需≤${_config.maxUpperShadowRatio})',
+      );
+    }
+
+    // 6. 如果突破日条件通过，检测回踩
+    PullbackDetectionResult? pullbackResult;
+    final breakoutPassed = isUpDay.passed &&
+        volumeCheck.passed &&
+        (maBreakCheck?.passed ?? true) &&
+        (highBreakCheck?.passed ?? true) &&
+        (upperShadowCheck?.passed ?? true);
+
+    if (breakoutPassed) {
+      pullbackResult = _getPullbackDetectionResult(dailyBars, index, bar);
+    }
+
+    return BreakoutDetectionResult(
+      isUpDay: isUpDay,
+      volumeCheck: volumeCheck,
+      maBreakCheck: maBreakCheck,
+      highBreakCheck: highBreakCheck,
+      upperShadowCheck: upperShadowCheck,
+      pullbackResult: pullbackResult,
+    );
+  }
+
+  /// 获取回踩阶段的检测结果
+  PullbackDetectionResult? _getPullbackDetectionResult(
+      List<KLine> dailyBars, int breakoutIdx, KLine breakoutBar) {
+    final referencePrice = _config.dropReferencePoint == DropReferencePoint.breakoutClose
+        ? breakoutBar.close
+        : breakoutBar.high;
+
+    // 检查每个可能的回踩结束日
+    for (int pullbackDays = _config.minPullbackDays;
+        pullbackDays <= _config.maxPullbackDays;
+        pullbackDays++) {
+      final endIdx = breakoutIdx + pullbackDays;
+
+      if (endIdx >= dailyBars.length) {
+        break;
+      }
+
+      final pullbackBars = dailyBars.sublist(breakoutIdx + 1, endIdx + 1);
+      final lastBar = pullbackBars.last;
+
+      // 总跌幅
+      final totalDrop = (referencePrice - lastBar.close) / referencePrice;
+      final totalDropCheck = DetectionItem(
+        name: '总跌幅',
+        passed: totalDrop <= _config.maxTotalDrop,
+        detail: '${(totalDrop * 100).toStringAsFixed(1)}% (需≤${(_config.maxTotalDrop * 100).toStringAsFixed(1)}%)',
+      );
+
+      // 单日跌幅
+      DetectionItem? singleDayDropCheck;
+      if (_config.maxSingleDayDrop > 0) {
+        double maxDayDrop = 0;
+        for (final bar in pullbackBars) {
+          final dayDrop = (referencePrice - bar.low) / referencePrice;
+          if (dayDrop > maxDayDrop) maxDayDrop = dayDrop;
+        }
+        singleDayDropCheck = DetectionItem(
+          name: '单日最大跌幅',
+          passed: maxDayDrop <= _config.maxSingleDayDrop,
+          detail: '${(maxDayDrop * 100).toStringAsFixed(1)}% (需≤${(_config.maxSingleDayDrop * 100).toStringAsFixed(1)}%)',
+        );
+      }
+
+      // 单日涨幅
+      DetectionItem? singleDayGainCheck;
+      if (_config.maxSingleDayGain > 0) {
+        double maxDayGain = 0;
+        for (final bar in pullbackBars) {
+          final dayGain = (bar.high - referencePrice) / referencePrice;
+          if (dayGain > maxDayGain) maxDayGain = dayGain;
+        }
+        singleDayGainCheck = DetectionItem(
+          name: '单日最大涨幅',
+          passed: maxDayGain <= _config.maxSingleDayGain,
+          detail: '${(maxDayGain * 100).toStringAsFixed(1)}% (需≤${(_config.maxSingleDayGain * 100).toStringAsFixed(1)}%)',
+        );
+      }
+
+      // 总涨幅
+      DetectionItem? totalGainCheck;
+      if (_config.maxTotalGain > 0) {
+        final maxHigh = pullbackBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
+        final totalGain = (maxHigh - referencePrice) / referencePrice;
+        totalGainCheck = DetectionItem(
+          name: '总涨幅',
+          passed: totalGain <= _config.maxTotalGain,
+          detail: '${(totalGain * 100).toStringAsFixed(1)}% (需≤${(_config.maxTotalGain * 100).toStringAsFixed(1)}%)',
+        );
+      }
+
+      // 平均量比
+      final avgPullbackVolume =
+          pullbackBars.map((b) => b.volume).reduce((a, b) => a + b) / pullbackDays;
+      final avgVolumeRatio = avgPullbackVolume / breakoutBar.volume;
+      final avgVolumeCheck = DetectionItem(
+        name: '平均量比',
+        passed: avgVolumeRatio <= _config.maxAvgVolumeRatio,
+        detail: '${avgVolumeRatio.toStringAsFixed(2)} (需≤${_config.maxAvgVolumeRatio})',
+      );
+
+      // 检查是否全部通过
+      final allPassed = totalDropCheck.passed &&
+          (singleDayDropCheck?.passed ?? true) &&
+          (singleDayGainCheck?.passed ?? true) &&
+          (totalGainCheck?.passed ?? true) &&
+          avgVolumeCheck.passed;
+
+      if (allPassed) {
+        return PullbackDetectionResult(
+          pullbackDays: pullbackDays,
+          totalDropCheck: totalDropCheck,
+          singleDayDropCheck: singleDayDropCheck,
+          singleDayGainCheck: singleDayGainCheck,
+          totalGainCheck: totalGainCheck,
+          avgVolumeCheck: avgVolumeCheck,
+        );
+      }
+    }
+
+    // 没有找到有效回踩，返回最后一次检测结果
+    final lastPullbackDays = (_config.maxPullbackDays).clamp(
+        _config.minPullbackDays,
+        dailyBars.length - breakoutIdx - 1);
+    if (lastPullbackDays < _config.minPullbackDays) {
+      return null;
+    }
+
+    final endIdx = breakoutIdx + lastPullbackDays;
+    final pullbackBars = dailyBars.sublist(breakoutIdx + 1, endIdx + 1);
+    final lastBar = pullbackBars.last;
+
+    final totalDrop = (referencePrice - lastBar.close) / referencePrice;
+    final totalDropCheck = DetectionItem(
+      name: '总跌幅',
+      passed: totalDrop <= _config.maxTotalDrop,
+      detail: '${(totalDrop * 100).toStringAsFixed(1)}% (需≤${(_config.maxTotalDrop * 100).toStringAsFixed(1)}%)',
+    );
+
+    DetectionItem? singleDayDropCheck;
+    if (_config.maxSingleDayDrop > 0) {
+      double maxDayDrop = 0;
+      for (final bar in pullbackBars) {
+        final dayDrop = (referencePrice - bar.low) / referencePrice;
+        if (dayDrop > maxDayDrop) maxDayDrop = dayDrop;
+      }
+      singleDayDropCheck = DetectionItem(
+        name: '单日最大跌幅',
+        passed: maxDayDrop <= _config.maxSingleDayDrop,
+        detail: '${(maxDayDrop * 100).toStringAsFixed(1)}% (需≤${(_config.maxSingleDayDrop * 100).toStringAsFixed(1)}%)',
+      );
+    }
+
+    DetectionItem? singleDayGainCheck;
+    if (_config.maxSingleDayGain > 0) {
+      double maxDayGain = 0;
+      for (final bar in pullbackBars) {
+        final dayGain = (bar.high - referencePrice) / referencePrice;
+        if (dayGain > maxDayGain) maxDayGain = dayGain;
+      }
+      singleDayGainCheck = DetectionItem(
+        name: '单日最大涨幅',
+        passed: maxDayGain <= _config.maxSingleDayGain,
+        detail: '${(maxDayGain * 100).toStringAsFixed(1)}% (需≤${(_config.maxSingleDayGain * 100).toStringAsFixed(1)}%)',
+      );
+    }
+
+    DetectionItem? totalGainCheck;
+    if (_config.maxTotalGain > 0) {
+      final maxHigh = pullbackBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
+      final totalGain = (maxHigh - referencePrice) / referencePrice;
+      totalGainCheck = DetectionItem(
+        name: '总涨幅',
+        passed: totalGain <= _config.maxTotalGain,
+        detail: '${(totalGain * 100).toStringAsFixed(1)}% (需≤${(_config.maxTotalGain * 100).toStringAsFixed(1)}%)',
+      );
+    }
+
+    final avgPullbackVolume =
+        pullbackBars.map((b) => b.volume).reduce((a, b) => a + b) / lastPullbackDays;
+    final avgVolumeRatio = avgPullbackVolume / breakoutBar.volume;
+    final avgVolumeCheck = DetectionItem(
+      name: '平均量比',
+      passed: avgVolumeRatio <= _config.maxAvgVolumeRatio,
+      detail: '${avgVolumeRatio.toStringAsFixed(2)} (需≤${_config.maxAvgVolumeRatio})',
+    );
+
+    return PullbackDetectionResult(
+      pullbackDays: lastPullbackDays,
+      totalDropCheck: totalDropCheck,
+      singleDayDropCheck: singleDayDropCheck,
+      singleDayGainCheck: singleDayGainCheck,
+      totalGainCheck: totalGainCheck,
+      avgVolumeCheck: avgVolumeCheck,
+    );
+  }
+
+  /// 检测哪些K线是突破日（符合放量突破条件，且后续有有效回踩）
   /// 返回符合条件的K线索引列表
   Set<int> findBreakoutDays(List<KLine> dailyBars) {
     final breakoutIndices = <int>{};
@@ -251,10 +571,101 @@ class BreakoutService extends ChangeNotifier {
         }
       }
 
-      // 所有突破条件都满足
+      // 6. 验证后续是否有有效回踩（日K条件，不检查分钟量比）
+      if (!_hasValidPullbackAfter(dailyBars, i, bar)) {
+        continue;
+      }
+
+      // 所有条件都满足
       breakoutIndices.add(i);
     }
 
     return breakoutIndices;
+  }
+
+  /// 检查突破日后是否有符合条件的回踩
+  /// [dailyBars] 日K数据
+  /// [breakoutIdx] 突破日索引
+  /// [breakoutBar] 突破日K线
+  bool _hasValidPullbackAfter(List<KLine> dailyBars, int breakoutIdx, KLine breakoutBar) {
+    // 计算参考价格
+    final referencePrice = _config.dropReferencePoint == DropReferencePoint.breakoutClose
+        ? breakoutBar.close
+        : breakoutBar.high;
+
+    // 检查每个可能的回踩结束日（从最短回踩天数到最长回踩天数）
+    for (int pullbackDays = _config.minPullbackDays;
+        pullbackDays <= _config.maxPullbackDays;
+        pullbackDays++) {
+      final endIdx = breakoutIdx + pullbackDays;
+
+      // 确保不超出数据范围
+      if (endIdx >= dailyBars.length) {
+        break;
+      }
+
+      // 获取回踩期间的K线
+      final pullbackBars = dailyBars.sublist(breakoutIdx + 1, endIdx + 1);
+      final lastBar = pullbackBars.last;
+
+      // 检查总跌幅
+      final totalDrop = (referencePrice - lastBar.close) / referencePrice;
+      if (totalDrop > _config.maxTotalDrop) {
+        continue;
+      }
+
+      // 检查最大单日跌幅
+      if (_config.maxSingleDayDrop > 0) {
+        bool exceedsSingleDayDrop = false;
+        for (final bar in pullbackBars) {
+          final dayDrop = (referencePrice - bar.low) / referencePrice;
+          if (dayDrop > _config.maxSingleDayDrop) {
+            exceedsSingleDayDrop = true;
+            break;
+          }
+        }
+        if (exceedsSingleDayDrop) {
+          continue;
+        }
+      }
+
+      // 检查最大单日涨幅
+      if (_config.maxSingleDayGain > 0) {
+        bool exceedsSingleDayGain = false;
+        for (final bar in pullbackBars) {
+          final dayGain = (bar.high - referencePrice) / referencePrice;
+          if (dayGain > _config.maxSingleDayGain) {
+            exceedsSingleDayGain = true;
+            break;
+          }
+        }
+        if (exceedsSingleDayGain) {
+          continue;
+        }
+      }
+
+      // 检查最大总涨幅
+      if (_config.maxTotalGain > 0) {
+        final maxHigh = pullbackBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
+        final totalGain = (maxHigh - referencePrice) / referencePrice;
+        if (totalGain > _config.maxTotalGain) {
+          continue;
+        }
+      }
+
+      // 检查平均量比
+      final avgPullbackVolume =
+          pullbackBars.map((b) => b.volume).reduce((a, b) => a + b) / pullbackDays;
+      final avgVolumeRatio = avgPullbackVolume / breakoutBar.volume;
+      if (avgVolumeRatio > _config.maxAvgVolumeRatio) {
+        continue;
+      }
+
+      // 找到一个有效的回踩
+      return true;
+    }
+
+    // 没有找到有效回踩
+    return false;
   }
 }

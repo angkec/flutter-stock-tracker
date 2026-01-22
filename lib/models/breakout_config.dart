@@ -6,6 +6,113 @@ enum DropReferencePoint {
   breakoutHigh,
 }
 
+/// 单项检测结果
+class DetectionItem {
+  final String name;
+  final bool passed;
+  final String? detail;
+
+  const DetectionItem({
+    required this.name,
+    required this.passed,
+    this.detail,
+  });
+}
+
+/// 突破日检测结果
+class BreakoutDetectionResult {
+  /// 是否是上涨日
+  final DetectionItem isUpDay;
+
+  /// 放量检测
+  final DetectionItem volumeCheck;
+
+  /// 突破均线检测
+  final DetectionItem? maBreakCheck;
+
+  /// 突破前高检测
+  final DetectionItem? highBreakCheck;
+
+  /// 上引线检测
+  final DetectionItem? upperShadowCheck;
+
+  /// 回踩阶段检测结果（如果是突破日）
+  final PullbackDetectionResult? pullbackResult;
+
+  const BreakoutDetectionResult({
+    required this.isUpDay,
+    required this.volumeCheck,
+    this.maBreakCheck,
+    this.highBreakCheck,
+    this.upperShadowCheck,
+    this.pullbackResult,
+  });
+
+  /// 突破日条件是否全部通过
+  bool get breakoutPassed =>
+      isUpDay.passed &&
+      volumeCheck.passed &&
+      (maBreakCheck?.passed ?? true) &&
+      (highBreakCheck?.passed ?? true) &&
+      (upperShadowCheck?.passed ?? true);
+
+  /// 获取所有检测项
+  List<DetectionItem> get allItems => [
+        isUpDay,
+        volumeCheck,
+        if (maBreakCheck != null) maBreakCheck!,
+        if (highBreakCheck != null) highBreakCheck!,
+        if (upperShadowCheck != null) upperShadowCheck!,
+      ];
+}
+
+/// 回踩阶段检测结果
+class PullbackDetectionResult {
+  /// 回踩天数
+  final int pullbackDays;
+
+  /// 总跌幅检测
+  final DetectionItem totalDropCheck;
+
+  /// 单日跌幅检测
+  final DetectionItem? singleDayDropCheck;
+
+  /// 单日涨幅检测
+  final DetectionItem? singleDayGainCheck;
+
+  /// 总涨幅检测
+  final DetectionItem? totalGainCheck;
+
+  /// 平均量比检测
+  final DetectionItem avgVolumeCheck;
+
+  const PullbackDetectionResult({
+    required this.pullbackDays,
+    required this.totalDropCheck,
+    this.singleDayDropCheck,
+    this.singleDayGainCheck,
+    this.totalGainCheck,
+    required this.avgVolumeCheck,
+  });
+
+  /// 回踩条件是否全部通过
+  bool get passed =>
+      totalDropCheck.passed &&
+      (singleDayDropCheck?.passed ?? true) &&
+      (singleDayGainCheck?.passed ?? true) &&
+      (totalGainCheck?.passed ?? true) &&
+      avgVolumeCheck.passed;
+
+  /// 获取所有检测项
+  List<DetectionItem> get allItems => [
+        totalDropCheck,
+        if (singleDayDropCheck != null) singleDayDropCheck!,
+        if (singleDayGainCheck != null) singleDayGainCheck!,
+        if (totalGainCheck != null) totalGainCheck!,
+        avgVolumeCheck,
+      ];
+}
+
 /// 放量突破配置
 class BreakoutConfig {
   // === 突破日条件 ===
@@ -31,6 +138,15 @@ class BreakoutConfig {
   /// 最大总跌幅（回踩期间总跌幅）
   final double maxTotalDrop;
 
+  /// 最大单日跌幅（回踩阶段单天相对于参考点的最大跌幅，0=不检测）
+  final double maxSingleDayDrop;
+
+  /// 最大单日涨幅（回踩阶段单天相对于参考点的最大涨幅，0=不检测）
+  final double maxSingleDayGain;
+
+  /// 最大总涨幅（回踩期间最大总涨幅，0=不检测）
+  final double maxTotalGain;
+
   /// 跌幅参考点
   final DropReferencePoint dropReferencePoint;
 
@@ -48,16 +164,19 @@ class BreakoutConfig {
 
   const BreakoutConfig({
     this.breakVolumeMultiplier = 1.5,
-    this.maBreakDays = 20,
-    this.highBreakDays = 5,
-    this.maxUpperShadowRatio = 0,
+    this.maBreakDays = 0,
+    this.highBreakDays = 10,
+    this.maxUpperShadowRatio = 0.2,
     this.minPullbackDays = 1,
     this.maxPullbackDays = 5,
-    this.maxTotalDrop = 0.10,
-    this.dropReferencePoint = DropReferencePoint.breakoutClose,
-    this.maxAvgVolumeRatio = 0.7,
+    this.maxTotalDrop = 0.01,
+    this.maxSingleDayDrop = 0.02,
+    this.maxSingleDayGain = 0.01,
+    this.maxTotalGain = 0.01,
+    this.dropReferencePoint = DropReferencePoint.breakoutHigh,
+    this.maxAvgVolumeRatio = 0.6,
     this.minMinuteRatio = 1.0,
-    this.filterSurgeAfterPullback = false,
+    this.filterSurgeAfterPullback = true,
     this.surgeThreshold = 0.05,
   });
 
@@ -72,6 +191,9 @@ class BreakoutConfig {
     int? minPullbackDays,
     int? maxPullbackDays,
     double? maxTotalDrop,
+    double? maxSingleDayDrop,
+    double? maxSingleDayGain,
+    double? maxTotalGain,
     DropReferencePoint? dropReferencePoint,
     double? maxAvgVolumeRatio,
     double? minMinuteRatio,
@@ -86,6 +208,9 @@ class BreakoutConfig {
       minPullbackDays: minPullbackDays ?? this.minPullbackDays,
       maxPullbackDays: maxPullbackDays ?? this.maxPullbackDays,
       maxTotalDrop: maxTotalDrop ?? this.maxTotalDrop,
+      maxSingleDayDrop: maxSingleDayDrop ?? this.maxSingleDayDrop,
+      maxSingleDayGain: maxSingleDayGain ?? this.maxSingleDayGain,
+      maxTotalGain: maxTotalGain ?? this.maxTotalGain,
       dropReferencePoint: dropReferencePoint ?? this.dropReferencePoint,
       maxAvgVolumeRatio: maxAvgVolumeRatio ?? this.maxAvgVolumeRatio,
       minMinuteRatio: minMinuteRatio ?? this.minMinuteRatio,
@@ -102,6 +227,9 @@ class BreakoutConfig {
     'minPullbackDays': minPullbackDays,
     'maxPullbackDays': maxPullbackDays,
     'maxTotalDrop': maxTotalDrop,
+    'maxSingleDayDrop': maxSingleDayDrop,
+    'maxSingleDayGain': maxSingleDayGain,
+    'maxTotalGain': maxTotalGain,
     'dropReferencePoint': dropReferencePoint.index,
     'maxAvgVolumeRatio': maxAvgVolumeRatio,
     'minMinuteRatio': minMinuteRatio,
@@ -111,18 +239,21 @@ class BreakoutConfig {
 
   factory BreakoutConfig.fromJson(Map<String, dynamic> json) => BreakoutConfig(
     breakVolumeMultiplier: (json['breakVolumeMultiplier'] as num?)?.toDouble() ?? 1.5,
-    maBreakDays: (json['maBreakDays'] as int?) ?? 20,
-    highBreakDays: (json['highBreakDays'] as int?) ?? 5,
-    maxUpperShadowRatio: (json['maxUpperShadowRatio'] as num?)?.toDouble() ?? 0,
+    maBreakDays: (json['maBreakDays'] as int?) ?? 0,
+    highBreakDays: (json['highBreakDays'] as int?) ?? 10,
+    maxUpperShadowRatio: (json['maxUpperShadowRatio'] as num?)?.toDouble() ?? 0.2,
     minPullbackDays: (json['minPullbackDays'] as int?) ?? 1,
     maxPullbackDays: (json['maxPullbackDays'] as int?) ?? 5,
     maxTotalDrop: (json['maxTotalDrop'] as num?)?.toDouble() ??
-        (json['maxAvgDailyDrop'] as num?)?.toDouble() ?? 0.10,
+        (json['maxAvgDailyDrop'] as num?)?.toDouble() ?? 0.01,
+    maxSingleDayDrop: (json['maxSingleDayDrop'] as num?)?.toDouble() ?? 0.02,
+    maxSingleDayGain: (json['maxSingleDayGain'] as num?)?.toDouble() ?? 0.01,
+    maxTotalGain: (json['maxTotalGain'] as num?)?.toDouble() ?? 0.01,
     dropReferencePoint: DropReferencePoint.values[
-        (json['dropReferencePoint'] as int?) ?? 0],
-    maxAvgVolumeRatio: (json['maxAvgVolumeRatio'] as num?)?.toDouble() ?? 0.7,
+        (json['dropReferencePoint'] as int?) ?? 1],
+    maxAvgVolumeRatio: (json['maxAvgVolumeRatio'] as num?)?.toDouble() ?? 0.6,
     minMinuteRatio: (json['minMinuteRatio'] as num?)?.toDouble() ?? 1.0,
-    filterSurgeAfterPullback: (json['filterSurgeAfterPullback'] as bool?) ?? false,
+    filterSurgeAfterPullback: (json['filterSurgeAfterPullback'] as bool?) ?? true,
     surgeThreshold: (json['surgeThreshold'] as num?)?.toDouble() ?? 0.05,
   );
 }

@@ -144,15 +144,42 @@ class StatusBar extends StatelessWidget {
                     Builder(
                       builder: (context) {
                         final isHistorical = _isHistoricalData(provider.dataDate);
-                        final displayText = isHistorical
-                            ? '${provider.dataDate!.month.toString().padLeft(2, '0')}-${provider.dataDate!.day.toString().padLeft(2, '0')} ${provider.updateTime!}'
-                            : provider.updateTime!;
+                        if (isHistorical) {
+                          // 历史数据：显示带标签的日期
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: AppColors.statusPreMarket.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(color: AppColors.statusPreMarket, width: 0.5),
+                                ),
+                                child: Text(
+                                  '历史',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: AppColors.statusPreMarket,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${provider.dataDate!.month}/${provider.dataDate!.day}',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: AppColors.statusPreMarket,
+                                      fontFamily: 'monospace',
+                                    ),
+                              ),
+                            ],
+                          );
+                        }
                         return Text(
-                          displayText,
+                          provider.updateTime!,
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: isHistorical
-                                    ? AppColors.statusPreMarket
-                                    : Theme.of(context).colorScheme.onSurfaceVariant,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
                                 fontFamily: 'monospace',
                               ),
                         );
@@ -250,21 +277,20 @@ class StatusBar extends StatelessWidget {
       );
     } else {
       // 空闲：显示刷新按钮
-      return GestureDetector(
-        onLongPress: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const DataManagementScreen()),
-          );
-        },
-        child: SizedBox(
-          width: 32,
-          height: 32,
-          child: IconButton(
-            padding: EdgeInsets.zero,
-            onPressed: () => provider.refresh(),
-            icon: const Icon(Icons.refresh, size: 20),
-            tooltip: '刷新数据 (长按管理缓存)',
+      return SizedBox(
+        width: 32,
+        height: 32,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => provider.refresh(),
+          onLongPress: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const DataManagementScreen()),
+            );
+          },
+          child: const Center(
+            child: Icon(Icons.refresh, size: 20),
           ),
         ),
       );

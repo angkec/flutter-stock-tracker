@@ -1,9 +1,67 @@
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
 
+/// Tab 类型枚举
+enum AppTab { watchlist, market, industry, breakout }
+
 /// App theme configuration
 class AppTheme {
   AppTheme._();
+
+  /// 获取 Tab 对应的主题色
+  static Color getTabColor(AppTab tab, {bool isDark = false}) {
+    switch (tab) {
+      case AppTab.watchlist:
+        return isDark ? AppColors.tabWatchlistDark : AppColors.tabWatchlist;
+      case AppTab.market:
+        return isDark ? AppColors.tabMarketDark : AppColors.tabMarket;
+      case AppTab.industry:
+        return isDark ? AppColors.tabIndustryDark : AppColors.tabIndustry;
+      case AppTab.breakout:
+        return isDark ? AppColors.tabBreakoutDark : AppColors.tabBreakout;
+    }
+  }
+
+  /// 创建带有特定主题色的深色主题
+  static ThemeData darkWithColor(Color primaryColor) {
+    return dark.copyWith(
+      colorScheme: dark.colorScheme.copyWith(primary: primaryColor),
+      appBarTheme: AppBarTheme(
+        backgroundColor: primaryColor.withValues(alpha: 0.15),
+        foregroundColor: AppColors.darkTextPrimary,
+        elevation: 0,
+        centerTitle: false,
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: AppColors.darkSurface,
+        indicatorColor: primaryColor.withValues(alpha: 0.2),
+      ),
+    );
+  }
+
+  /// 创建带有特定主题色的浅色主题
+  static ThemeData lightWithColor(Color primaryColor) {
+    return light.copyWith(
+      colorScheme: light.colorScheme.copyWith(primary: primaryColor),
+      appBarTheme: AppBarTheme(
+        backgroundColor: primaryColor.withValues(alpha: 0.1),
+        foregroundColor: AppColors.lightTextPrimary,
+        elevation: 0,
+        centerTitle: false,
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: AppColors.lightSurface,
+        indicatorColor: primaryColor.withValues(alpha: 0.2),
+      ),
+    );
+  }
+
+  /// 根据 Tab 和亮度获取主题
+  static ThemeData forTab(AppTab tab, Brightness brightness) {
+    final isDark = brightness == Brightness.dark;
+    final color = getTabColor(tab, isDark: isDark);
+    return isDark ? darkWithColor(color) : lightWithColor(color);
+  }
 
   /// Dark theme
   static ThemeData get dark => ThemeData(

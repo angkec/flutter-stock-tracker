@@ -41,4 +41,21 @@ class AppColors {
   static const Color statusTrading = Colors.green;
   static const Color statusLunchBreak = Colors.yellow;
   static const Color statusClosed = Colors.grey;
+
+  // === Tab Theme Colors ===
+  // 自选 - 金色/琥珀色
+  static const Color tabWatchlist = Color(0xFFFF9800);
+  static const Color tabWatchlistDark = Color(0xFFFFB74D);
+
+  // 全市场 - 蓝色
+  static const Color tabMarket = Color(0xFF2563EB);
+  static const Color tabMarketDark = Color(0xFF4A90D9);
+
+  // 行业 - 紫色
+  static const Color tabIndustry = Color(0xFF7C3AED);
+  static const Color tabIndustryDark = Color(0xFFA78BFA);
+
+  // 回踩 - 青色/蓝绿色
+  static const Color tabBreakout = Color(0xFF0D9488);
+  static const Color tabBreakoutDark = Color(0xFF2DD4BF);
 }

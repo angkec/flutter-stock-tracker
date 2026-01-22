@@ -30,6 +30,9 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
   late TextEditingController _minPullbackDaysController;
   late TextEditingController _maxPullbackDaysController;
   late TextEditingController _maxTotalDropController;
+  late TextEditingController _maxSingleDayDropController;
+  late TextEditingController _maxSingleDayGainController;
+  late TextEditingController _maxTotalGainController;
   late TextEditingController _maxAvgVolumeRatioController;
   late TextEditingController _minMinuteRatioController;
   late TextEditingController _surgeThresholdController;
@@ -61,6 +64,15 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     _maxTotalDropController = TextEditingController(
       text: (config.maxTotalDrop * 100).toStringAsFixed(1),
     );
+    _maxSingleDayDropController = TextEditingController(
+      text: (config.maxSingleDayDrop * 100).toStringAsFixed(1),
+    );
+    _maxSingleDayGainController = TextEditingController(
+      text: (config.maxSingleDayGain * 100).toStringAsFixed(1),
+    );
+    _maxTotalGainController = TextEditingController(
+      text: (config.maxTotalGain * 100).toStringAsFixed(1),
+    );
     _maxAvgVolumeRatioController = TextEditingController(
       text: config.maxAvgVolumeRatio.toStringAsFixed(2),
     );
@@ -83,6 +95,9 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     _minPullbackDaysController.dispose();
     _maxPullbackDaysController.dispose();
     _maxTotalDropController.dispose();
+    _maxSingleDayDropController.dispose();
+    _maxSingleDayGainController.dispose();
+    _maxTotalGainController.dispose();
     _maxAvgVolumeRatioController.dispose();
     _minMinuteRatioController.dispose();
     _surgeThresholdController.dispose();
@@ -99,6 +114,12 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     final maxPullbackDays = int.tryParse(_maxPullbackDaysController.text) ?? 5;
     final maxTotalDrop =
         (double.tryParse(_maxTotalDropController.text) ?? 10) / 100;
+    final maxSingleDayDrop =
+        (double.tryParse(_maxSingleDayDropController.text) ?? 0) / 100;
+    final maxSingleDayGain =
+        (double.tryParse(_maxSingleDayGainController.text) ?? 0) / 100;
+    final maxTotalGain =
+        (double.tryParse(_maxTotalGainController.text) ?? 0) / 100;
     final maxAvgVolumeRatio =
         double.tryParse(_maxAvgVolumeRatioController.text) ?? 0.7;
     final minMinuteRatio =
@@ -114,6 +135,9 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
       minPullbackDays: minPullbackDays,
       maxPullbackDays: maxPullbackDays,
       maxTotalDrop: maxTotalDrop,
+      maxSingleDayDrop: maxSingleDayDrop,
+      maxSingleDayGain: maxSingleDayGain,
+      maxTotalGain: maxTotalGain,
       dropReferencePoint: _dropReferencePoint,
       maxAvgVolumeRatio: maxAvgVolumeRatio,
       minMinuteRatio: minMinuteRatio,
@@ -138,6 +162,12 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     _maxPullbackDaysController.text = defaults.maxPullbackDays.toString();
     _maxTotalDropController.text =
         (defaults.maxTotalDrop * 100).toStringAsFixed(1);
+    _maxSingleDayDropController.text =
+        (defaults.maxSingleDayDrop * 100).toStringAsFixed(1);
+    _maxSingleDayGainController.text =
+        (defaults.maxSingleDayGain * 100).toStringAsFixed(1);
+    _maxTotalGainController.text =
+        (defaults.maxTotalGain * 100).toStringAsFixed(1);
     _maxAvgVolumeRatioController.text =
         defaults.maxAvgVolumeRatio.toStringAsFixed(2);
     _minMinuteRatioController.text = defaults.minMinuteRatio.toStringAsFixed(2);
@@ -257,28 +287,48 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
                         suffix: '%',
                       ),
                       const SizedBox(height: 12),
-                      Text(
-                        '跌幅参考点',
-                        style: Theme.of(context).textTheme.bodyMedium,
+                      _buildTextField(
+                        controller: _maxSingleDayDropController,
+                        label: '最大单日跌幅',
+                        hint: '回踩阶段单天最低价相对参考价的最大跌幅，0=不检测',
+                        suffix: '%',
                       ),
-                      const SizedBox(height: 4),
-                      SegmentedButton<DropReferencePoint>(
-                        segments: const [
-                          ButtonSegment(
-                            value: DropReferencePoint.breakoutClose,
-                            label: Text('突破日收盘'),
-                          ),
-                          ButtonSegment(
-                            value: DropReferencePoint.breakoutHigh,
-                            label: Text('突破日最高'),
-                          ),
-                        ],
-                        selected: {_dropReferencePoint},
-                        onSelectionChanged: (selected) {
-                          setState(() {
-                            _dropReferencePoint = selected.first;
-                          });
-                        },
+                      const SizedBox(height: 12),
+                      _buildTextField(
+                        controller: _maxSingleDayGainController,
+                        label: '最大单日涨幅',
+                        hint: '回踩阶段单天最高价相对参考价的最大涨幅，0=不检测',
+                        suffix: '%',
+                      ),
+                      const SizedBox(height: 12),
+                      _buildTextField(
+                        controller: _maxTotalGainController,
+                        label: '最大总涨幅',
+                        hint: '回踩阶段最高价相对参考价的最大涨幅，0=不检测',
+                        suffix: '%',
+                      ),
+                      const SizedBox(height: 12),
+                      _buildSegmentedField(
+                        label: '跌幅参考点',
+                        hint: '计算跌幅时的参考价格',
+                        child: SegmentedButton<DropReferencePoint>(
+                          segments: const [
+                            ButtonSegment(
+                              value: DropReferencePoint.breakoutClose,
+                              label: Text('突破日收盘'),
+                            ),
+                            ButtonSegment(
+                              value: DropReferencePoint.breakoutHigh,
+                              label: Text('突破日最高'),
+                            ),
+                          ],
+                          selected: {_dropReferencePoint},
+                          onSelectionChanged: (selected) {
+                            setState(() {
+                              _dropReferencePoint = selected.first;
+                            });
+                          },
+                        ),
                       ),
                       const SizedBox(height: 12),
                       _buildTextField(
@@ -371,6 +421,24 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
         border: const OutlineInputBorder(),
         isDense: true,
       ),
+    );
+  }
+
+  Widget _buildSegmentedField({
+    required String label,
+    required String hint,
+    required Widget child,
+  }) {
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: hint,
+        helperMaxLines: 2,
+        border: const OutlineInputBorder(),
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      ),
+      child: child,
     );
   }
 }

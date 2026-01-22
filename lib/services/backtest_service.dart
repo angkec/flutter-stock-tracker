@@ -81,6 +81,17 @@ class BacktestService extends ChangeNotifier {
 
       // 对每个突破日，计算信号
       for (final breakoutIdx in breakoutIndices) {
+        // 过滤无效数据（日期异常或价格异常的股票）
+        final breakoutBar = dailyBars[breakoutIdx];
+        if (breakoutBar.datetime.year < 2020) {
+          // 日期在2020年之前的数据视为无效（可能是退市股或数据异常）
+          continue;
+        }
+        if (breakoutBar.close <= 0 || breakoutBar.close > 10000) {
+          // 价格异常（<=0 或 >10000元）
+          continue;
+        }
+
         final signalDetail = _processSignal(
           code: code,
           stockName: stockData.stock.name,

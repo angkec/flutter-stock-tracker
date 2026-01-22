@@ -7,6 +7,29 @@ import 'package:stock_rtwatcher/widgets/industry_trend_chart.dart';
 import 'package:stock_rtwatcher/widgets/market_stats_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
+/// 固定表头代理
+class _StickyHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final Widget child;
+
+  _StickyHeaderDelegate({required this.child});
+
+  @override
+  double get minExtent => 44.0;
+
+  @override
+  double get maxExtent => 44.0;
+
+  @override
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return child;
+  }
+
+  @override
+  bool shouldRebuild(covariant _StickyHeaderDelegate oldDelegate) {
+    return child != oldDelegate.child;
+  }
+}
+
 /// 行业详情页
 class IndustryDetailScreen extends StatelessWidget {
   final String industry;
@@ -62,95 +85,122 @@ class IndustryDetailScreen extends StatelessWidget {
         ? (ratioAboveCount / totalStocks * 100).toStringAsFixed(0)
         : '0';
 
+    // 计算可折叠区域的高度
+    const double chartHeight = 150.0;
+    const double summaryHeight = 48.0;
+    const double titleHeight = 32.0;
+    const double expandedHeight = chartHeight + 12 + summaryHeight + 8 + titleHeight;
+
     return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(industry, style: const TextStyle(fontSize: 18)),
-            const Text(
-              '量比趋势',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
-            ),
-          ],
-        ),
-      ),
       body: Stack(
         children: [
-          Column(
-            children: [
-              // 趋势图区域
-              Container(
-                margin: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: IndustryTrendChart(
-                  data: trendData,
-                  height: 150,
-                ),
-              ),
-
-              // 今日摘要
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Text(
-                        '今日: $ratioAbovePercent%',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.onSecondaryContainer,
+          NestedScrollView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) {
+              return [
+                SliverAppBar(
+                  expandedHeight: expandedHeight,
+                  floating: false,
+                  pinned: true,
+                  forceElevated: innerBoxIsScrolled,
+                  title: Text(industry),
+                  flexibleSpace: FlexibleSpaceBar(
+                    collapseMode: CollapseMode.pin,
+                    background: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: kToolbarHeight),
+                        child: SingleChildScrollView(
+                          physics: const NeverScrollableScrollPhysics(),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // 趋势图区域
+                              Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 16),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: IndustryTrendChart(
+                                  data: trendData,
+                                  height: chartHeight,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              // 今日摘要
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 16),
+                                child: Container(
+                                  height: summaryHeight,
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.secondaryContainer,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Text(
+                                        '今日: $ratioAbovePercent%',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '($ratioAboveCount/$totalStocks 只放量)',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          color: Theme.of(context).colorScheme.onSecondaryContainer,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              // 成分股列表标题
+                              SizedBox(
+                                height: titleHeight,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      '成分股列表',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '($ratioAboveCount/$totalStocks 只放量)',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Theme.of(context).colorScheme.onSecondaryContainer,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // 成分股列表标题
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '成分股列表',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
-              ),
-
-              // 成分股表格（底部留出统计条空间）
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 68),
-                  child: StockTable(
-                    stocks: industryStocks,
-                    isLoading: marketProvider.isLoading,
+                // 固定表头
+                SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _StickyHeaderDelegate(
+                    child: StockTable.buildStandaloneHeader(context, showIndustry: false),
                   ),
                 ),
-              ),
-            ],
+              ];
+            },
+            // 成分股表格（不显示表头和行业列）
+            body: StockTable(
+              stocks: industryStocks,
+              isLoading: marketProvider.isLoading,
+              showHeader: false,
+              showIndustry: false,
+              bottomPadding: 68,
+            ),
           ),
           // 底部统计条
           if (industryStocks.isNotEmpty)

@@ -81,10 +81,10 @@ class PullbackScreen extends StatelessWidget {
             icon: const Icon(Icons.calculate_outlined),
             tooltip: '重算回踩',
             onPressed: () {
-              final success = provider.recalculatePullbacks();
+              final error = provider.recalculatePullbacks();
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text(success ? '已重算回踩' : '请先在全市场页面刷新数据'),
+                  content: Text(error ?? '已重算回踩'),
                   duration: const Duration(seconds: 2),
                 ),
               );

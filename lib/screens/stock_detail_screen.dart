@@ -10,8 +10,12 @@ import 'package:stock_rtwatcher/widgets/kline_chart.dart';
 import 'package:stock_rtwatcher/widgets/minute_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
 import 'package:stock_rtwatcher/widgets/industry_heat_bar.dart';
+import 'package:stock_rtwatcher/widgets/industry_trend_chart.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
+import 'package:stock_rtwatcher/services/watchlist_service.dart';
+import 'package:stock_rtwatcher/services/industry_trend_service.dart';
+import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:provider/provider.dart';
 
 /// K线图显示模式
@@ -187,7 +191,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         code: _currentStock.code,
         category: klineTypeDaily,
         start: 0,
-        count: 30,
+        count: 60,
       );
       final weekly = await _client!.getSecurityBars(
         market: _currentStock.market,
@@ -309,6 +313,45 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     }
   }
 
+  /// 构建自选股切换按钮
+  Widget _buildWatchlistToggle() {
+    final watchlistService = context.watch<WatchlistService>();
+    final isInWatchlist = watchlistService.contains(_currentStock.code);
+
+    return IconButton(
+      icon: Icon(
+        isInWatchlist ? Icons.star : Icons.star_outline,
+        color: isInWatchlist ? Colors.amber : null,
+      ),
+      onPressed: () async {
+        if (isInWatchlist) {
+          await watchlistService.removeStock(_currentStock.code);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('已从自选移除: ${_currentStock.name}'),
+                duration: const Duration(seconds: 1),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        } else {
+          await watchlistService.addStock(_currentStock.code);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('已加入自选: ${_currentStock.name}'),
+                duration: const Duration(seconds: 1),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        }
+      },
+      tooltip: isInWatchlist ? '从自选移除' : '加入自选',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasStockList = widget.stockList != null && widget.stockList!.length > 1;
@@ -329,20 +372,23 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
               ),
           ],
         ),
-        actions: hasStockList
-            ? [
-                IconButton(
-                  icon: const Icon(Icons.chevron_left),
-                  onPressed: () => _animateToStock(_currentIndex - 1),
-                  tooltip: '上一只',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right),
-                  onPressed: () => _animateToStock(_currentIndex + 1),
-                  tooltip: '下一只',
-                ),
-              ]
-            : null,
+        actions: [
+          // 自选股切换按钮
+          _buildWatchlistToggle(),
+          // 列表导航按钮
+          if (hasStockList) ...[
+            IconButton(
+              icon: const Icon(Icons.chevron_left),
+              onPressed: () => _animateToStock(_currentIndex - 1),
+              tooltip: '上一只',
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_right),
+              onPressed: () => _animateToStock(_currentIndex + 1),
+              tooltip: '下一只',
+            ),
+          ],
+        ],
       ),
       body: hasStockList
           ? GestureDetector(
@@ -562,9 +608,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       );
     }
     // 计算突破日标记（仅日K）
+    final breakoutService = context.read<BreakoutService>();
     Set<int>? markedIndices;
     if (_chartMode == ChartMode.daily && _dailyBars.isNotEmpty) {
-      final breakoutService = context.read<BreakoutService>();
       markedIndices = breakoutService.findBreakoutDays(_dailyBars);
     }
 
@@ -572,11 +618,15 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       bars: _chartMode == ChartMode.daily ? _dailyBars : _weeklyBars,
       ratios: _chartMode == ChartMode.daily ? _ratioHistory : null,
       markedIndices: markedIndices,
+      getDetectionResult: _chartMode == ChartMode.daily
+          ? (index) => breakoutService.getDetectionResult(_dailyBars, index)
+          : null,
     );
   }
 
   Widget _buildIndustryHeatBar() {
     final provider = context.watch<MarketDataProvider>();
+    final trendService = context.watch<IndustryTrendService>();
     final industry = provider.industryService.getIndustry(_currentStock.code);
 
     if (industry == null) {
@@ -598,12 +648,58 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
     final changeDistribution = provider.getIndustryChangeDistribution(industry);
 
-    return IndustryHeatBar(
-      industryName: industry,
-      hotCount: heat.hot,
-      coldCount: heat.cold,
-      changeDistribution: changeDistribution,
+    // 获取行业趋势数据
+    final trendData = _getIndustryTrendData(trendService, provider, industry);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 原有的热度条
+        IndustryHeatBar(
+          industryName: industry,
+          hotCount: heat.hot,
+          coldCount: heat.cold,
+          changeDistribution: changeDistribution,
+        ),
+        // 行业趋势折线图
+        if (trendData.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: IndustryTrendChart(
+              data: trendData,
+              height: 100,
+            ),
+          ),
+      ],
     );
+  }
+
+  /// 获取行业趋势数据（历史 + 今日）
+  List<DailyRatioPoint> _getIndustryTrendData(
+    IndustryTrendService trendService,
+    MarketDataProvider provider,
+    String industry,
+  ) {
+    final historicalData = trendService.getTrend(industry);
+    final points = <DailyRatioPoint>[];
+
+    // 添加历史数据
+    if (historicalData != null && historicalData.points.isNotEmpty) {
+      points.addAll(historicalData.points);
+    }
+
+    // 添加今日数据
+    final todayTrend = trendService.calculateTodayTrend(provider.allData);
+    final todayPoint = todayTrend[industry];
+    if (todayPoint != null) {
+      points.add(todayPoint);
+    }
+
+    return points;
   }
 
 }
