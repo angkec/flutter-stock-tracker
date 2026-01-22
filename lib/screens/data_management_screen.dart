@@ -43,6 +43,32 @@ class DataManagementScreen extends StatelessWidget {
 
               const SizedBox(height: 24),
 
+              // 刷新进度提示
+              if (provider.isLoading) ...[
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            provider.stageDescription ?? '刷新中...',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
               // 操作按钮
               Row(
                 children: [
