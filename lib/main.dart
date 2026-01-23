@@ -1,4 +1,7 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/screens/main_screen.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -8,11 +11,19 @@ import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/backtest_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
+import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isIOS || Platform.isAndroid) {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+  }
   runApp(const MyApp());
 }
 
@@ -50,6 +61,11 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) {
           final service = IndustryTrendService();
           service.load(); // 异步加载行业趋势缓存
+          return service;
+        }),
+        ChangeNotifierProvider(create: (_) {
+          final service = IndustryRankService();
+          service.load(); // 异步加载排名缓存
           return service;
         }),
         ChangeNotifierProvider(create: (_) {
