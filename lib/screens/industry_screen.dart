@@ -4,9 +4,12 @@ import 'package:stock_rtwatcher/models/industry_stats.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
+import 'package:stock_rtwatcher/services/industry_rank_service.dart';
+import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
+import 'package:stock_rtwatcher/widgets/industry_rank_list.dart';
 import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 
@@ -167,6 +170,47 @@ class _IndustryScreenState extends State<IndustryScreen> {
     }
   }
 
+  Future<void> _fetchRankData(IndustryRankService rankService, MarketDataProvider marketProvider) async {
+    final pool = context.read<TdxPool>();
+    final industryService = context.read<IndustryService>();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _ProgressDialog(
+        getProgress: () => _fetchProgress,
+        getTotal: () => _fetchTotal,
+      ),
+    );
+
+    try {
+      await rankService.fetchHistoricalData(
+        pool,
+        marketProvider.allData,
+        industryService,
+        (current, total) {
+          setState(() {
+            _fetchProgress = current;
+            _fetchTotal = total;
+          });
+        },
+      );
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('排名数据已更新')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('获取排名数据失败: $e')),
+        );
+      }
+    }
+  }
+
   /// 计算行业统计
   List<IndustryStats> _calculateStats(
     List<StockMonitorData> data,
@@ -318,6 +362,16 @@ class _IndustryScreenState extends State<IndustryScreen> {
     // 检查是否需要重新触发趋势检查
     _maybeRecheckTrend(marketProvider);
 
+    // 计算今日行业排名
+    final rankService = context.watch<IndustryRankService>();
+    if (marketProvider.allData.isNotEmpty && !rankService.isLoading) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          rankService.calculateTodayRanks(marketProvider.allData);
+        }
+      });
+    }
+
     final todayTrend = trendService.calculateTodayTrend(marketProvider.allData);
     final allStats = _calculateStats(marketProvider.allData, trendService, todayTrend);
     final filteredStats = _applyFilter(allStats, trendService, todayTrend);
@@ -352,6 +406,13 @@ class _IndustryScreenState extends State<IndustryScreen> {
               icon: const Icon(Icons.refresh, size: 18),
               label: const Text('更新趋势'),
             ),
+          // 排名数据按钮
+          if (rankService.historyData.isEmpty && !rankService.isLoading && marketProvider.allData.isNotEmpty)
+            TextButton.icon(
+              onPressed: () => _fetchRankData(rankService, marketProvider),
+              icon: const Icon(Icons.trending_up, size: 18),
+              label: const Text('排名'),
+            ),
         ],
       ),
       body: SafeArea(
@@ -384,6 +445,9 @@ class _IndustryScreenState extends State<IndustryScreen> {
                     )
                   : Column(
                       children: [
+                        // 行业排名趋势
+                        const IndustryRankList(),
+                        const Divider(height: 1),
                         // 表头
                         Container(
                           height: 32,
