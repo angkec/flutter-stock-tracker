@@ -14,6 +14,8 @@ class StockMonitorData {
   final String? industry;      // 申万行业
   final bool isPullback;       // 是否为高质量回踩
   final bool isBreakout;       // 是否为突破
+  final double upVolume;       // 上涨K线成交量之和
+  final double downVolume;     // 下跌K线成交量之和
 
   StockMonitorData({
     required this.stock,
@@ -22,10 +24,12 @@ class StockMonitorData {
     this.industry,
     this.isPullback = false,
     this.isBreakout = false,
+    this.upVolume = 0,
+    this.downVolume = 0,
   });
 
   /// 创建带有回踩标记的副本
-  StockMonitorData copyWith({bool? isPullback, bool? isBreakout}) {
+  StockMonitorData copyWith({bool? isPullback, bool? isBreakout, double? upVolume, double? downVolume}) {
     return StockMonitorData(
       stock: stock,
       ratio: ratio,
@@ -33,6 +37,8 @@ class StockMonitorData {
       industry: industry,
       isPullback: isPullback ?? this.isPullback,
       isBreakout: isBreakout ?? this.isBreakout,
+      upVolume: upVolume ?? this.upVolume,
+      downVolume: downVolume ?? this.downVolume,
     );
   }
 
@@ -43,6 +49,8 @@ class StockMonitorData {
     'industry': industry,
     'isPullback': isPullback,
     'isBreakout': isBreakout,
+    'upVolume': upVolume,
+    'downVolume': downVolume,
   };
 
   factory StockMonitorData.fromJson(Map<String, dynamic> json) => StockMonitorData(
@@ -52,6 +60,8 @@ class StockMonitorData {
     industry: json['industry'] as String?,
     isPullback: json['isPullback'] as bool? ?? false,
     isBreakout: json['isBreakout'] as bool? ?? false,
+    upVolume: (json['upVolume'] as num?)?.toDouble() ?? 0,
+    downVolume: (json['downVolume'] as num?)?.toDouble() ?? 0,
   );
 }
 
@@ -86,10 +96,10 @@ class StockService {
   // 最小K线数量 (少于此值认为是停盘或数据不足)
   static const int minBarsCount = 10;
 
-  /// 计算量比 (涨量/跌量)
-  /// 返回上涨K线成交量之和与下跌K线成交量之和的比值
+  /// 计算量比及原始成交量 (涨量/跌量)
+  /// 返回包含 ratio、upVolume、downVolume 的 record
   /// 返回 null 表示数据无效 (涨停/跌停/停盘等)
-  static double? calculateRatio(List<KLine> bars) {
+  static ({double ratio, double upVolume, double downVolume})? calculateRatioWithVolumes(List<KLine> bars) {
     // K线数量太少，可能是停盘或刚开盘
     if (bars.length < minBarsCount) {
       return null;
@@ -128,7 +138,15 @@ class StockService {
       return null;
     }
 
-    return ratio;
+    return (ratio: ratio, upVolume: upVolume, downVolume: downVolume);
+  }
+
+  /// 计算量比 (涨量/跌量)
+  /// 返回上涨K线成交量之和与下跌K线成交量之和的比值
+  /// 返回 null 表示数据无效 (涨停/跌停/停盘等)
+  static double? calculateRatio(List<KLine> bars) {
+    final result = calculateRatioWithVolumes(bars);
+    return result?.ratio;
   }
 
   /// 计算涨跌幅
@@ -284,8 +302,8 @@ class StockService {
         continue;
       }
 
-      final ratio = calculateRatio(targetBars);
-      if (ratio == null) {
+      final result = calculateRatioWithVolumes(targetBars);
+      if (result == null) {
         nullRatioCount++;
         continue;
       }
@@ -293,11 +311,18 @@ class StockService {
       processedCount++;
       final changePercent = calculateChangePercent(targetBars, stocks[index].preClose);
 
+      // 过滤明显异常涨跌幅（preClose 错误导致的数据异常）
+      if (changePercent != null && changePercent.abs() > 30) {
+        continue;
+      }
+
       results.add(StockMonitorData(
         stock: stocks[index],
-        ratio: ratio,
+        ratio: result.ratio,
         changePercent: changePercent ?? 0.0,
         industry: industryService?.getIndustry(stocks[index].code),
+        upVolume: result.upVolume,
+        downVolume: result.downVolume,
       ));
 
       // 达到阈值时回调
