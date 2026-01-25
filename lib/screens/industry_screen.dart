@@ -3,9 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/models/industry_stats.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/screens/data_management_screen.dart';
 import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
+import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
-import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -22,26 +23,37 @@ class IndustryScreen extends StatefulWidget {
   State<IndustryScreen> createState() => _IndustryScreenState();
 }
 
-class _IndustryScreenState extends State<IndustryScreen> {
+class _IndustryScreenState extends State<IndustryScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
   bool _hasCheckedTrend = false;
-  bool _hasMarketDataWhenChecked = false; // 检查时是否有市场数据
-  int _fetchProgress = 0;
-  int _fetchTotal = 0;
+  bool _hasMarketDataWhenChecked = false;
 
   // 排序状态
   IndustrySortMode _sortMode = IndustrySortMode.ratioPercent;
-  bool _sortAscending = false; // false = 降序（默认），true = 升序
+  bool _sortAscending = false;
 
   // 筛选状态
   IndustryFilter _filter = const IndustryFilter();
 
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
   void _onSortModeChanged(IndustrySortMode mode) {
     setState(() {
       if (_sortMode == mode) {
-        // 如果点击同一列，切换排序方向
         _sortAscending = !_sortAscending;
       } else {
-        // 切换到新列，默认降序
         _sortMode = mode;
         _sortAscending = false;
       }
@@ -77,49 +89,28 @@ class _IndustryScreenState extends State<IndustryScreen> {
     final marketProvider = context.read<MarketDataProvider>();
     final pool = context.read<TdxPool>();
 
-    // 只有当有数据时才检查刷新
     if (marketProvider.allData.isNotEmpty) {
       _hasMarketDataWhenChecked = true;
       await trendService.checkAndRefresh(pool, marketProvider.allData);
     }
   }
 
-  /// 在build中检查是否需要重新触发趋势检查
   void _maybeRecheckTrend(MarketDataProvider marketProvider) {
-    // 如果之前检查时没有市场数据，但现在有了，需要重新检查
-    if (_hasCheckedTrend && !_hasMarketDataWhenChecked && marketProvider.allData.isNotEmpty) {
-      // 使用 addPostFrameCallback 避免在 build 中调用 setState
+    if (_hasCheckedTrend &&
+        !_hasMarketDataWhenChecked &&
+        marketProvider.allData.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _checkAndRefreshTrend();
         }
       });
-      _hasMarketDataWhenChecked = true; // 防止重复触发
+      _hasMarketDataWhenChecked = true;
     }
-  }
-
-  /// 检查是否需要显示刷新按钮
-  /// 显示条件：有市场数据 且 (缺失天数>3 或 历史趋势数据为空)
-  bool _shouldShowRefreshButton(
-    MarketDataProvider marketProvider,
-    IndustryTrendService trendService,
-  ) {
-    if (trendService.isLoading) return false;
-    if (marketProvider.allData.isEmpty) return false;
-
-    // 如果历史趋势数据为空，需要刷新
-    if (trendService.trendData.isEmpty) return true;
-
-    // 如果缺失天数>3，需要手动刷新
-    if (trendService.missingDays > 3) return true;
-
-    return false;
   }
 
   Future<void> _manualRefreshTrend() async {
     final trendService = context.read<IndustryTrendService>();
     final marketProvider = context.read<MarketDataProvider>();
-    final pool = context.read<TdxPool>();
 
     if (marketProvider.allData.isEmpty) {
       if (mounted) {
@@ -130,88 +121,43 @@ class _IndustryScreenState extends State<IndustryScreen> {
       return;
     }
 
-    // 显示进度对话框
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => _ProgressDialog(
-        getProgress: () => _fetchProgress,
-        getTotal: () => _fetchTotal,
-      ),
-    );
-
-    try {
-      await trendService.fetchHistoricalData(
-        pool,
-        marketProvider.allData,
-        (current, total) {
-          setState(() {
-            _fetchProgress = current;
-            _fetchTotal = total;
-          });
-        },
+    final missingDays = trendService.missingDays;
+    final dataEmpty = trendService.trendData.isEmpty;
+    if (missingDays > 0 || dataEmpty) {
+      if (!mounted) return;
+      final shouldFetch = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('趋势数据过时'),
+          content: Text(dataEmpty
+              ? '尚无历史趋势数据，是否拉取？'
+              : '缺失 $missingDays 天数据，是否重新拉取？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('使用旧数据'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('重新拉取'),
+            ),
+          ],
+        ),
       );
 
-      // 关闭对话框
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('趋势数据已更新')),
+      if (shouldFetch == true && mounted) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => const DataManagementScreen(),
+          ),
         );
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('获取趋势数据失败: $e')),
-        );
+        return;
       }
     }
+
+    trendService.refresh();
   }
 
-  Future<void> _fetchRankData(IndustryRankService rankService, MarketDataProvider marketProvider) async {
-    final pool = context.read<TdxPool>();
-    final industryService = context.read<IndustryService>();
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => _ProgressDialog(
-        getProgress: () => _fetchProgress,
-        getTotal: () => _fetchTotal,
-      ),
-    );
-
-    try {
-      await rankService.fetchHistoricalData(
-        pool,
-        marketProvider.allData,
-        industryService,
-        (current, total) {
-          setState(() {
-            _fetchProgress = current;
-            _fetchTotal = total;
-          });
-        },
-      );
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('排名数据已更新')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('获取排名数据失败: $e')),
-        );
-      }
-    }
-  }
-
-  /// 计算行业统计
   List<IndustryStats> _calculateStats(
     List<StockMonitorData> data,
     IndustryTrendService trendService,
@@ -229,7 +175,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
       int up = 0, down = 0, flat = 0, ratioAbove = 0, ratioBelow = 0;
 
       for (final stock in entry.value) {
-        // 涨跌统计
         if (stock.changePercent > 0.001) {
           up++;
         } else if (stock.changePercent < -0.001) {
@@ -237,7 +182,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
         } else {
           flat++;
         }
-        // 量比统计
         if (stock.ratio >= 1.0) {
           ratioAbove++;
         } else {
@@ -257,9 +201,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
 
     final statsList = result.values.toList();
 
-    // Pre-compute sort values to avoid repeated calculations during sort
-    // For N items, sort performs O(N log N) comparisons, so pre-computing
-    // reduces function calls from O(N log N) to O(N)
     final Map<String, double> sortValues = {};
     for (final stats in statsList) {
       switch (_sortMode) {
@@ -280,12 +221,10 @@ class _IndustryScreenState extends State<IndustryScreen> {
       }
     }
 
-    // Sort using pre-computed values
     statsList.sort((a, b) {
       final aValue = sortValues[a.name] ?? 0.0;
       final bValue = sortValues[b.name] ?? 0.0;
 
-      // 处理 infinity 情况
       if (aValue.isInfinite && bValue.isInfinite) return 0;
       if (aValue.isInfinite) return _sortAscending ? 1 : -1;
       if (bValue.isInfinite) return _sortAscending ? -1 : 1;
@@ -297,7 +236,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
     return statsList;
   }
 
-  /// 根据筛选条件过滤行业列表
   List<IndustryStats> _applyFilter(
     List<IndustryStats> stats,
     IndustryTrendService trendService,
@@ -308,13 +246,11 @@ class _IndustryScreenState extends State<IndustryScreen> {
     }
 
     return stats.where((stat) {
-      // 筛选今日占比
       final todayRatio = todayTrend[stat.name]?.ratioAbovePercent;
       if (!filterMatchesMinRatioPercent(todayRatio, _filter.minRatioAbovePercent)) {
         return false;
       }
 
-      // 筛选连续上升天数
       if (_filter.consecutiveRisingDays != null) {
         final trendData = _getTrendData(stat.name, trendService, todayTrend);
         if (!filterMatchesConsecutiveRising(trendData, _filter.consecutiveRisingDays)) {
@@ -326,7 +262,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
     }).toList();
   }
 
-  /// 获取行业趋势数据（历史 + 今日）
   List<double> _getTrendData(
     String industry,
     IndustryTrendService trendService,
@@ -335,7 +270,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
     final historicalData = trendService.getTrend(industry);
     final points = <double>[];
 
-    // 添加历史数据（最近14天）
     if (historicalData != null && historicalData.points.isNotEmpty) {
       final recentPoints = historicalData.points.length > 14
           ? historicalData.points.sublist(historicalData.points.length - 14)
@@ -345,7 +279,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
       }
     }
 
-    // 添加今日数据
     final todayPoint = todayTrend[industry];
     if (todayPoint != null) {
       points.add(todayPoint.ratioAbovePercent);
@@ -354,16 +287,48 @@ class _IndustryScreenState extends State<IndustryScreen> {
     return points;
   }
 
+  Widget _buildStaleDataBanner(BuildContext context, HistoricalKlineService klineService) {
+    final missingDays = klineService.getMissingDays();
+    if (missingDays == 0) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Colors.orange.withValues(alpha: 0.1),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber, size: 16, color: Colors.orange),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '历史数据缺失 $missingDays 天，部分趋势可能不准确',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const DataManagementScreen(),
+                ),
+              );
+            },
+            child: const Text('前往更新'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final marketProvider = context.watch<MarketDataProvider>();
     final trendService = context.watch<IndustryTrendService>();
+    final rankService = context.watch<IndustryRankService>();
+    final klineService = context.watch<HistoricalKlineService>();
 
-    // 检查是否需要重新触发趋势检查
     _maybeRecheckTrend(marketProvider);
 
     // 计算今日行业排名
-    final rankService = context.watch<IndustryRankService>();
     if (marketProvider.allData.isNotEmpty && !rankService.isLoading) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -376,42 +341,32 @@ class _IndustryScreenState extends State<IndustryScreen> {
     final allStats = _calculateStats(marketProvider.allData, trendService, todayTrend);
     final filteredStats = _applyFilter(allStats, trendService, todayTrend);
 
-    // 决定是否显示更新按钮
-    final showRefreshButton = _shouldShowRefreshButton(marketProvider, trendService);
     final hasActiveFilter = _filter.hasActiveFilters;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(hasActiveFilter
-            ? '行业 (${filteredStats.length}/${allStats.length})'
-            : '行业'),
+        title: const Text('行业'),
         automaticallyImplyLeading: false,
         actions: [
-          // 筛选按钮
-          IconButton(
-            onPressed: _showFilterBottomSheet,
-            icon: Badge(
-              isLabelVisible: hasActiveFilter,
-              child: Icon(
-                hasActiveFilter ? Icons.filter_alt : Icons.filter_alt_outlined,
-                size: 20,
+          // 筛选按钮（仅行业统计 Tab）
+          if (_tabController.index == 0)
+            IconButton(
+              onPressed: _showFilterBottomSheet,
+              icon: Badge(
+                isLabelVisible: hasActiveFilter,
+                child: Icon(
+                  hasActiveFilter ? Icons.filter_alt : Icons.filter_alt_outlined,
+                  size: 20,
+                ),
               ),
+              tooltip: '筛选',
             ),
-            tooltip: '筛选',
-          ),
           // 更新趋势按钮
-          if (showRefreshButton)
-            TextButton.icon(
+          if (marketProvider.allData.isNotEmpty && !trendService.isLoading)
+            IconButton(
               onPressed: _manualRefreshTrend,
-              icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('更新趋势'),
-            ),
-          // 排名数据按钮
-          if (rankService.historyData.isEmpty && !rankService.isLoading && marketProvider.allData.isNotEmpty)
-            TextButton.icon(
-              onPressed: () => _fetchRankData(rankService, marketProvider),
-              icon: const Icon(Icons.trending_up, size: 18),
-              label: const Text('排名'),
+              icon: const Icon(Icons.refresh, size: 20),
+              tooltip: '更新趋势',
             ),
         ],
       ),
@@ -419,121 +374,174 @@ class _IndustryScreenState extends State<IndustryScreen> {
         child: Column(
           children: [
             const StatusBar(),
+            _buildStaleDataBanner(context, klineService),
+            // Tab 切换
+            Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                    width: 1,
+                  ),
+                ),
+              ),
+              child: TabBar(
+                controller: _tabController,
+                onTap: (_) => setState(() {}), // 刷新 AppBar actions
+                tabs: [
+                  Tab(
+                    text: hasActiveFilter
+                        ? '行业统计 (${filteredStats.length}/${allStats.length})'
+                        : '行业统计',
+                  ),
+                  const Tab(text: '排名趋势'),
+                ],
+              ),
+            ),
+            // Tab 内容
             Expanded(
-              child: filteredStats.isEmpty && !marketProvider.isLoading
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.category_outlined,
-                            size: 64,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            '暂无数据',
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '点击刷新按钮获取数据',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                    )
-                  : Column(
-                      children: [
-                        // 行业排名趋势
-                        const IndustryRankList(),
-                        const Divider(height: 1),
-                        // 表头
-                        Container(
-                          height: 32,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                          ),
-                          child: Row(
-                            children: [
-                              const SizedBox(
-                                width: 64,
-                                child: Text(
-                                  '行业',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                              Expanded(
-                                child: Center(
-                                  child: Text(
-                                    '涨跌',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold,
-                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              // 量比列 - 可点击排序
-                              Expanded(
-                                child: _SortableHeader(
-                                  title: '量比',
-                                  sortMode: IndustrySortMode.ratioPercent,
-                                  currentMode: _sortMode,
-                                  isAscending: _sortAscending,
-                                  onTap: () => _onSortModeChanged(IndustrySortMode.ratioPercent),
-                                ),
-                              ),
-                              // 趋势列 - 可点击排序（两种模式）
-                              SizedBox(
-                                width: 60,
-                                child: Center(
-                                  child: trendService.isLoading
-                                      ? const SizedBox(
-                                          width: 12,
-                                          height: 12,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                          ),
-                                        )
-                                      : _TrendSortHeader(
-                                          currentMode: _sortMode,
-                                          isAscending: _sortAscending,
-                                          onTrendSlopeTap: () =>
-                                              _onSortModeChanged(IndustrySortMode.trendSlope),
-                                          onTodayChangeTap: () =>
-                                              _onSortModeChanged(IndustrySortMode.todayChange),
-                                        ),
-                                ),
-                              ),
-                            ],
-                          ),
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  // Tab 1: 行业统计
+                  _buildStatsTab(
+                    context,
+                    marketProvider,
+                    trendService,
+                    filteredStats,
+                    todayTrend,
+                  ),
+                  // Tab 2: 排名趋势
+                  IndustryRankList(
+                    fullHeight: true,
+                    onFetchData: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const DataManagementScreen(),
                         ),
-                        Expanded(
-                          child: RefreshIndicator(
-                            onRefresh: () => marketProvider.refresh(),
-                            child: ListView.builder(
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              itemCount: filteredStats.length,
-                              itemExtent: 48,
-                              itemBuilder: (context, index) => _buildRow(
-                                context,
-                                filteredStats[index],
-                                index,
-                                trendService,
-                                todayTrend,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildStatsTab(
+    BuildContext context,
+    MarketDataProvider marketProvider,
+    IndustryTrendService trendService,
+    List<IndustryStats> filteredStats,
+    Map<String, DailyRatioPoint> todayTrend,
+  ) {
+    if (filteredStats.isEmpty && !marketProvider.isLoading) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.category_outlined,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '暂无数据',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '点击刷新按钮获取数据',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        // 表头
+        Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          ),
+          child: Row(
+            children: [
+              const SizedBox(
+                width: 64,
+                child: Text(
+                  '行业',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    '涨跌',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: _SortableHeader(
+                  title: '量比',
+                  sortMode: IndustrySortMode.ratioPercent,
+                  currentMode: _sortMode,
+                  isAscending: _sortAscending,
+                  onTap: () => _onSortModeChanged(IndustrySortMode.ratioPercent),
+                ),
+              ),
+              SizedBox(
+                width: 60,
+                child: Center(
+                  child: trendService.isLoading
+                      ? const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : _TrendSortHeader(
+                          currentMode: _sortMode,
+                          isAscending: _sortAscending,
+                          onTrendSlopeTap: () =>
+                              _onSortModeChanged(IndustrySortMode.trendSlope),
+                          onTodayChangeTap: () =>
+                              _onSortModeChanged(IndustrySortMode.todayChange),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () => marketProvider.refresh(),
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              itemCount: filteredStats.length,
+              itemExtent: 48,
+              itemBuilder: (context, index) => _buildRow(
+                context,
+                filteredStats[index],
+                index,
+                trendService,
+                todayTrend,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -688,62 +696,6 @@ class _IndustryScreenState extends State<IndustryScreen> {
   }
 }
 
-/// 进度对话框
-class _ProgressDialog extends StatefulWidget {
-  final int Function() getProgress;
-  final int Function() getTotal;
-
-  const _ProgressDialog({
-    required this.getProgress,
-    required this.getTotal,
-  });
-
-  @override
-  State<_ProgressDialog> createState() => _ProgressDialogState();
-}
-
-class _ProgressDialogState extends State<_ProgressDialog> {
-  @override
-  void initState() {
-    super.initState();
-    _startUpdating();
-  }
-
-  void _startUpdating() async {
-    while (mounted) {
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (mounted) {
-        setState(() {});
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final progress = widget.getProgress();
-    final total = widget.getTotal();
-
-    return AlertDialog(
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: 16),
-          Text(
-            '正在获取趋势数据',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            total > 0 ? '($progress/$total)' : '准备中...',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 /// 可排序的表头组件
 class _SortableHeader extends StatelessWidget {
   final String title;
@@ -821,7 +773,6 @@ class _TrendSortHeader extends StatelessWidget {
 
     return GestureDetector(
       onTap: () {
-        // 循环切换：无 -> 斜率 -> 今变 -> 斜率 -> ...
         if (isTrendSlope) {
           onTodayChangeTap();
         } else {
@@ -910,7 +861,6 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 标题
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -925,8 +875,6 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
               ],
             ),
             const SizedBox(height: 16),
-
-            // 连续上升天数筛选
             _buildFilterSection(
               title: '连续上升天数',
               subtitle: '筛选趋势连续N天上升的行业',
@@ -956,10 +904,7 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
                 }).toList(),
               ),
             ),
-
             const SizedBox(height: 16),
-
-            // 今日占比筛选
             _buildFilterSection(
               title: '今日占比',
               subtitle: '筛选今日量比>1股票占比超过X%的行业',
@@ -989,10 +934,7 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
                 }).toList(),
               ),
             ),
-
             const SizedBox(height: 24),
-
-            // 按钮
             Row(
               children: [
                 Expanded(
