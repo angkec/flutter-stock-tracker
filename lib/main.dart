@@ -11,6 +11,7 @@ import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/backtest_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
+import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
@@ -66,6 +67,11 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) {
           final service = IndustryRankService();
           service.load(); // 异步加载排名缓存
+          return service;
+        }),
+        ChangeNotifierProvider(create: (_) {
+          final service = HistoricalKlineService();
+          service.load(); // 异步加载历史K线缓存
           return service;
         }),
         ChangeNotifierProvider(create: (_) {
