@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/services/tdx_client.dart';
+import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 /// 历史分钟K线数据服务
 /// 统一管理原始分钟K线，支持增量拉取
@@ -222,5 +225,143 @@ class HistoricalKlineService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Failed to clear historical kline cache: $e');
     }
+  }
+
+  /// 增量拉取缺失的日期
+  /// 返回本次拉取的天数
+  Future<int> fetchMissingDays(
+    TdxPool pool,
+    List<Stock> stocks,
+    void Function(int current, int total)? onProgress,
+  ) async {
+    if (stocks.isEmpty || _isLoading) return 0;
+
+    final missingDates = getMissingDateKeys();
+    if (missingDates.isEmpty) return 0;
+
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final connected = await pool.ensureConnected();
+      if (!connected) throw Exception('无法连接到服务器');
+
+      // 计算需要拉取的页数
+      // 每页800条，每天约240条，每页约3.3天
+      // 为安全起见，每缺3天拉1页
+      final pagesToFetch = (missingDates.length / 3).ceil().clamp(1, 6);
+      const int barsPerPage = 800;
+
+      final stockList = stocks;
+      final fetchTotal = stockList.length * pagesToFetch;
+      final grandTotal = fetchTotal + stockList.length; // 拉取 + 处理
+
+      // 收集所有K线数据
+      final allBars = List<List<KLine>>.generate(stockList.length, (_) => []);
+
+      for (var page = 0; page < pagesToFetch; page++) {
+        final start = page * barsPerPage;
+        final pageBars = await pool.batchGetSecurityBars(
+          stocks: stockList,
+          category: klineType1Min,
+          start: start,
+          count: barsPerPage,
+          onProgress: (current, total) {
+            final completed = page * stockList.length + current;
+            onProgress?.call(completed, grandTotal);
+          },
+        );
+
+        for (var i = 0; i < pageBars.length; i++) {
+          if (pageBars[i].isNotEmpty) {
+            allBars[i].addAll(pageBars[i]);
+          }
+        }
+      }
+
+      // 合并到现有数据
+      final today = DateTime.now();
+      final todayKey = formatDate(today);
+      final newDates = <String>{};
+
+      for (var i = 0; i < stockList.length; i++) {
+        final stockCode = stockList[i].code;
+        final bars = allBars[i];
+        if (bars.isEmpty) continue;
+
+        // 合并K线（去重）
+        final existing = _stockBars[stockCode] ?? [];
+        final existingTimes = existing.map((b) => b.datetime.millisecondsSinceEpoch).toSet();
+
+        final newBars = bars.where((b) {
+          // 跳过今天的数据
+          if (formatDate(b.datetime) == todayKey) return false;
+          return !existingTimes.contains(b.datetime.millisecondsSinceEpoch);
+        }).toList();
+
+        if (newBars.isNotEmpty) {
+          existing.addAll(newBars);
+          existing.sort((a, b) => a.datetime.compareTo(b.datetime));
+          _stockBars[stockCode] = existing;
+
+          // 记录新增的日期
+          for (final bar in newBars) {
+            newDates.add(formatDate(bar.datetime));
+          }
+        }
+
+        onProgress?.call(fetchTotal + i + 1, grandTotal);
+      }
+
+      // 更新已完成日期
+      // 只有当某个日期有足够多股票的数据时才标记为完成
+      final dateCounts = <String, int>{};
+      for (final dateKey in newDates) {
+        dateCounts[dateKey] = (dateCounts[dateKey] ?? 0) + 1;
+      }
+      for (final entry in dateCounts.entries) {
+        // 至少10%的股票有数据才认为该日期完整
+        if (entry.value > stockList.length * 0.1) {
+          _completeDates.add(entry.key);
+        }
+      }
+
+      _lastFetchTime = DateTime.now();
+      _cleanupOldData();
+      await save();
+
+      return newDates.length;
+    } catch (e) {
+      debugPrint('Failed to fetch historical kline data: $e');
+      return 0;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// 获取数据覆盖范围
+  ({String? earliest, String? latest}) getDateRange() {
+    if (_completeDates.isEmpty) return (earliest: null, latest: null);
+    final sorted = _completeDates.toList()..sort();
+    return (earliest: sorted.first, latest: sorted.last);
+  }
+
+  /// 获取缓存大小（估算字节数）
+  int getCacheSize() {
+    int count = 0;
+    for (final bars in _stockBars.values) {
+      count += bars.length;
+    }
+    // 每条K线约80字节
+    return count * 80;
+  }
+
+  /// 格式化缓存大小
+  String get cacheSizeFormatted {
+    final bytes = getCacheSize();
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }
