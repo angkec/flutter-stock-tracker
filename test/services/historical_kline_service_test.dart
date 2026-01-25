@@ -103,5 +103,32 @@ void main() {
         expect(missing, 0);
       });
     });
+
+    group('persistence', () {
+      test('serializes and deserializes correctly', () {
+        final service = HistoricalKlineService();
+        // Use a recent date to avoid cleanup removing it
+        final now = DateTime.now();
+        final recentDate = DateTime(now.year, now.month, now.day, 9, 30).subtract(const Duration(days: 1));
+        final dateKey = HistoricalKlineService.formatDate(recentDate);
+        final bars = _generateBars(recentDate, 5, 3);
+
+        service.setStockBars('000001', bars);
+        service.addCompleteDate(dateKey);
+
+        final json = service.serializeCache();
+
+        expect(json['version'], 1);
+        expect(json['completeDates'], contains(dateKey));
+        expect(json['stocks']['000001'], isNotEmpty);
+
+        // Create new service and deserialize
+        final service2 = HistoricalKlineService();
+        service2.deserializeCache(json);
+
+        expect(service2.completeDates, contains(dateKey));
+        expect(service2.getDailyVolumes('000001'), isNotEmpty);
+      });
+    });
   });
 }

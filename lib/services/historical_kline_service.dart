@@ -2,8 +2,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
-import 'package:stock_rtwatcher/models/stock.dart';
-import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 /// 历史分钟K线数据服务
 /// 统一管理原始分钟K线，支持增量拉取
@@ -128,5 +126,101 @@ class HistoricalKlineService extends ChangeNotifier {
       }
     }
     return missing;
+  }
+
+  /// 序列化缓存数据
+  Map<String, dynamic> serializeCache() {
+    final stocks = <String, dynamic>{};
+    for (final entry in _stockBars.entries) {
+      stocks[entry.key] = entry.value.map((bar) => bar.toJson()).toList();
+    }
+
+    return {
+      'version': 1,
+      'lastFetchTime': _lastFetchTime?.toIso8601String(),
+      'completeDates': _completeDates.toList(),
+      'stocks': stocks,
+    };
+  }
+
+  /// 反序列化缓存数据
+  void deserializeCache(Map<String, dynamic> json) {
+    final version = json['version'] as int? ?? 0;
+    if (version != 1) return;
+
+    final lastFetchStr = json['lastFetchTime'] as String?;
+    _lastFetchTime = lastFetchStr != null ? DateTime.parse(lastFetchStr) : null;
+
+    final dates = json['completeDates'] as List<dynamic>?;
+    _completeDates = dates?.map((e) => e as String).toSet() ?? {};
+
+    final stocks = json['stocks'] as Map<String, dynamic>?;
+    if (stocks != null) {
+      _stockBars = {};
+      for (final entry in stocks.entries) {
+        final barsList = entry.value as List<dynamic>;
+        _stockBars[entry.key] = barsList
+            .map((e) => KLine.fromJson(e as Map<String, dynamic>))
+            .toList()
+          ..sort((a, b) => a.datetime.compareTo(b.datetime));
+      }
+    }
+
+    _cleanupOldData();
+  }
+
+  /// 清理超过30天的旧数据
+  void _cleanupOldData() {
+    final cutoff = DateTime.now().subtract(const Duration(days: _maxCacheDays));
+    final cutoffKey = formatDate(cutoff);
+
+    // 清理过期日期
+    _completeDates.removeWhere((key) => key.compareTo(cutoffKey) < 0);
+
+    // 清理过期K线
+    for (final entry in _stockBars.entries) {
+      entry.value.removeWhere((bar) => formatDate(bar.datetime).compareTo(cutoffKey) < 0);
+    }
+    _stockBars.removeWhere((_, bars) => bars.isEmpty);
+  }
+
+  /// 从本地缓存加载
+  Future<void> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final jsonStr = prefs.getString(_storageKey);
+      if (jsonStr != null) {
+        final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+        deserializeCache(json);
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Failed to load historical kline cache: $e');
+    }
+  }
+
+  /// 保存到本地缓存
+  Future<void> save() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_storageKey, jsonEncode(serializeCache()));
+    } catch (e) {
+      debugPrint('Failed to save historical kline cache: $e');
+    }
+  }
+
+  /// 清空缓存
+  Future<void> clear() async {
+    _stockBars = {};
+    _completeDates = {};
+    _lastFetchTime = null;
+    notifyListeners();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_storageKey);
+    } catch (e) {
+      debugPrint('Failed to clear historical kline cache: $e');
+    }
   }
 }
