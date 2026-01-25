@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/models/industry_rank.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
@@ -184,6 +185,85 @@ class IndustryRankService extends ChangeNotifier {
     }
   }
 
+  /// 清空排名缓存
+  void clearCache() {
+    _historyData = {};
+    _todayRanks = {};
+    notifyListeners();
+  }
+
+  /// 从历史K线数据重新计算排名
+  Future<void> recalculateFromKlineData(
+    HistoricalKlineService klineService,
+    List<StockMonitorData> stocks,
+  ) async {
+    if (stocks.isEmpty) return;
+
+    // 收集所有日期
+    final allDates = <String>{};
+    for (final stock in stocks) {
+      final volumes = klineService.getDailyVolumes(stock.stock.code);
+      allDates.addAll(volumes.keys);
+    }
+
+    // 计算每个日期的行业排名
+    final newHistory = <String, Map<String, IndustryRankRecord>>{};
+
+    for (final dateKey in allDates) {
+      // 按行业汇总涨跌量
+      final industryVolumes = <String, ({double up, double down})>{};
+
+      for (final stock in stocks) {
+        final industry = stock.industry;
+        if (industry == null || industry.isEmpty) continue;
+
+        final volumes = klineService.getDailyVolumes(stock.stock.code);
+        final vol = volumes[dateKey];
+        if (vol == null) continue;
+        if (vol.up <= 0 && vol.down <= 0) continue;
+
+        final current = industryVolumes[industry];
+        industryVolumes[industry] = (
+          up: (current?.up ?? 0) + vol.up,
+          down: (current?.down ?? 0) + vol.down,
+        );
+      }
+
+      // 计算聚合量比并排名
+      final industryRatios = <String, double>{};
+      for (final entry in industryVolumes.entries) {
+        if (entry.value.down > 0) {
+          final ratio = entry.value.up / entry.value.down;
+          if (ratio <= StockService.maxValidRatio &&
+              ratio >= 1 / StockService.maxValidRatio) {
+            industryRatios[entry.key] = ratio;
+          }
+        }
+      }
+
+      final sorted = industryRatios.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+
+      final dayRanks = <String, IndustryRankRecord>{};
+      for (var i = 0; i < sorted.length; i++) {
+        dayRanks[sorted[i].key] = IndustryRankRecord(
+          date: dateKey,
+          ratio: sorted[i].value,
+          rank: i + 1,
+        );
+      }
+
+      if (dayRanks.isNotEmpty) {
+        newHistory[dateKey] = dayRanks;
+      }
+    }
+
+    _historyData = newHistory;
+    _cleanupOldData();
+    await _save();
+    notifyListeners();
+  }
+
   /// 拉取历史排名数据
   /// 从TDX获取分钟K线数据，计算每天的行业聚合量比并排名
   Future<void> fetchHistoricalData(
@@ -207,8 +287,8 @@ class IndustryRankService extends ChangeNotifier {
       const int totalPages = 4; // ~16天数据
 
       final allBars = List<List<KLine>>.generate(stockList.length, (_) => []);
-      var totalCompleted = 0;
-      final totalRequests = stockList.length * totalPages;
+      final fetchTotal = stockList.length * totalPages;
+      final grandTotal = fetchTotal + stockList.length; // 拉取 + 计算
 
       for (var page = 0; page < totalPages; page++) {
         final start = page * barsPerPage;
@@ -218,8 +298,8 @@ class IndustryRankService extends ChangeNotifier {
           start: start,
           count: barsPerPage,
           onProgress: (current, total) {
-            totalCompleted = page * stockList.length + current;
-            onProgress?.call(totalCompleted, totalRequests);
+            final completed = page * stockList.length + current;
+            onProgress?.call(completed, grandTotal);
           },
         );
 
@@ -234,33 +314,40 @@ class IndustryRankService extends ChangeNotifier {
       final today = DateTime.now();
       final todayKey = _dateKey(today);
 
-      // 收集每只股票每天的涨跌量
+      // 收集每只股票每天的涨跌量（分批处理，避免阻塞UI）
       final stockDailyVolumes = <int, Map<String, ({double up, double down})>>{};
+      const batchSize = 500;
 
-      for (var i = 0; i < allBars.length; i++) {
-        final bars = allBars[i];
-        if (bars.isEmpty) continue;
+      for (var batch = 0; batch < allBars.length; batch += batchSize) {
+        final end = (batch + batchSize).clamp(0, allBars.length);
+        for (var i = batch; i < end; i++) {
+          final bars = allBars[i];
+          if (bars.isEmpty) continue;
 
-        final dailyBars = _groupBarsByDate(bars);
-        for (final entry in dailyBars.entries) {
-          if (entry.key == todayKey) continue;
+          final dailyBars = _groupBarsByDate(bars);
+          for (final entry in dailyBars.entries) {
+            if (entry.key == todayKey) continue;
 
-          final dayBars = entry.value;
-          if (dayBars.length < StockService.minBarsCount) continue;
+            final dayBars = entry.value;
+            if (dayBars.length < StockService.minBarsCount) continue;
 
-          double upVol = 0, downVol = 0;
-          for (final bar in dayBars) {
-            if (bar.isUp) {
-              upVol += bar.volume;
-            } else if (bar.isDown) {
-              downVol += bar.volume;
+            double upVol = 0, downVol = 0;
+            for (final bar in dayBars) {
+              if (bar.isUp) {
+                upVol += bar.volume;
+              } else if (bar.isDown) {
+                downVol += bar.volume;
+              }
+            }
+
+            if (upVol > 0 && downVol > 0) {
+              stockDailyVolumes.putIfAbsent(i, () => {})[entry.key] = (up: upVol, down: downVol);
             }
           }
-
-          if (upVol > 0 && downVol > 0) {
-            stockDailyVolumes.putIfAbsent(i, () => {})[entry.key] = (up: upVol, down: downVol);
-          }
         }
+        // 报告计算进度 & 让出主线程
+        onProgress?.call(fetchTotal + end, grandTotal);
+        await Future.delayed(Duration.zero);
       }
 
       // 按行业汇总每天的量
