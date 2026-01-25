@@ -40,4 +40,39 @@ class HistoricalKlineService extends ChangeNotifier {
     final parts = dateStr.split('-');
     return DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
   }
+
+  /// 设置某只股票的K线数据（用于测试）
+  @visibleForTesting
+  void setStockBars(String stockCode, List<KLine> bars) {
+    _stockBars[stockCode] = bars..sort((a, b) => a.datetime.compareTo(b.datetime));
+  }
+
+  /// 获取某只股票所有日期的涨跌量汇总
+  /// 返回 { dateKey: (up: upVolume, down: downVolume) }
+  Map<String, ({double up, double down})> getDailyVolumes(String stockCode) {
+    final bars = _stockBars[stockCode];
+    if (bars == null || bars.isEmpty) return {};
+
+    final result = <String, ({double up, double down})>{};
+
+    for (final bar in bars) {
+      final dateKey = formatDate(bar.datetime);
+      final current = result[dateKey];
+
+      double upAdd = 0;
+      double downAdd = 0;
+      if (bar.isUp) {
+        upAdd = bar.volume;
+      } else if (bar.isDown) {
+        downAdd = bar.volume;
+      }
+
+      result[dateKey] = (
+        up: (current?.up ?? 0) + upAdd,
+        down: (current?.down ?? 0) + downAdd,
+      );
+    }
+
+    return result;
+  }
 }
