@@ -9,7 +9,17 @@ import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 class IndustryRankList extends StatelessWidget {
   static const List<int> _dayOptions = [5, 10, 20];
 
-  const IndustryRankList({super.key});
+  /// 是否作为独立 Tab 展示（全高度）
+  final bool fullHeight;
+
+  /// 获取排名数据的回调
+  final VoidCallback? onFetchData;
+
+  const IndustryRankList({
+    super.key,
+    this.fullHeight = false,
+    this.onFetchData,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -17,19 +27,51 @@ class IndustryRankList extends StatelessWidget {
     final config = rankService.config;
     final histories = rankService.getAllRankHistories(config.displayDays);
 
+    // 空状态
     if (histories.isEmpty && !rankService.isLoading) {
-      return const SizedBox.shrink();
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.trending_up_outlined,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '暂无排名数据',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '请先在数据管理页面拉取历史K线数据',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            if (onFetchData != null) ...[
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onFetchData,
+                icon: const Icon(Icons.settings, size: 18),
+                label: const Text('前往数据管理'),
+              ),
+            ],
+          ],
+        ),
+      );
     }
 
+    final displayHistories = fullHeight ? histories : histories.take(20).toList();
+
     return Column(
-      mainAxisSize: MainAxisSize.min,
       children: [
         // 时间段切换按钮组
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Row(
             children: [
-              const Text('排名趋势', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              if (!fullHeight)
+                const Text('排名趋势', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
               const Spacer(),
               ..._dayOptions.map((days) => Padding(
                 padding: const EdgeInsets.only(left: 4),
@@ -69,20 +111,28 @@ class IndustryRankList extends StatelessWidget {
         ),
         // 排名列表
         if (rankService.isLoading)
-          const Padding(
-            padding: EdgeInsets.all(16),
+          const Expanded(
             child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
           )
         else
-          ...histories.take(20).map((history) => _RankRow(
-            history: history,
-            config: config,
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => IndustryDetailScreen(industry: history.industryName),
-              ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: displayHistories.length,
+              itemExtent: 36,
+              itemBuilder: (context, index) {
+                final history = displayHistories[index];
+                return _RankRow(
+                  history: history,
+                  config: config,
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => IndustryDetailScreen(industry: history.industryName),
+                    ),
+                  ),
+                );
+              },
             ),
-          )),
+          ),
       ],
     );
   }
