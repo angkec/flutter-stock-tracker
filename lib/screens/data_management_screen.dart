@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/services/historical_kline_service.dart';
+import 'package:stock_rtwatcher/services/industry_trend_service.dart';
+import 'package:stock_rtwatcher/services/industry_rank_service.dart';
+import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 class DataManagementScreen extends StatelessWidget {
   const DataManagementScreen({super.key});
@@ -39,6 +43,35 @@ class DataManagementScreen extends StatelessWidget {
                 subtitle: provider.industryDataLoaded ? '已加载' : '未加载',
                 size: provider.industryDataCacheSize,
                 onClear: () => _confirmClear(context, '行业数据', () => provider.clearIndustryDataCache()),
+              ),
+
+              // 历史分钟K线
+              Consumer<HistoricalKlineService>(
+                builder: (context, klineService, _) {
+                  final range = klineService.getDateRange();
+                  final missingDays = klineService.getMissingDays();
+                  final subtitle = range.earliest != null
+                      ? '${range.earliest} ~ ${range.latest}，缺失 $missingDays 天'
+                      : '暂无数据';
+
+                  return _buildKlineCacheItem(
+                    context,
+                    title: '历史分钟K线',
+                    subtitle: subtitle,
+                    size: klineService.cacheSizeFormatted,
+                    missingDays: missingDays,
+                    isLoading: klineService.isLoading,
+                    onFetch: () => _fetchHistoricalKline(context),
+                    onClear: () => _confirmClear(context, '历史分钟K线', () async {
+                      await klineService.clear();
+                      // TODO: 同时清空依赖的服务缓存（clearCache方法将在后续任务中添加）
+                      // if (context.mounted) {
+                      //   context.read<IndustryTrendService>().clearCache();
+                      //   context.read<IndustryRankService>().clearCache();
+                      // }
+                    }),
+                  );
+                },
               ),
 
               const SizedBox(height: 24),
@@ -133,6 +166,99 @@ class DataManagementScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildKlineCacheItem(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required String size,
+    required int missingDays,
+    required bool isLoading,
+    required VoidCallback onFetch,
+    required VoidCallback onClear,
+  }) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 4),
+                      Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+                Text(size),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                if (missingDays > 0)
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: isLoading ? null : onFetch,
+                      icon: isLoading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download, size: 18),
+                      label: Text(isLoading ? '拉取中...' : '拉取缺失'),
+                    ),
+                  ),
+                if (missingDays > 0) const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: onClear,
+                    child: const Text('清空'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _fetchHistoricalKline(BuildContext context) async {
+    final klineService = context.read<HistoricalKlineService>();
+    final marketProvider = context.read<MarketDataProvider>();
+    final pool = context.read<TdxPool>();
+    // ignore: unused_local_variable
+    final trendService = context.read<IndustryTrendService>();
+    // ignore: unused_local_variable
+    final rankService = context.read<IndustryRankService>();
+
+    if (marketProvider.allData.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先刷新市场数据')),
+      );
+      return;
+    }
+
+    final stocks = marketProvider.allData.map((d) => d.stock).toList();
+    await klineService.fetchMissingDays(pool, stocks, null);
+
+    // 拉取完成后，触发重算
+    // TODO: recalculateFromKlineData 方法将在 Tasks 8 和 9 中添加
+    if (context.mounted) {
+      // await trendService.recalculateFromKlineData(klineService, marketProvider.allData);
+      // await rankService.recalculateFromKlineData(klineService, marketProvider.allData);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('历史数据已更新')),
+      );
+    }
   }
 
   void _confirmClear(BuildContext context, String title, VoidCallback onClear) {
