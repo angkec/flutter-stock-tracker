@@ -9,7 +9,6 @@ import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
-import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/widgets/industry_rank_list.dart';
 import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
@@ -84,14 +83,13 @@ class _IndustryScreenState extends State<IndustryScreen>
     }
   }
 
-  Future<void> _checkAndRefreshTrend() async {
+  void _checkAndRefreshTrend() {
     final trendService = context.read<IndustryTrendService>();
     final marketProvider = context.read<MarketDataProvider>();
-    final pool = context.read<TdxPool>();
 
     if (marketProvider.allData.isNotEmpty) {
       _hasMarketDataWhenChecked = true;
-      await trendService.checkAndRefresh(pool, marketProvider.allData);
+      trendService.checkMissingDays();
     }
   }
 

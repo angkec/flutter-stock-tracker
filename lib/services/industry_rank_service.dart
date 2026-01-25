@@ -2,12 +2,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/models/industry_rank.dart';
-import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
-import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
-import 'package:stock_rtwatcher/services/tdx_client.dart';
-import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 /// 行业排名服务
 /// 计算每日行业聚合量比（Σ涨量/Σ跌量）并排名
@@ -25,7 +21,7 @@ class IndustryRankService extends ChangeNotifier {
   /// 配置
   IndustryRankConfig _config = const IndustryRankConfig();
 
-  bool _isLoading = false;
+  final bool _isLoading = false;
 
   // Getters
   Map<String, Map<String, IndustryRankRecord>> get historyData =>
@@ -264,172 +260,6 @@ class IndustryRankService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 拉取历史排名数据
-  /// 从TDX获取分钟K线数据，计算每天的行业聚合量比并排名
-  Future<void> fetchHistoricalData(
-    TdxPool pool,
-    List<StockMonitorData> stocks,
-    IndustryService industryService,
-    void Function(int, int)? onProgress,
-  ) async {
-    if (stocks.isEmpty || _isLoading) return;
-
-    _isLoading = true;
-    notifyListeners();
-
-    try {
-      final connected = await pool.ensureConnected();
-      if (!connected) throw Exception('无法连接到服务器');
-
-      // 获取所有股票的分钟K线数据
-      final stockList = stocks.map((s) => s.stock).toList();
-      const int barsPerPage = 800;
-      const int totalPages = 4; // ~16天数据
-
-      final allBars = List<List<KLine>>.generate(stockList.length, (_) => []);
-      final fetchTotal = stockList.length * totalPages;
-      final grandTotal = fetchTotal + stockList.length; // 拉取 + 计算
-
-      for (var page = 0; page < totalPages; page++) {
-        final start = page * barsPerPage;
-        final pageBars = await pool.batchGetSecurityBars(
-          stocks: stockList,
-          category: klineType1Min,
-          start: start,
-          count: barsPerPage,
-          onProgress: (current, total) {
-            final completed = page * stockList.length + current;
-            onProgress?.call(completed, grandTotal);
-          },
-        );
-
-        for (var i = 0; i < pageBars.length; i++) {
-          if (pageBars[i].isNotEmpty) {
-            allBars[i].addAll(pageBars[i]);
-          }
-        }
-      }
-
-      // 按日期分组，计算每个行业每天的聚合量比
-      final today = DateTime.now();
-      final todayKey = _dateKey(today);
-
-      // 收集每只股票每天的涨跌量（分批处理，避免阻塞UI）
-      final stockDailyVolumes = <int, Map<String, ({double up, double down})>>{};
-      const batchSize = 500;
-
-      for (var batch = 0; batch < allBars.length; batch += batchSize) {
-        final end = (batch + batchSize).clamp(0, allBars.length);
-        for (var i = batch; i < end; i++) {
-          final bars = allBars[i];
-          if (bars.isEmpty) continue;
-
-          final dailyBars = _groupBarsByDate(bars);
-          for (final entry in dailyBars.entries) {
-            if (entry.key == todayKey) continue;
-
-            final dayBars = entry.value;
-            if (dayBars.length < StockService.minBarsCount) continue;
-
-            double upVol = 0, downVol = 0;
-            for (final bar in dayBars) {
-              if (bar.isUp) {
-                upVol += bar.volume;
-              } else if (bar.isDown) {
-                downVol += bar.volume;
-              }
-            }
-
-            if (upVol > 0 && downVol > 0) {
-              stockDailyVolumes.putIfAbsent(i, () => {})[entry.key] = (up: upVol, down: downVol);
-            }
-          }
-        }
-        // 报告计算进度 & 让出主线程
-        onProgress?.call(fetchTotal + end, grandTotal);
-        await Future.delayed(Duration.zero);
-      }
-
-      // 按行业汇总每天的量
-      final stockCodeToIndex = <String, int>{};
-      for (var i = 0; i < stocks.length; i++) {
-        stockCodeToIndex[stocks[i].stock.code] = i;
-      }
-
-      // 收集所有日期
-      final allDates = <String>{};
-      for (final volumes in stockDailyVolumes.values) {
-        allDates.addAll(volumes.keys);
-      }
-
-      // 每个日期，汇总行业量并排名
-      final newHistory = <String, Map<String, IndustryRankRecord>>{};
-
-      for (final dateKey in allDates) {
-        final industryVolumes = <String, ({double up, double down})>{};
-
-        for (final stock in stocks) {
-          final industry = stock.industry;
-          if (industry == null || industry.isEmpty) continue;
-
-          final stockIndex = stockCodeToIndex[stock.stock.code];
-          if (stockIndex == null) continue;
-
-          final volumes = stockDailyVolumes[stockIndex];
-          if (volumes == null || !volumes.containsKey(dateKey)) continue;
-
-          final vol = volumes[dateKey]!;
-          final current = industryVolumes[industry];
-          industryVolumes[industry] = (
-            up: (current?.up ?? 0) + vol.up,
-            down: (current?.down ?? 0) + vol.down,
-          );
-        }
-
-        // 计算量比并排名
-        final industryRatios = <String, double>{};
-        for (final entry in industryVolumes.entries) {
-          if (entry.value.down > 0) {
-            final ratio = entry.value.up / entry.value.down;
-            if (ratio <= StockService.maxValidRatio &&
-                ratio >= 1 / StockService.maxValidRatio) {
-              industryRatios[entry.key] = ratio;
-            }
-          }
-        }
-
-        final sorted = industryRatios.entries.toList()
-          ..sort((a, b) => b.value.compareTo(a.value));
-
-        final dayRanks = <String, IndustryRankRecord>{};
-        for (var i = 0; i < sorted.length; i++) {
-          dayRanks[sorted[i].key] = IndustryRankRecord(
-            date: dateKey,
-            ratio: sorted[i].value,
-            rank: i + 1,
-          );
-        }
-
-        if (dayRanks.isNotEmpty) {
-          newHistory[dateKey] = dayRanks;
-        }
-      }
-
-      // 合并到现有数据（新数据覆盖旧数据）
-      for (final entry in newHistory.entries) {
-        _historyData[entry.key] = entry.value;
-      }
-      _cleanupOldData();
-
-      await _save();
-    } catch (e) {
-      debugPrint('Failed to fetch industry rank data: $e');
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
   /// 检查缺失天数
   int getMissingDays() {
     final today = DateTime.now();
@@ -448,15 +278,6 @@ class IndustryRankService extends ChangeNotifier {
 
   String _dateKey(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-  }
-
-  Map<String, List<KLine>> _groupBarsByDate(List<KLine> bars) {
-    final grouped = <String, List<KLine>>{};
-    for (final bar in bars) {
-      final key = _dateKey(bar.datetime);
-      grouped.putIfAbsent(key, () => []).add(bar);
-    }
-    return grouped;
   }
 
   List<DateTime> _estimateTradingDays(DateTime from, int count) {

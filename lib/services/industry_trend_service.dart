@@ -2,21 +2,17 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
-import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
-import 'package:stock_rtwatcher/services/tdx_client.dart';
-import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 /// 行业趋势服务
 /// 计算每个行业的每日分钟涨跌量比趋势
 class IndustryTrendService extends ChangeNotifier {
   static const String _storageKey = 'industry_trend_cache';
   static const int _maxCacheDays = 30;
-  static const int _autoRefreshThreshold = 3; // 缺失天数 <= 3 天自动后台拉取
 
   Map<String, IndustryTrendData> _trendData = {};
-  bool _isLoading = false;
+  final bool _isLoading = false;
   int _missingDays = 0;
 
   /// 按行业名索引的趋势数据
@@ -176,12 +172,9 @@ class IndustryTrendService extends ChangeNotifier {
     }
   }
 
-  /// 检查并增量更新
-  /// 返回缺失天数
-  /// 如果缺失天数 <= 3 天，自动后台拉取
-  Future<int> checkAndRefresh(TdxPool pool, List<StockMonitorData> stocks) async {
-    if (stocks.isEmpty) return 0;
-
+  /// 检查缺失天数
+  /// 返回缺失天数（历史数据应通过 HistoricalKlineService 统一获取）
+  int checkMissingDays() {
     // 计算缺失天数
     final today = DateTime.now();
     final cachedDates = _getCachedDates();
@@ -198,252 +191,12 @@ class IndustryTrendService extends ChangeNotifier {
     _missingDays = missingDates.length;
     notifyListeners();
 
-    // 如果缺失天数 <= 阈值，自动后台拉取
-    if (_missingDays > 0 && _missingDays <= _autoRefreshThreshold) {
-      await fetchHistoricalData(pool, stocks, null);
-    }
-
     return _missingDays;
-  }
-
-  /// 全量拉取历史数据
-  /// [onProgress] 进度回调 (current, total)
-  Future<void> fetchHistoricalData(
-    TdxPool pool,
-    List<StockMonitorData> stocks,
-    void Function(int, int)? onProgress,
-  ) async {
-    if (stocks.isEmpty) return;
-    if (_isLoading) return;
-
-    _isLoading = true;
-    notifyListeners();
-
-    try {
-      // 确保连接
-      final connected = await pool.ensureConnected();
-      if (!connected) {
-        throw Exception('无法连接到服务器');
-      }
-
-      // 按行业分组股票
-      final industryStocks = <String, List<StockMonitorData>>{};
-      for (final stock in stocks) {
-        final industry = stock.industry;
-        if (industry != null && industry.isNotEmpty) {
-          industryStocks.putIfAbsent(industry, () => []).add(stock);
-        }
-      }
-
-      // 获取所有股票的分钟K线数据
-      // TDX API 限制每次最多约800根K线，需要分页获取
-      // 每页800根约4天，获取4页约16天数据
-      final stockList = stocks.map((s) => s.stock).toList();
-      const int barsPerPage = 800;
-      const int totalPages = 4; // 4页 * 800根 ≈ 16天
-
-      // 存储所有股票的合并K线数据
-      final allBars = List<List<KLine>>.generate(stockList.length, (_) => []);
-      final fetchTotal = stockList.length * totalPages;
-      final grandTotal = fetchTotal + stockList.length; // 拉取 + 计算
-
-      for (var page = 0; page < totalPages; page++) {
-        final start = page * barsPerPage;
-
-        final pageBars = await pool.batchGetSecurityBars(
-          stocks: stockList,
-          category: klineType1Min,
-          start: start,
-          count: barsPerPage,
-          onProgress: (current, total) {
-            final completed = page * stockList.length + current;
-            onProgress?.call(completed, grandTotal);
-          },
-        );
-
-        // 合并数据（新数据在前，旧数据在后）
-        for (var i = 0; i < pageBars.length; i++) {
-          if (pageBars[i].isNotEmpty) {
-            allBars[i].addAll(pageBars[i]);
-          }
-        }
-      }
-
-      // 计算每只股票每天的量比（分批处理，避免阻塞UI）
-      final stockDailyRatios = <int, Map<String, double>>{}; // stockIndex -> {dateKey -> ratio}
-      final today = DateTime.now();
-      const batchSize = 500;
-
-      for (var batch = 0; batch < allBars.length; batch += batchSize) {
-        final end = (batch + batchSize).clamp(0, allBars.length);
-        for (var i = batch; i < end; i++) {
-          final bars = allBars[i];
-          if (bars.isEmpty) continue;
-
-          // 按日期分组K线
-          final dailyBars = _groupBarsByDate(bars);
-
-          for (final entry in dailyBars.entries) {
-            final dateKey = entry.key;
-            final dayBars = entry.value;
-
-            // 跳过今天（今天实时计算，不缓存）
-            if (_isDateKeyToday(dateKey, today)) continue;
-
-            // 计算该股票该天的量比
-            final ratio = _calculateDailyRatio(dayBars);
-            if (ratio != null) {
-              stockDailyRatios.putIfAbsent(i, () => {})[dateKey] = ratio;
-            }
-          }
-        }
-        // 报告计算进度 & 让出主线程
-        onProgress?.call(fetchTotal + end, grandTotal);
-        await Future.delayed(Duration.zero);
-      }
-
-      // 汇总每个行业每天的趋势数据
-      final newTrendData = <String, IndustryTrendData>{};
-
-      // Pre-build stock code to index map to avoid O(n²) indexOf lookups
-      final stockCodeToIndex = <String, int>{};
-      for (var i = 0; i < stocks.length; i++) {
-        stockCodeToIndex[stocks[i].stock.code] = i;
-      }
-
-      for (final entry in industryStocks.entries) {
-        final industry = entry.key;
-        final industryStockList = entry.value;
-
-        // 收集该行业所有股票的所有日期
-        final allDates = <String>{};
-        for (final stock in industryStockList) {
-          final stockIndex = stockCodeToIndex[stock.stock.code];
-          if (stockIndex != null && stockDailyRatios.containsKey(stockIndex)) {
-            allDates.addAll(stockDailyRatios[stockIndex]!.keys);
-          }
-        }
-
-        // 计算每个日期的行业趋势
-        final points = <DailyRatioPoint>[];
-        for (final dateKey in allDates) {
-          var ratioAboveCount = 0;
-          var totalStocks = 0;
-
-          for (final stock in industryStockList) {
-            final stockIndex = stockCodeToIndex[stock.stock.code];
-            if (stockIndex == null) continue;
-
-            final ratios = stockDailyRatios[stockIndex];
-            if (ratios == null || !ratios.containsKey(dateKey)) continue;
-
-            totalStocks++;
-            if (ratios[dateKey]! > 1.0) {
-              ratioAboveCount++;
-            }
-          }
-
-          if (totalStocks > 0) {
-            final ratioAbovePercent = (ratioAboveCount / totalStocks) * 100;
-            points.add(DailyRatioPoint(
-              date: _parseDate(dateKey),
-              ratioAbovePercent: ratioAbovePercent,
-              totalStocks: totalStocks,
-              ratioAboveCount: ratioAboveCount,
-            ));
-          }
-        }
-
-        if (points.isNotEmpty) {
-          // 合并现有缓存数据
-          final existingData = _trendData[industry];
-          final mergedPoints = _mergePoints(existingData?.points ?? [], points);
-
-          newTrendData[industry] = IndustryTrendData(
-            industry: industry,
-            points: mergedPoints,
-          ).sortedByDate();
-        }
-      }
-
-      // 更新数据
-      _trendData = newTrendData;
-      _cleanupOldData();
-      _missingDays = 0;
-
-      // 保存缓存
-      await _save();
-
-    } catch (e) {
-      debugPrint('Failed to fetch historical data: $e');
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  /// 计算单只股票某天的分钟涨跌量比
-  /// 上涨分钟总量 / 下跌分钟总量
-  double? _calculateDailyRatio(List<KLine> dayBars) {
-    if (dayBars.length < StockService.minBarsCount) {
-      return null;
-    }
-
-    double upVolume = 0;
-    double downVolume = 0;
-
-    for (final bar in dayBars) {
-      if (bar.isUp) {
-        upVolume += bar.volume;
-      } else if (bar.isDown) {
-        downVolume += bar.volume;
-      }
-    }
-
-    // 没有下跌分钟（可能是涨停）
-    if (downVolume == 0) {
-      return null;
-    }
-
-    // 没有上涨分钟（可能是跌停）
-    if (upVolume == 0) {
-      return null;
-    }
-
-    final ratio = upVolume / downVolume;
-
-    // 量比过高或过低，可能是异常数据
-    if (ratio > StockService.maxValidRatio || ratio < 1 / StockService.maxValidRatio) {
-      return null;
-    }
-
-    return ratio;
-  }
-
-  /// 按日期分组K线
-  Map<String, List<KLine>> _groupBarsByDate(List<KLine> bars) {
-    final grouped = <String, List<KLine>>{};
-    for (final bar in bars) {
-      final dateKey = _dateKey(bar.datetime);
-      grouped.putIfAbsent(dateKey, () => []).add(bar);
-    }
-    return grouped;
   }
 
   /// 获取日期键
   String _dateKey(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-  }
-
-  /// 解析日期键
-  DateTime _parseDate(String dateKey) {
-    final parts = dateKey.split('-');
-    return DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
-  }
-
-  /// 判断日期键是否为今天
-  bool _isDateKeyToday(String dateKey, DateTime today) {
-    return dateKey == _dateKey(today);
   }
 
   /// 判断两个日期是否为同一天
@@ -482,24 +235,6 @@ class IndustryTrendService extends ChangeNotifier {
     }
 
     return days;
-  }
-
-  /// 合并数据点，新数据覆盖旧数据
-  List<DailyRatioPoint> _mergePoints(
-    List<DailyRatioPoint> existing,
-    List<DailyRatioPoint> newPoints,
-  ) {
-    final merged = <String, DailyRatioPoint>{};
-
-    for (final point in existing) {
-      merged[_dateKey(point.date)] = point;
-    }
-
-    for (final point in newPoints) {
-      merged[_dateKey(point.date)] = point;
-    }
-
-    return merged.values.toList()..sort((a, b) => a.date.compareTo(b.date));
   }
 
   /// 清理超过30天的旧数据
