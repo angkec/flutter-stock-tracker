@@ -64,11 +64,10 @@ class DataManagementScreen extends StatelessWidget {
                     onFetch: () => _fetchHistoricalKline(context),
                     onClear: () => _confirmClear(context, '历史分钟K线', () async {
                       await klineService.clear();
-                      // TODO: 同时清空依赖的服务缓存（clearCache方法将在后续任务中添加）
-                      // if (context.mounted) {
-                      //   context.read<IndustryTrendService>().clearCache();
-                      //   context.read<IndustryRankService>().clearCache();
-                      // }
+                      if (context.mounted) {
+                        context.read<IndustryTrendService>().clearCache();
+                        context.read<IndustryRankService>().clearCache();
+                      }
                     }),
                   );
                 },
@@ -251,13 +250,14 @@ class DataManagementScreen extends StatelessWidget {
     await klineService.fetchMissingDays(pool, stocks, null);
 
     // 拉取完成后，触发重算
-    // TODO: recalculateFromKlineData 方法将在 Tasks 8 和 9 中添加
     if (context.mounted) {
-      // await trendService.recalculateFromKlineData(klineService, marketProvider.allData);
-      // await rankService.recalculateFromKlineData(klineService, marketProvider.allData);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('历史数据已更新')),
-      );
+      await trendService.recalculateFromKlineData(klineService, marketProvider.allData);
+      await rankService.recalculateFromKlineData(klineService, marketProvider.allData);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('历史数据已更新')),
+        );
+      }
     }
   }
 
