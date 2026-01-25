@@ -75,4 +75,58 @@ class HistoricalKlineService extends ChangeNotifier {
 
     return result;
   }
+
+  /// 添加已完成日期（用于测试）
+  @visibleForTesting
+  void addCompleteDate(String dateKey) {
+    _completeDates.add(dateKey);
+  }
+
+  /// 估算最近N个交易日（排除周末）
+  List<DateTime> _estimateTradingDays(DateTime from, int count) {
+    final days = <DateTime>[];
+    var current = from;
+    var checked = 0;
+
+    while (days.length < count && checked < count * 2) {
+      current = current.subtract(const Duration(days: 1));
+      checked++;
+      if (current.weekday == DateTime.saturday || current.weekday == DateTime.sunday) {
+        continue;
+      }
+      days.add(DateTime(current.year, current.month, current.day));
+    }
+
+    return days;
+  }
+
+  /// 获取缺失天数
+  int getMissingDays() {
+    final today = DateTime.now();
+    final tradingDays = _estimateTradingDays(today, _maxCacheDays);
+
+    int missing = 0;
+    for (final day in tradingDays) {
+      final key = formatDate(day);
+      if (!_completeDates.contains(key)) {
+        missing++;
+      }
+    }
+    return missing;
+  }
+
+  /// 获取缺失的日期列表
+  List<String> getMissingDateKeys() {
+    final today = DateTime.now();
+    final tradingDays = _estimateTradingDays(today, _maxCacheDays);
+
+    final missing = <String>[];
+    for (final day in tradingDays) {
+      final key = formatDate(day);
+      if (!_completeDates.contains(key)) {
+        missing.add(key);
+      }
+    }
+    return missing;
+  }
 }

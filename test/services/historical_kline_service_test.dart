@@ -75,5 +75,33 @@ void main() {
         expect(volumes['2025-01-25']?.down, 600); // 6 * 100
       });
     });
+
+    group('getMissingDays', () {
+      late HistoricalKlineService service;
+
+      setUp(() {
+        service = HistoricalKlineService();
+      });
+
+      test('returns expected trading days when no data', () {
+        // With no complete dates, all estimated trading days are missing
+        final missing = service.getMissingDays();
+        expect(missing, greaterThan(0));
+      });
+
+      test('returns 0 when all recent dates are complete', () {
+        // Simulate having all recent trading days
+        // Need to go back ~45 calendar days to cover 30 trading days (weekends excluded)
+        final today = DateTime.now();
+        for (var i = 1; i <= 45; i++) {
+          final date = today.subtract(Duration(days: i));
+          if (date.weekday != DateTime.saturday && date.weekday != DateTime.sunday) {
+            service.addCompleteDate(HistoricalKlineService.formatDate(date));
+          }
+        }
+        final missing = service.getMissingDays();
+        expect(missing, 0);
+      });
+    });
   });
 }
