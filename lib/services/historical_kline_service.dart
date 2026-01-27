@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:stock_rtwatcher/data/models/data_freshness.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
@@ -265,7 +266,9 @@ class HistoricalKlineService extends ChangeNotifier {
 
   int _lastReportedMissing = -1;
 
-  /// 获取缺失天数
+  /// 获取缺失天数（基于本地 _completeDates）
+  /// @deprecated 使用 [getMissingDaysForStocks] 代替，该方法基于 DataRepository.checkFreshness
+  @Deprecated('Use getMissingDaysForStocks instead')
   int getMissingDays() {
     final today = DateTime.now();
     final tradingDays = _estimateTradingDays(today, _maxCacheDays);
@@ -286,6 +289,44 @@ class HistoricalKlineService extends ChangeNotifier {
       debugPrint('[HistoricalKline] getMissingDays: $missing 天缺失, completeDates=${_completeDates.length}, 前5个缺失: $missingKeys');
     }
     return missing;
+  }
+
+  /// 获取缺失天数（基于 DataRepository.checkFreshness）
+  ///
+  /// 需要传入股票代码列表来检查数据新鲜度。
+  /// 返回所有股票的累计缺失天数估算值。
+  ///
+  /// 计算逻辑：
+  /// - Missing: 完全缺失的股票，按30天计算
+  /// - Stale: 数据过时的股票，按缺失范围的天数计算（上限30天）
+  /// - Fresh: 数据完整，不计入缺失
+  Future<int> getMissingDaysForStocks(List<String> stockCodes) async {
+    if (stockCodes.isEmpty) return 0;
+
+    try {
+      final freshness = await _repository.checkFreshness(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      int missingCount = 0;
+      for (final entry in freshness.entries) {
+        switch (entry.value) {
+          case Missing():
+            missingCount += 30; // Assume 30 days missing for completely missing stock
+          case Stale(:final missingRange):
+            missingCount += missingRange.duration.inDays.clamp(1, 30);
+          case Fresh():
+            // No missing data
+            break;
+        }
+      }
+
+      return missingCount;
+    } catch (e) {
+      debugPrint('[HistoricalKline] getMissingDaysForStocks failed: $e');
+      return 0;
+    }
   }
 
   /// 获取缺失的日期列表
