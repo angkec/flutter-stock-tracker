@@ -384,4 +384,9 @@ class KLineMetadataManager {
       }
     }
   }
+
+  /// Get the current data version
+  Future<int> getCurrentVersion() async {
+    return await _db.getCurrentVersion();
+  }
 }
