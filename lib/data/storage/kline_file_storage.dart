@@ -3,7 +3,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -37,14 +36,6 @@ class KLineFileStorage {
     final baseDirectory = _getBaseSyncDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
-    return '$baseDirectory/$fileName';
-  }
-
-  /// Get the temporary file path for atomic writes
-  String _getTempFilePath(String stockCode, KLineDataType dataType, int year, int month) {
-    final baseDirectory = _getBaseSyncDirectory();
-    final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.tmp';
     return '$baseDirectory/$fileName';
   }
 
@@ -109,7 +100,10 @@ class KLineFileStorage {
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
     final filePath = '$baseDir/$fileName';
-    final tempPath = '$baseDir/${stockCode}_${dataType.name}_$yearMonth.tmp';
+
+    // Make temp filename unique to avoid race conditions
+    final timestamp = DateTime.now().microsecondsSinceEpoch;
+    final tempPath = '$baseDir/${stockCode}_${dataType.name}_$yearMonth.$timestamp.tmp';
 
     // Prepare data for compression
     final preparedData = _PrepareCompressionData(
@@ -125,30 +119,35 @@ class KLineFileStorage {
 
     // Write to temp file with checksum
     final tempFile = File(tempPath);
-    await tempFile.writeAsBytes(compressedData);
+    try {
+      await tempFile.writeAsBytes(compressedData);
 
-    // Append checksum to the file
-    await tempFile.writeAsString('\n$checksum', mode: FileMode.append);
+      // Append checksum to the file
+      await tempFile.writeAsString('\n$checksum', mode: FileMode.append);
 
-    // Verify checksum by reading back
-    final writtenData = await tempFile.readAsBytes();
-    final lastNewlineIndex = writtenData.lastIndexOf(10); // ASCII for \n
-    if (lastNewlineIndex != -1) {
-      final fileChecksum = String.fromCharCodes(writtenData.sublist(lastNewlineIndex + 1)).trim();
-      final dataChecksum = sha256.convert(writtenData.sublist(0, lastNewlineIndex)).toString();
+      // Verify checksum by reading back
+      final writtenData = await tempFile.readAsBytes();
+      final lastNewlineIndex = writtenData.lastIndexOf(10); // ASCII for \n
+      if (lastNewlineIndex != -1) {
+        final fileChecksum = String.fromCharCodes(writtenData.sublist(lastNewlineIndex + 1)).trim();
+        final dataChecksum = sha256.convert(writtenData.sublist(0, lastNewlineIndex)).toString();
 
-      if (fileChecksum != dataChecksum) {
-        await tempFile.delete();
-        throw Exception('Checksum validation failed during save');
+        if (fileChecksum != dataChecksum) {
+          throw Exception('Checksum validation failed during save');
+        }
+      } else {
+        throw Exception('Checksum separator not found - file write corrupted');
       }
-    }
 
-    // Atomic rename
-    final finalFile = File(filePath);
-    if (await finalFile.exists()) {
-      await finalFile.delete();
+      // Atomic rename
+      await tempFile.rename(filePath);
+    } catch (e) {
+      // Clean up on any error
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+      rethrow;
     }
-    await tempFile.rename(filePath);
   }
 
   /// Append K-line data to a monthly file (handles deduplication)
@@ -228,11 +227,20 @@ class KLineFileStorage {
 
   /// Static method to decompress and deserialize K-line data
   static List<KLine> _decompressAndDeserialize(Uint8List compressedData) {
-    // Remove checksum from the end if present
-    var dataToDecompress = compressedData;
+    // Extract and validate checksum
     final lastNewlineIndex = compressedData.lastIndexOf(10); // ASCII for \n
-    if (lastNewlineIndex != -1) {
-      dataToDecompress = compressedData.sublist(0, lastNewlineIndex);
+    if (lastNewlineIndex == -1) {
+      throw Exception('No checksum found in file');
+    }
+
+    final dataToDecompress = compressedData.sublist(0, lastNewlineIndex);
+    final fileChecksum = String.fromCharCodes(
+      compressedData.sublist(lastNewlineIndex + 1)
+    ).trim();
+    final calculatedChecksum = sha256.convert(dataToDecompress).toString();
+
+    if (fileChecksum != calculatedChecksum) {
+      throw Exception('Checksum validation failed - file may be corrupted');
     }
 
     // Decompress
