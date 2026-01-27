@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/config/debug_config.dart';
+import 'package:stock_rtwatcher/data/models/data_freshness.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
@@ -249,9 +250,22 @@ class DataManagementScreen extends StatelessWidget {
 
     try {
       final stockCodes = provider.allData.map((d) => d.stock.code).toList();
-      final klineService = HistoricalKlineService(repository: repository);
-      final missingDays = await klineService.getMissingDaysForStocks(stockCodes);
-      klineService.dispose();
+      final freshness = await repository.checkFreshness(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      int missingDays = 0;
+      for (final entry in freshness.entries) {
+        switch (entry.value) {
+          case Missing():
+            missingDays += 30;
+          case Stale(:final missingRange):
+            missingDays += missingRange.duration.inDays.clamp(1, 30);
+          case Fresh():
+            break;
+        }
+      }
 
       final dateRange = DateRange(
         DateTime.now().subtract(const Duration(days: 30)),
