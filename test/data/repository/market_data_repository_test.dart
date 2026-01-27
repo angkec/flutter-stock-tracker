@@ -1088,4 +1088,144 @@ void main() {
       expect(result.totalRecords, equals(0));
     });
   });
+
+  group('MarketDataRepository - refetchData', () {
+    late MarketDataRepository repository;
+    late MockTdxClient mockTdxClient;
+    late KLineMetadataManager manager;
+    late MarketDatabase database;
+    late KLineFileStorage fileStorage;
+    late Directory testDir;
+
+    setUp(() async {
+      // 创建临时测试目录
+      testDir = await Directory.systemTemp.createTemp('market_data_repo_refetch_test_');
+
+      // 初始化文件存储
+      fileStorage = KLineFileStorage();
+      fileStorage.setBaseDirPathForTesting(testDir.path);
+      await fileStorage.initialize();
+
+      // 初始化数据库
+      database = MarketDatabase();
+      await database.database;
+
+      // 创建元数据管理器
+      manager = KLineMetadataManager(
+        database: database,
+        fileStorage: fileStorage,
+      );
+
+      // 创建 mock TdxClient
+      mockTdxClient = MockTdxClient();
+
+      // 创建 repository
+      repository = MarketDataRepository(
+        metadataManager: manager,
+        tdxClient: mockTdxClient,
+      );
+    });
+
+    tearDown(() async {
+      await repository.dispose();
+
+      // 关闭数据库
+      try {
+        await database.close();
+      } catch (_) {}
+
+      // 重置单例
+      MarketDatabase.resetInstance();
+
+      // 删除测试目录
+      if (await testDir.exists()) {
+        await testDir.delete(recursive: true);
+      }
+
+      // 删除测试数据库文件
+      try {
+        final dbPath = await getDatabasesPath();
+        final path = '$dbPath/market_data.db';
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    });
+
+    test('should refetch data and overwrite existing', () async {
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 1. Save old data first
+      final oldKlines = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: oldKlines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // Verify old data is saved
+      final oldData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+      expect(oldData['000001']!.first.open, equals(10.0));
+
+      // 2. Setup mock to return new data with different values
+      final newKlines = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 20.0, // Different price - should overwrite
+          close: 20.5,
+          high: 20.8,
+          low: 19.9,
+          volume: 2000,
+          amount: 40000,
+        ),
+      ];
+
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': newKlines, // market=0 (深市), code=000001, category=7 (1分钟)
+      };
+
+      // 3. Call refetchData with mock that returns new data
+      final result = await repository.refetchData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // Verify fetch succeeded
+      expect(result.totalStocks, equals(1));
+      expect(result.successCount, equals(1));
+      expect(result.failureCount, equals(0));
+
+      // 4. Verify data was overwritten by loading and checking values
+      final newData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // The new data should have overwritten the old data
+      expect(newData['000001'], isNotEmpty);
+      expect(newData['000001']!.first.open, equals(20.0));
+      expect(newData['000001']!.first.volume, equals(2000));
+    });
+  });
 }

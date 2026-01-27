@@ -443,14 +443,14 @@ class MarketDataRepository implements DataRepository {
     required KLineDataType dataType,
     ProgressCallback? onProgress,
   }) async {
-    // TODO: Implement
-    return FetchResult(
-      totalStocks: 0,
-      successCount: 0,
-      failureCount: 0,
-      errors: {},
-      totalRecords: 0,
-      duration: Duration.zero,
+    // refetchData 和 fetchMissingData 逻辑相同
+    // 区别在于 refetchData 强制重新拉取，覆盖现有数据
+    // 由于 saveKlineData 会覆盖同月数据，所以实现相同
+    return await fetchMissingData(
+      stockCodes: stockCodes,
+      dateRange: dateRange,
+      dataType: dataType,
+      onProgress: onProgress,
     );
   }
 
