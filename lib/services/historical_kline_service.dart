@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
@@ -57,6 +59,46 @@ class HistoricalKlineService extends ChangeNotifier {
   static const String _fileName = 'historical_kline_v2.json.gz'; // K线数据压缩文件
   static const String _metaFileName = 'historical_kline_meta.json'; // 元数据文件
   static const int _maxCacheDays = 30;
+
+  /// 数据仓库（用于获取数据更新通知）
+  final DataRepository _repository;
+
+  /// 数据更新订阅（用于取消订阅）
+  StreamSubscription? _dataUpdatedSubscription;
+
+  /// 缓存版本（用于判断是否需要重新计算）
+  int _cacheVersion = -1;
+
+  /// 每日涨跌量缓存
+  /// { stockCode: { dateKey: (up, down) } }
+  Map<String, Map<String, ({double up, double down})>> _dailyVolumesCache = {};
+
+  /// 构造函数
+  HistoricalKlineService({required DataRepository repository}) : _repository = repository {
+    // 监听数据更新事件，失效缓存
+    _dataUpdatedSubscription = _repository.dataUpdatedStream.listen(
+      (event) {
+        debugPrint('[HistoricalKline] 收到数据更新事件: version=${event.dataVersion}, stocks=${event.stockCodes.length}');
+        // 失效对应股票的缓存
+        for (final stockCode in event.stockCodes) {
+          _dailyVolumesCache.remove(stockCode);
+        }
+        // 更新缓存版本
+        _cacheVersion = event.dataVersion;
+        notifyListeners();
+      },
+      onError: (error) {
+        debugPrint('[HistoricalKline] 数据更新流错误: $error');
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _dataUpdatedSubscription?.cancel();
+    _dataUpdatedSubscription = null;
+    super.dispose();
+  }
 
   /// 获取缓存文件路径
   Future<File> _getCacheFile() async {

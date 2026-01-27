@@ -3,6 +3,8 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/data/repository/data_repository.dart';
+import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
 import 'package:stock_rtwatcher/screens/main_screen.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
@@ -69,11 +71,20 @@ class MyApp extends StatelessWidget {
           service.load(); // 异步加载排名缓存
           return service;
         }),
-        ChangeNotifierProvider(create: (_) {
-          final service = HistoricalKlineService();
-          service.load(); // 异步加载历史K线缓存
-          return service;
-        }),
+        // DataRepository must be created before HistoricalKlineService
+        Provider<DataRepository>(
+          create: (_) => MarketDataRepository(),
+          dispose: (_, repo) => repo.dispose(),
+        ),
+        ChangeNotifierProxyProvider<DataRepository, HistoricalKlineService>(
+          create: (context) {
+            final repository = context.read<DataRepository>();
+            final service = HistoricalKlineService(repository: repository);
+            service.load(); // 异步加载历史K线缓存
+            return service;
+          },
+          update: (_, repository, previous) => previous!,
+        ),
         ChangeNotifierProvider(create: (_) {
           final service = BacktestService();
           service.loadConfig(); // 异步加载回测配置
