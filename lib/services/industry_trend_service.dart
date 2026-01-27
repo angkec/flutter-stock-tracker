@@ -135,7 +135,7 @@ class IndustryTrendService extends ChangeNotifier {
       stockIndustries[stock.stock.code] = industry;
 
       // 获取这只股票的每日涨跌量
-      final volumes = klineService.getDailyVolumes(stock.stock.code);
+      final volumes = await klineService.getDailyVolumes(stock.stock.code);
       if (volumes.isNotEmpty) {
         stockVolumes[stock.stock.code] = volumes.map(
           (dateKey, vol) => MapEntry(dateKey, [vol.up, vol.down]),

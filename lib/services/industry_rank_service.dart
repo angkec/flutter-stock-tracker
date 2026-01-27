@@ -293,7 +293,7 @@ class IndustryRankService extends ChangeNotifier {
 
       stockIndustries[stock.stock.code] = industry;
 
-      final volumes = klineService.getDailyVolumes(stock.stock.code);
+      final volumes = await klineService.getDailyVolumes(stock.stock.code);
       if (volumes.isNotEmpty) {
         stockVolumes[stock.stock.code] = volumes.map(
           (dateKey, vol) => MapEntry(dateKey, [vol.up, vol.down]),
