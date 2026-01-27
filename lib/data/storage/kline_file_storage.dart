@@ -97,6 +97,13 @@ class KLineFileStorage {
     }
 
     final baseDir = await _getBaseDirectory();
+
+    // Ensure directory exists
+    final dir = Directory(baseDir);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
     final filePath = '$baseDir/$fileName';
