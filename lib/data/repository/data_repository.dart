@@ -75,6 +75,7 @@ abstract class DataRepository {
     required List<String> stockCodes,
     required DateRange dateRange,
     required KLineDataType dataType,
+    ProgressCallback? onProgress,
   });
 
   /// 清理旧数据
