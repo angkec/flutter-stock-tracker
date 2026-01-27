@@ -7,10 +7,50 @@ import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/data_freshness.dart';
+import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+/// Mock TdxClient for testing
+class MockTdxClient extends TdxClient {
+  List<Quote>? quotesToReturn;
+  Exception? exceptionToThrow;
+  List<(int, String)>? lastRequestedStocks;
+  bool connectCalled = false;
+  bool disconnectCalled = false;
+  bool shouldConnectSucceed = true;
+  bool mockIsConnected = false;
+
+  @override
+  bool get isConnected => mockIsConnected;
+
+  @override
+  Future<bool> autoConnect() async {
+    connectCalled = true;
+    if (shouldConnectSucceed) {
+      mockIsConnected = true;
+    }
+    return shouldConnectSucceed;
+  }
+
+  @override
+  Future<void> disconnect() async {
+    disconnectCalled = true;
+    mockIsConnected = false;
+  }
+
+  @override
+  Future<List<Quote>> getSecurityQuotes(List<(int, String)> stocks) async {
+    lastRequestedStocks = stocks;
+    if (exceptionToThrow != null) {
+      throw exceptionToThrow!;
+    }
+    return quotesToReturn ?? [];
+  }
+}
 
 void main() {
   late MarketDataRepository repository;
@@ -305,6 +345,213 @@ void main() {
 
       // Over 24 hours is Stale
       expect(freshness['000004'], isA<Stale>());
+    });
+  });
+
+  group('MarketDataRepository - getQuotes', () {
+    late MarketDataRepository repository;
+    late MockTdxClient mockTdxClient;
+    late KLineMetadataManager manager;
+    late MarketDatabase database;
+    late KLineFileStorage fileStorage;
+    late Directory testDir;
+
+    setUp(() async {
+      // Create temporary test directory
+      testDir = await Directory.systemTemp.createTemp('market_data_repo_quotes_test_');
+
+      // Initialize file storage with test directory
+      fileStorage = KLineFileStorage();
+      fileStorage.setBaseDirPathForTesting(testDir.path);
+      await fileStorage.initialize();
+
+      // Initialize database
+      database = MarketDatabase();
+      await database.database;
+
+      // Create metadata manager
+      manager = KLineMetadataManager(
+        database: database,
+        fileStorage: fileStorage,
+      );
+
+      // Create mock TdxClient
+      mockTdxClient = MockTdxClient();
+
+      // Create repository with the test manager and mock TdxClient
+      repository = MarketDataRepository(
+        metadataManager: manager,
+        tdxClient: mockTdxClient,
+      );
+    });
+
+    tearDown(() async {
+      await repository.dispose();
+
+      // Close database
+      try {
+        await database.close();
+      } catch (_) {}
+
+      // Reset singleton
+      MarketDatabase.resetInstance();
+
+      // Delete test directory
+      if (await testDir.exists()) {
+        await testDir.delete(recursive: true);
+      }
+
+      // Delete test database file
+      try {
+        final dbPath = await getDatabasesPath();
+        final path = '$dbPath/market_data.db';
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    });
+
+    test('should get quotes from TdxClient', () async {
+      // 设置 mock 返回数据
+      mockTdxClient.quotesToReturn = [
+        Quote(
+          market: 0,
+          code: '000001',
+          price: 10.5,
+          lastClose: 10.0,
+          open: 10.2,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000000,
+          amount: 10500000,
+        ),
+        Quote(
+          market: 1,
+          code: '600000',
+          price: 15.5,
+          lastClose: 15.0,
+          open: 15.2,
+          high: 15.8,
+          low: 14.9,
+          volume: 2000000,
+          amount: 31000000,
+        ),
+      ];
+
+      final result = await repository.getQuotes(
+        stockCodes: ['000001', '600000'],
+      );
+
+      // 验证返回结果
+      expect(result.length, equals(2));
+      expect(result['000001']?.price, equals(10.5));
+      expect(result['000001']?.market, equals(0));
+      expect(result['600000']?.price, equals(15.5));
+      expect(result['600000']?.market, equals(1));
+
+      // 验证市场映射正确：000001 -> market 0 (深市), 600000 -> market 1 (沪市)
+      expect(mockTdxClient.lastRequestedStocks, isNotNull);
+      expect(mockTdxClient.lastRequestedStocks!.length, equals(2));
+
+      // 查找对应的请求
+      final request000001 = mockTdxClient.lastRequestedStocks!.firstWhere(
+        (e) => e.$2 == '000001',
+      );
+      final request600000 = mockTdxClient.lastRequestedStocks!.firstWhere(
+        (e) => e.$2 == '600000',
+      );
+
+      expect(request000001.$1, equals(0)); // 深市
+      expect(request600000.$1, equals(1)); // 沪市
+    });
+
+    test('should map stock codes to correct markets', () async {
+      mockTdxClient.quotesToReturn = [];
+
+      // 测试不同前缀的股票代码映射
+      await repository.getQuotes(
+        stockCodes: ['000001', '002001', '300001', '600001', '601001', '688001'],
+      );
+
+      final requests = mockTdxClient.lastRequestedStocks!;
+      expect(requests.length, equals(6));
+
+      // 0xx, 3xx -> 深市 (market 0)
+      // 6xx -> 沪市 (market 1)
+      final marketMap = {for (final r in requests) r.$2: r.$1};
+
+      expect(marketMap['000001'], equals(0)); // 深市主板
+      expect(marketMap['002001'], equals(0)); // 深市中小板
+      expect(marketMap['300001'], equals(0)); // 深市创业板
+      expect(marketMap['600001'], equals(1)); // 沪市主板
+      expect(marketMap['601001'], equals(1)); // 沪市主板
+      expect(marketMap['688001'], equals(1)); // 沪市科创板
+    });
+
+    test('should handle quote fetch errors gracefully', () async {
+      // 设置 mock 抛出异常
+      mockTdxClient.exceptionToThrow = Exception('Network error');
+
+      // 不应该抛出异常，应该返回空 map
+      final result = await repository.getQuotes(
+        stockCodes: ['000001', '600000'],
+      );
+
+      expect(result, isEmpty);
+    });
+
+    test('should handle connection failure gracefully', () async {
+      mockTdxClient.shouldConnectSucceed = false;
+
+      final result = await repository.getQuotes(
+        stockCodes: ['000001'],
+      );
+
+      expect(result, isEmpty);
+    });
+
+    test('should return empty map for empty stock list', () async {
+      final result = await repository.getQuotes(stockCodes: []);
+
+      expect(result, isEmpty);
+      // 不应该调用 TdxClient
+      expect(mockTdxClient.lastRequestedStocks, isNull);
+    });
+
+    test('should disconnect TdxClient on dispose', () async {
+      // 创建一个新的 repository，手动 dispose
+      final testRepo = MarketDataRepository(
+        metadataManager: manager,
+        tdxClient: mockTdxClient,
+      );
+
+      await testRepo.dispose();
+
+      expect(mockTdxClient.disconnectCalled, isTrue);
+    });
+
+    test('should skip connection if already connected', () async {
+      // 设置 mock 为已连接状态
+      mockTdxClient.mockIsConnected = true;
+      mockTdxClient.quotesToReturn = [
+        Quote(
+          market: 0,
+          code: '000001',
+          price: 10.5,
+          lastClose: 10.0,
+          open: 10.2,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000000,
+          amount: 10500000,
+        ),
+      ];
+
+      await repository.getQuotes(stockCodes: ['000001']);
+
+      // 不应该调用 autoConnect
+      expect(mockTdxClient.connectCalled, isFalse);
     });
   });
 }

@@ -9,11 +9,13 @@ import '../models/fetch_result.dart';
 import '../storage/kline_metadata_manager.dart';
 import '../../models/kline.dart';
 import '../../models/quote.dart';
+import '../../services/tdx_client.dart';
 import 'data_repository.dart';
 
 /// 市场数据仓库 - DataRepository 的具体实现
 class MarketDataRepository implements DataRepository {
   final KLineMetadataManager _metadataManager;
+  final TdxClient _tdxClient;
   final StreamController<DataStatus> _statusController = StreamController<DataStatus>.broadcast();
   final StreamController<DataUpdatedEvent> _dataUpdatedController = StreamController<DataUpdatedEvent>.broadcast();
 
@@ -26,7 +28,9 @@ class MarketDataRepository implements DataRepository {
 
   MarketDataRepository({
     KLineMetadataManager? metadataManager,
-  }) : _metadataManager = metadataManager ?? KLineMetadataManager() {
+    TdxClient? tdxClient,
+  })  : _metadataManager = metadataManager ?? KLineMetadataManager(),
+        _tdxClient = tdxClient ?? TdxClient() {
     // 初始状态：就绪
     _statusController.add(const DataReady(0));
   }
@@ -155,8 +159,64 @@ class MarketDataRepository implements DataRepository {
   Future<Map<String, Quote>> getQuotes({
     required List<String> stockCodes,
   }) async {
-    // TODO: Implement
-    return {};
+    if (stockCodes.isEmpty) {
+      return {};
+    }
+
+    try {
+      // 连接到 TDX 服务器
+      if (!_tdxClient.isConnected) {
+        final connected = await _tdxClient.autoConnect();
+        if (!connected) {
+          debugPrint('Failed to connect to TDX server');
+          return {};
+        }
+      }
+
+      // 映射股票代码到 (market, code) 元组
+      // 6xx -> market 1 (沪市)
+      // 0xx, 3xx -> market 0 (深市)
+      final stockTuples = stockCodes.map((code) {
+        final market = _mapCodeToMarket(code);
+        return (market, code);
+      }).toList();
+
+      // 获取行情数据
+      final quotes = await _tdxClient.getSecurityQuotes(stockTuples);
+
+      // 转换为 Map<code, Quote>
+      final result = <String, Quote>{};
+      for (final quote in quotes) {
+        result[quote.code] = quote;
+      }
+
+      // Log if response is partial (fewer quotes than requested)
+      if (kDebugMode && result.length < stockCodes.length) {
+        final missingCodes = stockCodes.where((code) => !result.containsKey(code)).toList();
+        debugPrint('Missing quotes for ${missingCodes.length} codes: $missingCodes');
+      }
+
+      return result;
+    } catch (e, stackTrace) {
+      debugPrint('Failed to get quotes for ${stockCodes.length} stocks: $e');
+      if (kDebugMode) {
+        debugPrint('Requested codes: $stockCodes');
+        debugPrint('Stack trace: $stackTrace');
+      }
+      return {};
+    }
+  }
+
+  /// 根据股票代码映射市场
+  /// 6xx -> market 1 (沪市)
+  /// 0xx, 3xx -> market 0 (深市)
+  int _mapCodeToMarket(String code) {
+    if (code.isEmpty) return 0;
+    final firstChar = code[0];
+    if (firstChar == '6') {
+      return 1; // 沪市
+    }
+    return 0; // 深市 (0xx, 3xx, 其他)
   }
 
   @override
@@ -210,6 +270,7 @@ class MarketDataRepository implements DataRepository {
   /// 释放资源
   @override
   Future<void> dispose() async {
+    await _tdxClient.disconnect();
     await _statusController.close();
     await _dataUpdatedController.close();
     _klineCache.clear();
