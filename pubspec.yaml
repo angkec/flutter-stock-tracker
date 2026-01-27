@@ -31,6 +31,7 @@ dependencies:
   flutter:
     sdk: flutter
   archive: ^3.6.1
+  crypto: ^3.0.3
   provider: ^6.1.2
   fast_gbk: ^1.0.0
   shared_preferences: ^2.5.4
