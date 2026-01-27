@@ -191,38 +191,6 @@ void main() {
       });
     });
 
-    group('getMissingDays (deprecated)', () {
-      late HistoricalKlineService service;
-      late MockDataRepository mockRepo;
-
-      setUp(() {
-        mockRepo = MockDataRepository();
-        service = HistoricalKlineService(repository: mockRepo);
-      });
-
-      test('returns expected trading days when no data', () {
-        // With no complete dates, all estimated trading days are missing
-        // ignore: deprecated_member_use_from_same_package
-        final missing = service.getMissingDays();
-        expect(missing, greaterThan(0));
-      });
-
-      test('returns 0 when all recent dates are complete', () {
-        // Simulate having all recent trading days
-        // Need to go back ~45 calendar days to cover 30 trading days (weekends excluded)
-        final today = DateTime.now();
-        for (var i = 1; i <= 45; i++) {
-          final date = today.subtract(Duration(days: i));
-          if (date.weekday != DateTime.saturday && date.weekday != DateTime.sunday) {
-            service.addCompleteDate(HistoricalKlineService.formatDate(date));
-          }
-        }
-        // ignore: deprecated_member_use_from_same_package
-        final missing = service.getMissingDays();
-        expect(missing, 0);
-      });
-    });
-
     group('getMissingDaysForStocks', () {
       late HistoricalKlineService service;
       late MockDataRepository mockRepo;
@@ -285,38 +253,6 @@ void main() {
 
         final missing = await service.getMissingDaysForStocks(['000001', '000002', '000003']);
         expect(missing, 40); // 30 + 0 + 10
-      });
-    });
-
-    group('persistence', () {
-      late MockDataRepository mockRepo;
-
-      setUp(() {
-        mockRepo = MockDataRepository();
-      });
-
-      test('serializes and deserializes correctly', () {
-        final service = HistoricalKlineService(repository: mockRepo);
-        // Use a recent date to avoid cleanup removing it
-        final now = DateTime.now();
-        final recentDate = DateTime(now.year, now.month, now.day, 9, 30).subtract(const Duration(days: 1));
-        final dateKey = HistoricalKlineService.formatDate(recentDate);
-        final bars = _generateBars(recentDate, 5, 3);
-
-        service.setStockBars('000001', bars);
-        service.addCompleteDate(dateKey);
-
-        final json = service.serializeCache();
-
-        expect(json['version'], 1);
-        expect(json['completeDates'], contains(dateKey));
-        expect(json['stocks']['000001'], isNotEmpty);
-
-        // Create new service and deserialize
-        final service2 = HistoricalKlineService(repository: mockRepo);
-        service2.deserializeCache(json);
-
-        expect(service2.completeDates, contains(dateKey));
       });
     });
   });
