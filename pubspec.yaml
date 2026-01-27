@@ -34,12 +34,15 @@ dependencies:
   provider: ^6.1.2
   fast_gbk: ^1.0.0
   shared_preferences: ^2.5.4
+  path_provider: ^2.1.5
+  sqflite: ^2.3.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.3
+  sqflite_common_ffi: ^2.3.0
 
 flutter_launcher_icons:
   android: true
