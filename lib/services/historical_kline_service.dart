@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
@@ -171,9 +173,48 @@ class HistoricalKlineService extends ChangeNotifier {
 
   /// 获取某只股票所有日期的涨跌量汇总
   /// 返回 { dateKey: (up: upVolume, down: downVolume) }
-  Map<String, ({double up, double down})> getDailyVolumes(String stockCode) {
-    final bars = _stockBars[stockCode];
-    if (bars == null || bars.isEmpty) return {};
+  Future<Map<String, ({double up, double down})>> getDailyVolumes(String stockCode) async {
+    try {
+      // Check cache validity by version
+      final repoVersion = await _repository.getCurrentVersion();
+      if (repoVersion != _cacheVersion) {
+        _dailyVolumesCache.clear();
+        _cacheVersion = repoVersion;
+      }
+
+      // Return cached if available
+      if (_dailyVolumesCache.containsKey(stockCode)) {
+        return _dailyVolumesCache[stockCode]!;
+      }
+
+      // Fetch from DataRepository
+      final klines = await _repository.getKlines(
+        stockCodes: [stockCode],
+        dateRange: DateRange(
+          DateTime.now().subtract(const Duration(days: 30)),
+          DateTime.now(),
+        ),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      final bars = klines[stockCode] ?? [];
+      final result = _computeDailyVolumes(bars);
+
+      // Cache result
+      _dailyVolumesCache[stockCode] = result;
+      return result;
+    } catch (e, stackTrace) {
+      debugPrint('[HistoricalKline] getDailyVolumes failed for $stockCode: $e');
+      if (kDebugMode) {
+        debugPrint('Stack trace: $stackTrace');
+      }
+      return {};
+    }
+  }
+
+  /// 计算每日涨跌量（纯计算，无IO）
+  Map<String, ({double up, double down})> _computeDailyVolumes(List<KLine> bars) {
+    if (bars.isEmpty) return {};
 
     final result = <String, ({double up, double down})>{};
 
