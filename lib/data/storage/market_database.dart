@@ -7,6 +7,7 @@ import 'database_schema.dart';
 class MarketDatabase {
   static MarketDatabase? _instance;
   static Database? _database;
+  static Future<Database>? _initFuture;
 
   MarketDatabase._();
 
@@ -17,8 +18,20 @@ class MarketDatabase {
 
   Future<Database> get database async {
     if (_database != null) return _database!;
-    _database = await _initDatabase();
-    return _database!;
+
+    // If initialization is in progress, wait for it
+    if (_initFuture != null) {
+      return await _initFuture!;
+    }
+
+    // Start initialization
+    _initFuture = _initDatabase();
+    try {
+      _database = await _initFuture!;
+      return _database!;
+    } finally {
+      _initFuture = null;
+    }
   }
 
   Future<Database> _initDatabase() async {
@@ -55,15 +68,18 @@ class MarketDatabase {
   }
 
   Future<void> close() async {
-    final db = await database;
-    await db.close();
-    _database = null;
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
+    _initFuture = null;
   }
 
   // 重置单例（仅用于测试）
   static void resetInstance() {
     _instance = null;
     _database = null;
+    _initFuture = null;
   }
 
   // 获取当前数据版本
@@ -76,7 +92,7 @@ class MarketDatabase {
       limit: 1,
     );
 
-    if (result.isEmpty) return 1;
+    if (result.isEmpty) return DatabaseSchema.version;
     return result.first['version'] as int;
   }
 
