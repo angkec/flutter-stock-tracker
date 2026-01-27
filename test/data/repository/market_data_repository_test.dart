@@ -246,5 +246,65 @@ void main() {
 
       expect(freshness['999999'], isA<Missing>());
     });
+
+    test('should detect data exactly 24 hours old as fresh', () async {
+      // Save data just under 24 hours ago (23 hours 59 minutes)
+      // Note: We use slightly less than 24 hours because DateTime.now() is called
+      // twice (in test and repository), causing millisecond differences
+      final boundaryKlines = [
+        KLine(
+          datetime: DateTime.now().subtract(const Duration(hours: 23, minutes: 59)),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000003',
+        newBars: boundaryKlines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      final freshness = await repository.checkFreshness(
+        stockCodes: ['000003'],
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // Just under 24 hours is Fresh (age > threshold, not >=)
+      expect(freshness['000003'], isA<Fresh>());
+    });
+
+    test('should detect data just over 24 hours old as stale', () async {
+      // Save data 25 hours ago
+      final justOverKlines = [
+        KLine(
+          datetime: DateTime.now().subtract(const Duration(hours: 25)),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000004',
+        newBars: justOverKlines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      final freshness = await repository.checkFreshness(
+        stockCodes: ['000004'],
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // Over 24 hours is Stale
+      expect(freshness['000004'], isA<Stale>());
+    });
   });
 }

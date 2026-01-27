@@ -124,8 +124,8 @@ class MarketDataRepository implements DataRepository {
         final now = DateTime.now();
         final age = now.difference(latestDate);
 
-        // 1分钟数据：超过1天视为过时
-        // 日线数据：超过1天视为过时
+        // 1分钟数据和日线数据：超过1天视为过时
+        // 注意：age > staleThreshold 意味着恰好24小时的数据仍视为新鲜
         const staleThreshold = Duration(days: 1);
 
         if (age > staleThreshold) {
