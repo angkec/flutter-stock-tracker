@@ -152,8 +152,7 @@ void main() {
         dataType: KLineDataType.oneMinute,
       );
 
-      // Second load - should be from cache (faster)
-      final stopwatch = Stopwatch()..start();
+      // Second load - should return identical object (cached)
       final result2 = await repository.getKlines(
         stockCodes: ['000001'],
         dateRange: DateRange(
@@ -162,11 +161,9 @@ void main() {
         ),
         dataType: KLineDataType.oneMinute,
       );
-      stopwatch.stop();
 
-      // Cache hit should be much faster (< 10ms)
-      expect(stopwatch.elapsedMilliseconds, lessThan(10));
-      expect(result2['000001'], equals(result1['000001']));
+      // Verify it's the exact same list object (identity check)
+      expect(identical(result2['000001'], result1['000001']), isTrue);
     });
 
     test('should return empty list for unknown stocks', () async {

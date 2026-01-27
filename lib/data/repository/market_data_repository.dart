@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import '../models/data_status.dart';
 import '../models/data_updated_event.dart';
 import '../models/data_freshness.dart';
@@ -19,6 +20,9 @@ class MarketDataRepository implements DataRepository {
   // 内存缓存：Map<cacheKey, List<KLine>>
   // cacheKey = "${stockCode}_${dataType}_${startDate}_${endDate}"
   final Map<String, List<KLine>> _klineCache = {};
+
+  // 最大缓存大小
+  static const int _maxCacheSize = 100;
 
   MarketDataRepository({
     KLineMetadataManager? metadataManager,
@@ -59,10 +63,21 @@ class MarketDataRepository implements DataRepository {
           dateRange: dateRange,
         );
 
-        // 存入缓存
+        // 存入缓存（带LRU驱逐）
+        if (_klineCache.length >= _maxCacheSize && !_klineCache.containsKey(cacheKey)) {
+          // 移除最旧的缓存条目（第一个）
+          final firstKey = _klineCache.keys.first;
+          _klineCache.remove(firstKey);
+        }
         _klineCache[cacheKey] = klines;
         result[stockCode] = klines;
-      } catch (e) {
+      } catch (e, stackTrace) {
+        // Log the error for debugging
+        debugPrint('Failed to load K-line data for $stockCode: $e');
+        if (kDebugMode) {
+          debugPrint('Stack trace: $stackTrace');
+        }
+
         // 加载失败，返回空列表
         result[stockCode] = [];
       }
@@ -75,6 +90,13 @@ class MarketDataRepository implements DataRepository {
     final startMs = dateRange.start.millisecondsSinceEpoch;
     final endMs = dateRange.end.millisecondsSinceEpoch;
     return '${stockCode}_${dataType.name}_${startMs}_$endMs';
+  }
+
+  /// 清除缓存中与指定股票和数据类型相关的条目
+  void _invalidateCache(String stockCode, KLineDataType dataType) {
+    _klineCache.removeWhere((key, _) {
+      return key.startsWith('${stockCode}_${dataType.name}_');
+    });
   }
 
   @override
@@ -147,5 +169,6 @@ class MarketDataRepository implements DataRepository {
   Future<void> dispose() async {
     await _statusController.close();
     await _dataUpdatedController.close();
+    _klineCache.clear();
   }
 }
