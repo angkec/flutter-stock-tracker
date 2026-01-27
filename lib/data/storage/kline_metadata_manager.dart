@@ -389,4 +389,19 @@ class KLineMetadataManager {
   Future<int> getCurrentVersion() async {
     return await _db.getCurrentVersion();
   }
+
+  /// Get all unique stock codes for a given data type
+  Future<List<String>> getAllStockCodes({
+    required KLineDataType dataType,
+  }) async {
+    final database = await _db.database;
+    final rows = await database.query(
+      'kline_files',
+      columns: ['DISTINCT stock_code'],
+      where: 'data_type = ?',
+      whereArgs: [dataType.name],
+    );
+
+    return rows.map((row) => row['stock_code'] as String).toList();
+  }
 }

@@ -1228,4 +1228,315 @@ void main() {
       expect(newData['000001']!.first.volume, equals(2000));
     });
   });
+
+  group('MarketDataRepository - cleanupOldData', () {
+    late MarketDataRepository repository;
+    late KLineMetadataManager manager;
+    late MarketDatabase database;
+    late KLineFileStorage fileStorage;
+    late Directory testDir;
+
+    setUp(() async {
+      // Create temporary test directory
+      testDir = await Directory.systemTemp.createTemp('market_data_repo_cleanup_test_');
+
+      // Initialize file storage with test directory
+      fileStorage = KLineFileStorage();
+      fileStorage.setBaseDirPathForTesting(testDir.path);
+      await fileStorage.initialize();
+
+      // Initialize database
+      database = MarketDatabase();
+      await database.database;
+
+      // Create metadata manager
+      manager = KLineMetadataManager(
+        database: database,
+        fileStorage: fileStorage,
+      );
+
+      // Create repository with the test manager
+      repository = MarketDataRepository(metadataManager: manager);
+    });
+
+    tearDown(() async {
+      await repository.dispose();
+
+      // Close database
+      try {
+        await database.close();
+      } catch (_) {}
+
+      // Reset singleton
+      MarketDatabase.resetInstance();
+
+      // Delete test directory
+      if (await testDir.exists()) {
+        await testDir.delete(recursive: true);
+      }
+
+      // Delete test database file
+      try {
+        final dbPath = await getDatabasesPath();
+        final path = '$dbPath/market_data.db';
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    });
+
+    test('should cleanup old data before specified date', () async {
+      // 1. Save data across multiple months (Jan + Feb 2024)
+      final jan2024 = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      final feb2024 = [
+        KLine(
+          datetime: DateTime(2024, 2, 15, 9, 30),
+          open: 11.0,
+          close: 11.5,
+          high: 11.8,
+          low: 10.9,
+          volume: 1100,
+          amount: 11000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: jan2024,
+        dataType: KLineDataType.oneMinute,
+      );
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: feb2024,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 2. Call cleanupOldData with beforeDate = Feb 1, 2024
+      await repository.cleanupOldData(
+        beforeDate: DateTime(2024, 2, 1),
+      );
+
+      // 3. Verify Jan data deleted (empty result)
+      final janData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: DateRange(
+          DateTime(2024, 1, 1),
+          DateTime(2024, 1, 31),
+        ),
+        dataType: KLineDataType.oneMinute,
+      );
+      expect(janData['000001'], isEmpty);
+
+      // 4. Verify Feb data still exists
+      final febData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: DateRange(
+          DateTime(2024, 2, 1),
+          DateTime(2024, 2, 29),
+        ),
+        dataType: KLineDataType.oneMinute,
+      );
+      expect(febData['000001'], isNotEmpty);
+      expect(febData['000001']!.first.datetime.month, equals(2));
+    });
+
+    test('should clear cache after cleanup', () async {
+      // 1. Save some data
+      final jan2024 = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: jan2024,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 2. Load data into cache via getKlines
+      final dateRange = DateRange(
+        DateTime(2024, 1, 1),
+        DateTime(2024, 1, 31),
+      );
+
+      final cachedData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+      expect(cachedData['000001'], isNotEmpty);
+
+      // 3. Call cleanupOldData
+      await repository.cleanupOldData(
+        beforeDate: DateTime(2024, 2, 1),
+      );
+
+      // 4. Verify subsequent getKlines doesn't return cached stale data
+      final afterCleanup = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+      expect(afterCleanup['000001'], isEmpty);
+    });
+
+    test('should emit DataReady status after cleanup', () async {
+      // Save some data
+      final jan2024 = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: jan2024,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // Listen to status stream
+      final statusChanges = <DataStatus>[];
+      final subscription = repository.statusStream.listen(statusChanges.add);
+
+      // Call cleanup
+      await repository.cleanupOldData(
+        beforeDate: DateTime(2024, 2, 1),
+      );
+
+      // Let event loop process
+      await Future.delayed(Duration.zero);
+
+      // Verify DataReady was emitted
+      expect(statusChanges.any((s) => s is DataReady), isTrue);
+
+      await subscription.cancel();
+    });
+
+    test('should cleanup data for multiple stocks', () async {
+      // Save data for multiple stocks
+      final jan2024 = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: jan2024,
+        dataType: KLineDataType.oneMinute,
+      );
+      await manager.saveKlineData(
+        stockCode: '000002',
+        newBars: jan2024,
+        dataType: KLineDataType.oneMinute,
+      );
+      await manager.saveKlineData(
+        stockCode: '600000',
+        newBars: jan2024,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // Cleanup
+      await repository.cleanupOldData(
+        beforeDate: DateTime(2024, 2, 1),
+      );
+
+      // Verify all stocks' data is cleaned
+      final dateRange = DateRange(
+        DateTime(2024, 1, 1),
+        DateTime(2024, 1, 31),
+      );
+
+      for (final code in ['000001', '000002', '600000']) {
+        final data = await repository.getKlines(
+          stockCodes: [code],
+          dateRange: dateRange,
+          dataType: KLineDataType.oneMinute,
+        );
+        expect(data[code], isEmpty, reason: 'Stock $code should have no Jan data');
+      }
+    });
+
+    test('should cleanup data for all data types', () async {
+      // Save data for both data types
+      final jan2024 = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: jan2024,
+        dataType: KLineDataType.oneMinute,
+      );
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: jan2024,
+        dataType: KLineDataType.daily,
+      );
+
+      // Cleanup
+      await repository.cleanupOldData(
+        beforeDate: DateTime(2024, 2, 1),
+      );
+
+      // Verify both data types are cleaned
+      final dateRange = DateRange(
+        DateTime(2024, 1, 1),
+        DateTime(2024, 1, 31),
+      );
+
+      final oneMinuteData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+      expect(oneMinuteData['000001'], isEmpty);
+
+      final dailyData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.daily,
+      );
+      expect(dailyData['000001'], isEmpty);
+    });
+  });
 }

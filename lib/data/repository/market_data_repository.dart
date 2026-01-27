@@ -458,7 +458,31 @@ class MarketDataRepository implements DataRepository {
   Future<void> cleanupOldData({
     required DateTime beforeDate,
   }) async {
-    // TODO: Implement
+    try {
+      // 遍历所有数据类型
+      for (final dataType in KLineDataType.values) {
+        // 查询该类型下所有股票代码
+        final stockCodes = await _metadataManager.getAllStockCodes(dataType: dataType);
+
+        for (final stockCode in stockCodes) {
+          await _metadataManager.deleteOldData(
+            stockCode: stockCode,
+            dataType: dataType,
+            beforeDate: beforeDate,
+          );
+
+          // 清除缓存
+          _invalidateCache(stockCode, dataType);
+        }
+      }
+
+      // 更新状态
+      final newVersion = await _metadataManager.getCurrentVersion();
+      _statusController.add(DataReady(newVersion));
+    } catch (e) {
+      debugPrint('Failed to cleanup old data: $e');
+      rethrow;
+    }
   }
 
   /// 释放资源

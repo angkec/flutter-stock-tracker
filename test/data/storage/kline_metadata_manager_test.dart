@@ -571,5 +571,58 @@ void main() {
       expect(dailyMetadata.first.dataType, equals(KLineDataType.daily));
       expect(oneMinMetadata.first.dataType, equals(KLineDataType.oneMinute));
     });
+
+    test('should get all stock codes for a data type', () async {
+      // Save data for multiple stocks
+      final klines = [
+        KLine(
+          datetime: DateTime(2025, 1, 15, 10, 0),
+          open: 100.0,
+          close: 101.0,
+          high: 102.0,
+          low: 99.0,
+          volume: 1000.0,
+          amount: 100000.0,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: klines,
+        dataType: KLineDataType.daily,
+      );
+      await manager.saveKlineData(
+        stockCode: '000002',
+        newBars: klines,
+        dataType: KLineDataType.daily,
+      );
+      await manager.saveKlineData(
+        stockCode: '600000',
+        newBars: klines,
+        dataType: KLineDataType.daily,
+      );
+      // Save oneMinute data for 000001 - should not appear in daily query
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: klines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // Get all stock codes for daily data type
+      final stockCodes = await manager.getAllStockCodes(
+        dataType: KLineDataType.daily,
+      );
+
+      expect(stockCodes.length, equals(3));
+      expect(stockCodes, containsAll(['000001', '000002', '600000']));
+    });
+
+    test('should return empty list when no data exists', () async {
+      final stockCodes = await manager.getAllStockCodes(
+        dataType: KLineDataType.daily,
+      );
+
+      expect(stockCodes, isEmpty);
+    });
   });
 }
