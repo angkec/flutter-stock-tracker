@@ -35,7 +35,7 @@ class KLineFileStorage {
   /// Get the file path for a monthly K-line file
   String getFilePath(String stockCode, KLineDataType dataType, int year, int month) {
     final baseDirectory = _getBaseSyncDirectory();
-    final yearMonth = '${year}${month.toString().padLeft(2, '0')}';
+    final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
     return '$baseDirectory/$fileName';
   }
@@ -43,7 +43,7 @@ class KLineFileStorage {
   /// Get the temporary file path for atomic writes
   String _getTempFilePath(String stockCode, KLineDataType dataType, int year, int month) {
     final baseDirectory = _getBaseSyncDirectory();
-    final yearMonth = '${year}${month.toString().padLeft(2, '0')}';
+    final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.tmp';
     return '$baseDirectory/$fileName';
   }
@@ -75,7 +75,7 @@ class KLineFileStorage {
     int month,
   ) async {
     final baseDir = await _getBaseDirectory();
-    final yearMonth = '${year}${month.toString().padLeft(2, '0')}';
+    final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
     final filePath = '$baseDir/$fileName';
 
@@ -106,7 +106,7 @@ class KLineFileStorage {
     }
 
     final baseDir = await _getBaseDirectory();
-    final yearMonth = '${year}${month.toString().padLeft(2, '0')}';
+    final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
     final filePath = '$baseDir/$fileName';
     final tempPath = '$baseDir/${stockCode}_${dataType.name}_$yearMonth.tmp';
@@ -181,7 +181,7 @@ class KLineFileStorage {
     int month,
   ) async {
     final baseDir = await _getBaseDirectory();
-    final yearMonth = '${year}${month.toString().padLeft(2, '0')}';
+    final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
     final filePath = '$baseDir/$fileName';
 
@@ -189,18 +189,6 @@ class KLineFileStorage {
     if (await file.exists()) {
       await file.delete();
     }
-  }
-
-  /// Group K-lines by year-month
-  Map<String, List<KLine>> _groupByMonth(List<KLine> klines) {
-    final grouped = <String, List<KLine>>{};
-
-    for (final kline in klines) {
-      final yearMonth = '${kline.datetime.year}${kline.datetime.month.toString().padLeft(2, '0')}';
-      grouped.putIfAbsent(yearMonth, () => []).add(kline);
-    }
-
-    return grouped;
   }
 
   /// Merge and deduplicate K-lines by datetime
@@ -259,11 +247,6 @@ class KLineFileStorage {
         .map((json) => KLine.fromJson(json as Map<String, dynamic>))
         .toList();
   }
-
-  /// Calculate SHA256 checksum
-  static String _calculateChecksum(Uint8List data) {
-    return sha256.convert(data).toString();
-  }
 }
 
 /// Helper class for passing data to compute function
@@ -276,4 +259,5 @@ class _PrepareCompressionData {
     required this.checksum,
   });
 }
+
 
