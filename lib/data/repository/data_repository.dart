@@ -84,4 +84,11 @@ abstract class DataRepository {
   Future<void> cleanupOldData({
     required DateTime beforeDate,
   });
+
+  // ============ 资源管理 ============
+
+  /// 释放资源
+  ///
+  /// 关闭所有流控制器。必须在不再使用仓库时调用。
+  Future<void> dispose();
 }
