@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/config/debug_config.dart';
+import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
-import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 class DataManagementScreen extends StatelessWidget {
   const DataManagementScreen({super.key});
@@ -235,7 +237,7 @@ class DataManagementScreen extends StatelessWidget {
   Future<void> _fetchHistoricalKline(BuildContext context) async {
     final klineService = context.read<HistoricalKlineService>();
     final marketProvider = context.read<MarketDataProvider>();
-    final pool = context.read<TdxPool>();
+    final repository = context.read<DataRepository>();
     final trendService = context.read<IndustryTrendService>();
     final rankService = context.read<IndustryRankService>();
 
@@ -263,11 +265,25 @@ class DataManagementScreen extends StatelessWidget {
       // Debug 模式下限制股票数量
       stocks = DebugConfig.limitStocks(stocks);
 
-      debugPrint('[DataManagement] 开始拉取历史数据, ${stocks.length} 只股票');
-      await klineService.fetchMissingDays(pool, stocks, (current, total, stage) {
-        final stageText = stage == 'fetch' ? '1/3 拉取K线数据' : '1/3 处理并保存K线...';
-        progressNotifier.value = (current: current, total: total, stage: stageText);
-      });
+      final stockCodes = stocks.map((s) => s.code).toList();
+      final dateRange = DateRange(
+        DateTime.now().subtract(const Duration(days: 30)),
+        DateTime.now(),
+      );
+
+      debugPrint('[DataManagement] 开始拉取历史数据, ${stockCodes.length} 只股票');
+      await repository.fetchMissingData(
+        stockCodes: stockCodes,
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+        onProgress: (current, total) {
+          progressNotifier.value = (
+            current: current,
+            total: total,
+            stage: '1/3 拉取K线数据',
+          );
+        },
+      );
       debugPrint('[DataManagement] K线数据已保存');
 
       // K线数据已保存，以下是可选的后处理（失败不影响K线缓存）
