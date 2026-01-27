@@ -102,6 +102,7 @@ class MarketDataRepository implements DataRepository {
   }
 
   /// 释放资源
+  @override
   Future<void> dispose() async {
     await _statusController.close();
     await _dataUpdatedController.close();
