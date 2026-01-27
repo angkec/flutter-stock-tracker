@@ -4,7 +4,14 @@ class DateRange {
   final DateTime start;
   final DateTime end;
 
-  const DateRange(this.start, this.end);
+  DateRange(this.start, this.end) {
+    if (start.isAfter(end)) {
+      throw ArgumentError(
+        'Start date must be before or equal to end date. '
+        'Got start: $start, end: $end',
+      );
+    }
+  }
 
   bool contains(DateTime date) {
     return !date.isBefore(start) && !date.isAfter(end);
