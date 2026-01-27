@@ -53,6 +53,7 @@ class KLineFileMetadata {
 
   /// Convert to map for database insert/update
   Map<String, dynamic> toMap() {
+    final now = DateTime.now().millisecondsSinceEpoch;
     return {
       'stock_code': stockCode,
       'data_type': dataType.name,
@@ -63,8 +64,8 @@ class KLineFileMetadata {
       'record_count': recordCount,
       'checksum': checksum,
       'file_size': fileSize,
-      'created_at': DateTime.now().millisecondsSinceEpoch,
-      'updated_at': DateTime.now().millisecondsSinceEpoch,
+      'created_at': now,
+      'updated_at': now,
     };
   }
 
@@ -97,6 +98,8 @@ class KLineMetadataManager {
   }) async {
     if (newBars.isEmpty) return;
 
+    final now = DateTime.now().millisecondsSinceEpoch;
+
     // Group new bars by year-month
     final barsByMonth = <String, List<KLine>>{};
     for (final bar in newBars) {
@@ -114,15 +117,20 @@ class KLineMetadataManager {
       final year = int.parse(yearMonth.substring(0, 4));
       final month = int.parse(yearMonth.substring(4, 6));
 
-      await _fileStorage.appendKlineData(
-        stockCode,
-        dataType,
-        year,
-        month,
-        klines,
-      );
+      try {
+        await _fileStorage.appendKlineData(
+          stockCode,
+          dataType,
+          year,
+          month,
+          klines,
+        );
 
-      monthsUpdated.add(yearMonth);
+        monthsUpdated.add(yearMonth);
+      } catch (e) {
+        print('Failed to append K-line data for $stockCode $yearMonth: $e');
+        // Continue with other months
+      }
     }
 
     // Prepare metadata before transaction (avoid I/O inside transaction)
@@ -140,16 +148,22 @@ class KLineMetadataManager {
       final startDate = monthBars.first.datetime;
       final endDate = monthBars.last.datetime;
 
-      final filePath = _fileStorage.getFilePath(stockCode, dataType, year, month);
-      final file = File(filePath);
-      final fileSize = await file.length();
+      try {
+        final filePath = _fileStorage.getFilePath(stockCode, dataType, year, month);
+        final file = File(filePath);
+        final fileSize = await file.length();
 
-      metadataMap[yearMonth] = (
-        startDate: startDate,
-        endDate: endDate,
-        recordCount: monthBars.length,
-        fileSize: fileSize,
-      );
+        metadataMap[yearMonth] = (
+          startDate: startDate,
+          endDate: endDate,
+          recordCount: monthBars.length,
+          fileSize: fileSize,
+        );
+      } catch (e) {
+        print('Failed to get file size for $stockCode $yearMonth: $e');
+        // Skip this month's metadata update
+        continue;
+      }
     }
 
     // Update metadata in transaction
@@ -178,8 +192,8 @@ class KLineMetadataManager {
             'end_date': metadata.endDate.millisecondsSinceEpoch,
             'record_count': metadata.recordCount,
             'checksum': null,
-            'created_at': DateTime.now().millisecondsSinceEpoch,
-            'updated_at': DateTime.now().millisecondsSinceEpoch,
+            'created_at': now,
+            'updated_at': now,
             'file_size': metadata.fileSize,
           },
           conflictAlgorithm: ConflictAlgorithm.replace,
@@ -202,7 +216,7 @@ class KLineMetadataManager {
       await txn.insert('data_versions', {
         'version': newVersion,
         'description': 'Updated K-line data for $stockCode',
-        'created_at': DateTime.now().millisecondsSinceEpoch,
+        'created_at': now,
       });
     });
   }
@@ -304,6 +318,7 @@ class KLineMetadataManager {
     required DateTime beforeDate,
   }) async {
     final database = await _db.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
 
     // Get metadata for old files
     final metadata = await getMetadata(
@@ -323,7 +338,7 @@ class KLineMetadataManager {
       }
     }
 
-    // Delete in transaction
+    // Delete metadata in transaction
     await database.transaction((txn) async {
       // Delete metadata from database
       for (final yearMonth in metadataToDelete) {
@@ -332,14 +347,6 @@ class KLineMetadataManager {
           where: 'stock_code = ? AND data_type = ? AND year_month = ?',
           whereArgs: [stockCode, dataType.name, yearMonth],
         );
-      }
-
-      // Delete files from disk
-      for (final filePath in filesToDelete) {
-        final file = File(filePath);
-        if (await file.exists()) {
-          await file.delete();
-        }
       }
 
       // Increment data version if anything was deleted
@@ -359,9 +366,22 @@ class KLineMetadataManager {
         await txn.insert('data_versions', {
           'version': newVersion,
           'description': 'Deleted old K-line data for $stockCode before $beforeDate',
-          'created_at': DateTime.now().millisecondsSinceEpoch,
+          'created_at': now,
         });
       }
     });
+
+    // Delete files from disk after transaction commits
+    for (final filePath in filesToDelete) {
+      final file = File(filePath);
+      try {
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e) {
+        // Log but don't fail - orphaned files acceptable
+        print('Warning: Failed to delete file $filePath: $e');
+      }
+    }
   }
 }
