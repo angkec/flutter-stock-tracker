@@ -285,8 +285,8 @@ class _IndustryScreenState extends State<IndustryScreen>
     return points;
   }
 
-  Widget _buildStaleDataBanner(BuildContext context, HistoricalKlineService klineService) {
-    final missingDays = klineService.getMissingDays();
+  Widget _buildStaleDataBanner(BuildContext context, IndustryTrendService trendService) {
+    final missingDays = trendService.missingDays;
     if (missingDays == 0) return const SizedBox.shrink();
 
     return Container(
@@ -372,7 +372,7 @@ class _IndustryScreenState extends State<IndustryScreen>
         child: Column(
           children: [
             const StatusBar(),
-            _buildStaleDataBanner(context, klineService),
+            _buildStaleDataBanner(context, trendService),
             // Tab 切换
             Container(
               decoration: BoxDecoration(

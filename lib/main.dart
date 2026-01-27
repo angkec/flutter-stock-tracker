@@ -79,9 +79,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProxyProvider<DataRepository, HistoricalKlineService>(
           create: (context) {
             final repository = context.read<DataRepository>();
-            final service = HistoricalKlineService(repository: repository);
-            service.load(); // 异步加载历史K线缓存
-            return service;
+            return HistoricalKlineService(repository: repository);
           },
           update: (_, repository, previous) => previous!,
         ),

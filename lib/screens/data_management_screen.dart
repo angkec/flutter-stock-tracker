@@ -49,30 +49,34 @@ class DataManagementScreen extends StatelessWidget {
                 onClear: () => _confirmClear(context, '行业数据', () => provider.clearIndustryDataCache()),
               ),
 
-              // 历史分钟K线
-              Consumer<HistoricalKlineService>(
-                builder: (context, klineService, _) {
-                  final range = klineService.getDateRange();
-                  final missingDays = klineService.getMissingDays();
-                  final subtitle = range.earliest != null
-                      ? '${range.earliest} ~ ${range.latest}，缺失 $missingDays 天'
-                      : '暂无数据';
+              // 历史分钟K线 (managed by DataRepository)
+              Consumer<DataRepository>(
+                builder: (context, repository, _) {
+                  return FutureBuilder<({String subtitle, int missingDays})>(
+                    future: _getKlineStatus(repository, provider),
+                    builder: (context, snapshot) {
+                      final status = snapshot.data ?? (subtitle: '加载中...', missingDays: 0);
 
-                  return _buildKlineCacheItem(
-                    context,
-                    title: '历史分钟K线',
-                    subtitle: subtitle,
-                    size: klineService.cacheSizeFormatted,
-                    missingDays: missingDays,
-                    isLoading: klineService.isLoading,
-                    onFetch: () => _fetchHistoricalKline(context),
-                    onClear: () => _confirmClear(context, '历史分钟K线', () async {
-                      await klineService.clear();
-                      if (context.mounted) {
-                        context.read<IndustryTrendService>().clearCache();
-                        context.read<IndustryRankService>().clearCache();
-                      }
-                    }),
+                      return _buildKlineCacheItem(
+                        context,
+                        title: '历史分钟K线',
+                        subtitle: status.subtitle,
+                        size: '-', // Size is managed by DataRepository
+                        missingDays: status.missingDays,
+                        isLoading: false, // Loading state handled by progress dialog
+                        onFetch: () => _fetchHistoricalKline(context),
+                        onClear: () => _confirmClear(context, '历史分钟K线', () async {
+                          // Clear all minute K-line data by cleaning up with a future date
+                          await repository.cleanupOldData(
+                            beforeDate: DateTime.now().add(const Duration(days: 1)),
+                          );
+                          if (context.mounted) {
+                            context.read<IndustryTrendService>().clearCache();
+                            context.read<IndustryRankService>().clearCache();
+                          }
+                        }),
+                      );
+                    },
                   );
                 },
               ),
@@ -234,6 +238,34 @@ class DataManagementScreen extends StatelessWidget {
     );
   }
 
+  /// Get status of kline data from DataRepository
+  Future<({String subtitle, int missingDays})> _getKlineStatus(
+    DataRepository repository,
+    MarketDataProvider provider,
+  ) async {
+    if (provider.allData.isEmpty) {
+      return (subtitle: '暂无数据', missingDays: 0);
+    }
+
+    try {
+      final stockCodes = provider.allData.map((d) => d.stock.code).toList();
+      final klineService = HistoricalKlineService(repository: repository);
+      final missingDays = await klineService.getMissingDaysForStocks(stockCodes);
+      klineService.dispose();
+
+      final dateRange = DateRange(
+        DateTime.now().subtract(const Duration(days: 30)),
+        DateTime.now(),
+      );
+      final subtitle = '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}，缺失约 $missingDays 天';
+
+      return (subtitle: subtitle, missingDays: missingDays);
+    } catch (e) {
+      debugPrint('[DataManagement] 获取K线状态失败: $e');
+      return (subtitle: '状态未知', missingDays: 0);
+    }
+  }
+
   Future<void> _fetchHistoricalKline(BuildContext context) async {
     final klineService = context.read<HistoricalKlineService>();
     final marketProvider = context.read<MarketDataProvider>();
@@ -286,23 +318,19 @@ class DataManagementScreen extends StatelessWidget {
       );
       debugPrint('[DataManagement] K线数据已保存');
 
-      // K线数据已保存，以下是可选的后处理（失败不影响K线缓存）
-      if (context.mounted) {
-        // 确保K线数据已加载到内存
-        if (!klineService.klineDataLoaded) {
-          debugPrint('[DataManagement] 加载K线数据到内存...');
-          progressNotifier.value = (current: 0, total: 1, stage: '加载K线数据...');
-          await klineService.loadKlineData();
-        }
+      // Get current data version for cache validation
+      final dataVersion = await repository.getCurrentVersion();
 
+      // 计算行业趋势和排名（数据来自 DataRepository）
+      if (context.mounted) {
         debugPrint('[DataManagement] 开始计算行业趋势');
         progressNotifier.value = (current: 0, total: 1, stage: '2/3 计算行业趋势...');
-        await trendService.recalculateFromKlineData(klineService, marketProvider.allData);
+        await trendService.recalculateFromKlineData(klineService, marketProvider.allData, dataVersion: dataVersion);
         debugPrint('[DataManagement] 行业趋势计算完成');
 
         debugPrint('[DataManagement] 开始计算行业排名');
         progressNotifier.value = (current: 0, total: 1, stage: '3/3 计算行业排名...');
-        await rankService.recalculateFromKlineData(klineService, marketProvider.allData);
+        await rankService.recalculateFromKlineData(klineService, marketProvider.allData, dataVersion: dataVersion);
         debugPrint('[DataManagement] 行业排名计算完成');
       }
     } finally {

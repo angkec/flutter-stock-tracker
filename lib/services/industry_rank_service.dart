@@ -267,15 +267,18 @@ class IndustryRankService extends ChangeNotifier {
   }
 
   /// 从历史K线数据重新计算排名
+  ///
+  /// [dataVersion] - 当前数据版本（用于缓存校验）
   Future<void> recalculateFromKlineData(
     HistoricalKlineService klineService,
     List<StockMonitorData> stocks, {
+    int? dataVersion,
     bool force = false,
   }) async {
     if (stocks.isEmpty) return;
 
     // 检查是否需要重算
-    final currentVersion = klineService.dataVersion;
+    final currentVersion = dataVersion ?? 0;
     if (!force && _calculatedFromVersion == currentVersion && _historyData.isNotEmpty) {
       debugPrint('[IndustryRank] 数据版本未变 (v$currentVersion)，跳过重算');
       return;
@@ -286,6 +289,7 @@ class IndustryRankService extends ChangeNotifier {
     // 准备传给 isolate 的数据
     final stockVolumes = <String, Map<String, List<double>>>{};
     final stockIndustries = <String, String>{};
+    final allDates = <String>{};
 
     for (final stock in stocks) {
       final industry = stock.industry;
@@ -298,10 +302,12 @@ class IndustryRankService extends ChangeNotifier {
         stockVolumes[stock.stock.code] = volumes.map(
           (dateKey, vol) => MapEntry(dateKey, [vol.up, vol.down]),
         );
+        // Collect all dates from the volumes data
+        allDates.addAll(volumes.keys);
       }
     }
 
-    final dates = klineService.completeDates.toList();
+    final dates = allDates.toList()..sort();
     debugPrint('[IndustryRank] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期');
 
     // 在 isolate 中计算
