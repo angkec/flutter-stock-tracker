@@ -104,8 +104,51 @@ class MarketDataRepository implements DataRepository {
     required List<String> stockCodes,
     required KLineDataType dataType,
   }) async {
-    // TODO: Implement
-    return {};
+    final result = <String, DataFreshness>{};
+
+    for (final stockCode in stockCodes) {
+      try {
+        // 获取最新数据日期
+        final latestDate = await _metadataManager.getLatestDataDate(
+          stockCode: stockCode,
+          dataType: dataType,
+        );
+
+        if (latestDate == null) {
+          // 完全没有数据
+          result[stockCode] = const Missing();
+          continue;
+        }
+
+        // 检查数据是否过时
+        final now = DateTime.now();
+        final age = now.difference(latestDate);
+
+        // 1分钟数据：超过1天视为过时
+        // 日线数据：超过1天视为过时
+        const staleThreshold = Duration(days: 1);
+
+        if (age > staleThreshold) {
+          // 数据过时，需要拉取从 latestDate+1 到现在的数据
+          final missingStart = latestDate.add(const Duration(days: 1));
+          result[stockCode] = Stale(
+            missingRange: DateRange(missingStart, now),
+          );
+        } else {
+          // 数据新鲜
+          result[stockCode] = const Fresh();
+        }
+      } catch (e, stackTrace) {
+        // 出错视为缺失
+        debugPrint('Failed to check freshness for $stockCode: $e');
+        if (kDebugMode) {
+          debugPrint('Stack trace: $stackTrace');
+        }
+        result[stockCode] = const Missing();
+      }
+    }
+
+    return result;
   }
 
   @override

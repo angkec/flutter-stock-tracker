@@ -9,6 +9,7 @@ import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/models/data_freshness.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -177,6 +178,73 @@ void main() {
       );
 
       expect(result['999999'], isEmpty);
+    });
+
+    test('should detect fresh data', () async {
+      // Save recent data (today)
+      final todayKlines = [
+        KLine(
+          datetime: DateTime.now(),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: todayKlines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      final freshness = await repository.checkFreshness(
+        stockCodes: ['000001'],
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(freshness['000001'], isA<Fresh>());
+    });
+
+    test('should detect stale data', () async {
+      // Save old data (7 days ago)
+      final oldKlines = [
+        KLine(
+          datetime: DateTime.now().subtract(const Duration(days: 7)),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000002',
+        newBars: oldKlines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      final freshness = await repository.checkFreshness(
+        stockCodes: ['000002'],
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(freshness['000002'], isA<Stale>());
+      final stale = freshness['000002'] as Stale;
+      expect(stale.missingRange.start, isA<DateTime>());
+    });
+
+    test('should detect missing data', () async {
+      final freshness = await repository.checkFreshness(
+        stockCodes: ['999999'],
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(freshness['999999'], isA<Missing>());
     });
   });
 }
