@@ -14,18 +14,13 @@ class MarketDataRepository implements DataRepository {
   final StreamController<DataStatus> _statusController = StreamController<DataStatus>.broadcast();
   final StreamController<DataUpdatedEvent> _dataUpdatedController = StreamController<DataUpdatedEvent>.broadcast();
 
-  DataStatus _currentStatus = const DataReady(0);
-
   MarketDataRepository() {
     // 初始状态：就绪
-    _currentStatus = const DataReady(0);
+    _statusController.add(const DataReady(0));
   }
 
   @override
-  Stream<DataStatus> get statusStream async* {
-    yield _currentStatus;
-    yield* _statusController.stream;
-  }
+  Stream<DataStatus> get statusStream => _statusController.stream;
 
   @override
   Stream<DataUpdatedEvent> get dataUpdatedStream => _dataUpdatedController.stream;
