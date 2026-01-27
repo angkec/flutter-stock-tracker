@@ -31,9 +31,17 @@ class KLineFileStorage {
     }
   }
 
-  /// Get the file path for a monthly K-line file
+  /// Get the file path for a monthly K-line file (sync - only for testing)
   String getFilePath(String stockCode, KLineDataType dataType, int year, int month) {
     final baseDirectory = _getBaseSyncDirectory();
+    final yearMonth = '$year${month.toString().padLeft(2, '0')}';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
+    return '$baseDirectory/$fileName';
+  }
+
+  /// Get the file path for a monthly K-line file (async - for production)
+  Future<String> getFilePathAsync(String stockCode, KLineDataType dataType, int year, int month) async {
+    final baseDirectory = await _getBaseDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
     return '$baseDirectory/$fileName';

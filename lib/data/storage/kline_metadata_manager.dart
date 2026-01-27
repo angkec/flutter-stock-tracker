@@ -134,7 +134,7 @@ class KLineMetadataManager {
     }
 
     // Prepare metadata before transaction (avoid I/O inside transaction)
-    final metadataMap = <String, ({DateTime startDate, DateTime endDate, int recordCount, int fileSize})>{};
+    final metadataMap = <String, ({DateTime startDate, DateTime endDate, int recordCount, int fileSize, String filePath})>{};
     for (final yearMonth in monthsUpdated) {
       final year = int.parse(yearMonth.substring(0, 4));
       final month = int.parse(yearMonth.substring(4, 6));
@@ -149,7 +149,7 @@ class KLineMetadataManager {
       final endDate = monthBars.last.datetime;
 
       try {
-        final filePath = _fileStorage.getFilePath(stockCode, dataType, year, month);
+        final filePath = await _fileStorage.getFilePathAsync(stockCode, dataType, year, month);
         final file = File(filePath);
         final fileSize = await file.length();
 
@@ -158,6 +158,7 @@ class KLineMetadataManager {
           endDate: endDate,
           recordCount: monthBars.length,
           fileSize: fileSize,
+          filePath: filePath,
         );
       } catch (e) {
         print('Failed to get file size for $stockCode $yearMonth: $e');
@@ -173,13 +174,6 @@ class KLineMetadataManager {
         final yearMonth = entry.key;
         final metadata = entry.value;
 
-        final filePath = _fileStorage.getFilePath(
-          stockCode,
-          dataType,
-          int.parse(yearMonth.substring(0, 4)),
-          int.parse(yearMonth.substring(4, 6)),
-        );
-
         // Insert or update metadata
         await txn.insert(
           'kline_files',
@@ -187,7 +181,7 @@ class KLineMetadataManager {
             'stock_code': stockCode,
             'data_type': dataType.name,
             'year_month': yearMonth,
-            'file_path': filePath,
+            'file_path': metadata.filePath,
             'start_date': metadata.startDate.millisecondsSinceEpoch,
             'end_date': metadata.endDate.millisecondsSinceEpoch,
             'record_count': metadata.recordCount,
