@@ -5,6 +5,80 @@ import 'package:stock_rtwatcher/models/industry_rank.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 
+/// Isolate 中计算行业排名的参数
+class _RankComputeParams {
+  /// 每股票每日涨跌量: stockCode -> dateKey -> [up, down]
+  final Map<String, Map<String, List<double>>> stockVolumes;
+  /// 股票行业映射: stockCode -> industry
+  final Map<String, String> stockIndustries;
+  /// 要计算的日期列表
+  final List<String> dates;
+
+  _RankComputeParams({
+    required this.stockVolumes,
+    required this.stockIndustries,
+    required this.dates,
+  });
+}
+
+/// Isolate 中计算行业排名
+Map<String, Map<String, Map<String, dynamic>>> _computeRankInIsolate(_RankComputeParams params) {
+  final result = <String, Map<String, Map<String, dynamic>>>{};
+
+  for (final dateKey in params.dates) {
+    // 按行业汇总涨跌量
+    final industryVolumes = <String, List<double>>{};
+
+    for (final entry in params.stockIndustries.entries) {
+      final stockCode = entry.key;
+      final industry = entry.value;
+
+      final volumes = params.stockVolumes[stockCode]?[dateKey];
+      if (volumes == null) continue;
+      final up = volumes[0];
+      final down = volumes[1];
+      if (up <= 0 && down <= 0) continue;
+
+      final current = industryVolumes[industry];
+      if (current == null) {
+        industryVolumes[industry] = [up, down];
+      } else {
+        industryVolumes[industry] = [current[0] + up, current[1] + down];
+      }
+    }
+
+    // 计算聚合量比并排名
+    final industryRatios = <String, double>{};
+    for (final entry in industryVolumes.entries) {
+      final down = entry.value[1];
+      if (down > 0) {
+        final ratio = entry.value[0] / down;
+        if (ratio <= 1000 && ratio >= 0.001) {
+          industryRatios[entry.key] = ratio;
+        }
+      }
+    }
+
+    final sorted = industryRatios.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final dayRanks = <String, Map<String, dynamic>>{};
+    for (var i = 0; i < sorted.length; i++) {
+      dayRanks[sorted[i].key] = {
+        'date': dateKey,
+        'ratio': sorted[i].value,
+        'rank': i + 1,
+      };
+    }
+
+    if (dayRanks.isNotEmpty) {
+      result[dateKey] = dayRanks;
+    }
+  }
+
+  return result;
+}
+
 /// 行业排名服务
 /// 计算每日行业聚合量比（Σ涨量/Σ跌量）并排名
 class IndustryRankService extends ChangeNotifier {
@@ -20,6 +94,9 @@ class IndustryRankService extends ChangeNotifier {
 
   /// 配置
   IndustryRankConfig _config = const IndustryRankConfig();
+
+  /// 计算时使用的K线数据版本
+  int _calculatedFromVersion = -1;
 
   final bool _isLoading = false;
 
@@ -150,8 +227,9 @@ class IndustryRankService extends ChangeNotifier {
       final jsonStr = prefs.getString(_storageKey);
       if (jsonStr != null) {
         final json = jsonDecode(jsonStr) as Map<String, dynamic>;
-        _historyData = _deserializeHistory(json);
+        _deserializeHistory(json);
         _cleanupOldData();
+        debugPrint('[IndustryRank] 缓存加载完成, calculatedFromVersion=$_calculatedFromVersion, ${_historyData.length} 天');
       }
 
       // 加载配置
@@ -191,61 +269,63 @@ class IndustryRankService extends ChangeNotifier {
   /// 从历史K线数据重新计算排名
   Future<void> recalculateFromKlineData(
     HistoricalKlineService klineService,
-    List<StockMonitorData> stocks,
-  ) async {
+    List<StockMonitorData> stocks, {
+    bool force = false,
+  }) async {
     if (stocks.isEmpty) return;
 
-    // 收集所有日期
-    final allDates = <String>{};
-    for (final stock in stocks) {
-      final volumes = klineService.getDailyVolumes(stock.stock.code);
-      allDates.addAll(volumes.keys);
+    // 检查是否需要重算
+    final currentVersion = klineService.dataVersion;
+    if (!force && _calculatedFromVersion == currentVersion && _historyData.isNotEmpty) {
+      debugPrint('[IndustryRank] 数据版本未变 (v$currentVersion)，跳过重算');
+      return;
     }
 
-    // 计算每个日期的行业排名
-    final newHistory = <String, Map<String, IndustryRankRecord>>{};
+    debugPrint('[IndustryRank] 开始重算排名, ${stocks.length} 只股票, 数据版本 v$currentVersion');
 
-    for (final dateKey in allDates) {
-      // 按行业汇总涨跌量
-      final industryVolumes = <String, ({double up, double down})>{};
+    // 准备传给 isolate 的数据
+    final stockVolumes = <String, Map<String, List<double>>>{};
+    final stockIndustries = <String, String>{};
 
-      for (final stock in stocks) {
-        final industry = stock.industry;
-        if (industry == null || industry.isEmpty) continue;
+    for (final stock in stocks) {
+      final industry = stock.industry;
+      if (industry == null || industry.isEmpty) continue;
 
-        final volumes = klineService.getDailyVolumes(stock.stock.code);
-        final vol = volumes[dateKey];
-        if (vol == null) continue;
-        if (vol.up <= 0 && vol.down <= 0) continue;
+      stockIndustries[stock.stock.code] = industry;
 
-        final current = industryVolumes[industry];
-        industryVolumes[industry] = (
-          up: (current?.up ?? 0) + vol.up,
-          down: (current?.down ?? 0) + vol.down,
+      final volumes = klineService.getDailyVolumes(stock.stock.code);
+      if (volumes.isNotEmpty) {
+        stockVolumes[stock.stock.code] = volumes.map(
+          (dateKey, vol) => MapEntry(dateKey, [vol.up, vol.down]),
         );
       }
+    }
 
-      // 计算聚合量比并排名
-      final industryRatios = <String, double>{};
-      for (final entry in industryVolumes.entries) {
-        if (entry.value.down > 0) {
-          final ratio = entry.value.up / entry.value.down;
-          if (ratio <= StockService.maxValidRatio &&
-              ratio >= 1 / StockService.maxValidRatio) {
-            industryRatios[entry.key] = ratio;
-          }
-        }
-      }
+    final dates = klineService.completeDates.toList();
+    debugPrint('[IndustryRank] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期');
 
-      final sorted = industryRatios.entries.toList()
-        ..sort((a, b) => b.value.compareTo(a.value));
+    // 在 isolate 中计算
+    final computeResult = await compute(
+      _computeRankInIsolate,
+      _RankComputeParams(
+        stockVolumes: stockVolumes,
+        stockIndustries: stockIndustries,
+        dates: dates,
+      ),
+    );
 
+    // 转换结果
+    final newHistory = <String, Map<String, IndustryRankRecord>>{};
+    for (final dateEntry in computeResult.entries) {
+      final dateKey = dateEntry.key;
       final dayRanks = <String, IndustryRankRecord>{};
-      for (var i = 0; i < sorted.length; i++) {
-        dayRanks[sorted[i].key] = IndustryRankRecord(
-          date: dateKey,
-          ratio: sorted[i].value,
-          rank: i + 1,
+
+      for (final industryEntry in dateEntry.value.entries) {
+        final data = industryEntry.value;
+        dayRanks[industryEntry.key] = IndustryRankRecord(
+          date: data['date'] as String,
+          ratio: data['ratio'] as double,
+          rank: data['rank'] as int,
         );
       }
 
@@ -254,9 +334,13 @@ class IndustryRankService extends ChangeNotifier {
       }
     }
 
+    debugPrint('[IndustryRank] 计算完成, ${newHistory.length} 天有排名数据');
+
     _historyData = newHistory;
+    _calculatedFromVersion = currentVersion;
     _cleanupOldData();
     await _save();
+    debugPrint('[IndustryRank] 保存完成 (基于数据版本 v$currentVersion)');
     notifyListeners();
   }
 
@@ -317,19 +401,23 @@ class IndustryRankService extends ChangeNotifier {
         (industry, record) => MapEntry(industry, record.toJson()),
       );
     }
-    return {'version': 1, 'data': data};
+    return {
+      'version': 1,
+      'calculatedFromVersion': _calculatedFromVersion,
+      'data': data,
+    };
   }
 
-  Map<String, Map<String, IndustryRankRecord>> _deserializeHistory(
-    Map<String, dynamic> json,
-  ) {
-    final result = <String, Map<String, IndustryRankRecord>>{};
+  void _deserializeHistory(Map<String, dynamic> json) {
     final version = json['version'] as int? ?? 0;
-    if (version != 1) return result;
+    if (version != 1) return;
+
+    _calculatedFromVersion = json['calculatedFromVersion'] as int? ?? -1;
 
     final data = json['data'] as Map<String, dynamic>?;
-    if (data == null) return result;
+    if (data == null) return;
 
+    final result = <String, Map<String, IndustryRankRecord>>{};
     for (final dateEntry in data.entries) {
       final dayData = dateEntry.value as Map<String, dynamic>;
       final dayRanks = <String, IndustryRankRecord>{};
@@ -346,6 +434,6 @@ class IndustryRankService extends ChangeNotifier {
         result[dateEntry.key] = dayRanks;
       }
     }
-    return result;
+    _historyData = result;
   }
 }

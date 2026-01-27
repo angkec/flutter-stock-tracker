@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/config/debug_config.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
@@ -234,9 +236,7 @@ class DataManagementScreen extends StatelessWidget {
     final klineService = context.read<HistoricalKlineService>();
     final marketProvider = context.read<MarketDataProvider>();
     final pool = context.read<TdxPool>();
-    // ignore: unused_local_variable
     final trendService = context.read<IndustryTrendService>();
-    // ignore: unused_local_variable
     final rankService = context.read<IndustryRankService>();
 
     if (marketProvider.allData.isEmpty) {
@@ -246,18 +246,58 @@ class DataManagementScreen extends StatelessWidget {
       return;
     }
 
-    final stocks = marketProvider.allData.map((d) => d.stock).toList();
-    await klineService.fetchMissingDays(pool, stocks, null);
+    // 显示进度对话框
+    final progressNotifier = ValueNotifier<({int current, int total, String stage})>(
+      (current: 0, total: 1, stage: '准备中...'),
+    );
 
-    // 拉取完成后，触发重算
-    if (context.mounted) {
-      await trendService.recalculateFromKlineData(klineService, marketProvider.allData);
-      await rankService.recalculateFromKlineData(klineService, marketProvider.allData);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ProgressDialog(progressNotifier: progressNotifier),
+    );
+
+    try {
+      var stocks = marketProvider.allData.map((d) => d.stock).toList();
+
+      // Debug 模式下限制股票数量
+      stocks = DebugConfig.limitStocks(stocks);
+
+      debugPrint('[DataManagement] 开始拉取历史数据, ${stocks.length} 只股票');
+      await klineService.fetchMissingDays(pool, stocks, (current, total, stage) {
+        final stageText = stage == 'fetch' ? '1/3 拉取K线数据' : '1/3 处理并保存K线...';
+        progressNotifier.value = (current: current, total: total, stage: stageText);
+      });
+      debugPrint('[DataManagement] K线数据已保存');
+
+      // K线数据已保存，以下是可选的后处理（失败不影响K线缓存）
       if (context.mounted) {
+        // 确保K线数据已加载到内存
+        if (!klineService.klineDataLoaded) {
+          debugPrint('[DataManagement] 加载K线数据到内存...');
+          progressNotifier.value = (current: 0, total: 1, stage: '加载K线数据...');
+          await klineService.loadKlineData();
+        }
+
+        debugPrint('[DataManagement] 开始计算行业趋势');
+        progressNotifier.value = (current: 0, total: 1, stage: '2/3 计算行业趋势...');
+        await trendService.recalculateFromKlineData(klineService, marketProvider.allData);
+        debugPrint('[DataManagement] 行业趋势计算完成');
+
+        debugPrint('[DataManagement] 开始计算行业排名');
+        progressNotifier.value = (current: 0, total: 1, stage: '3/3 计算行业排名...');
+        await rankService.recalculateFromKlineData(klineService, marketProvider.allData);
+        debugPrint('[DataManagement] 行业排名计算完成');
+      }
+    } finally {
+      // 关闭进度对话框
+      if (context.mounted) {
+        Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('历史数据已更新')),
         );
       }
+      progressNotifier.dispose();
     }
   }
 
@@ -303,6 +343,44 @@ class DataManagementScreen extends StatelessWidget {
             child: const Text('确定'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ProgressDialog extends StatelessWidget {
+  final ValueNotifier<({int current, int total, String stage})> progressNotifier;
+
+  const _ProgressDialog({required this.progressNotifier});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('拉取历史数据'),
+      content: ValueListenableBuilder<({int current, int total, String stage})>(
+        valueListenable: progressNotifier,
+        builder: (context, progress, _) {
+          final isProcessing = progress.stage.contains('处理');
+          final percent = progress.total > 0
+              ? (progress.current / progress.total * 100).toStringAsFixed(1)
+              : '0.0';
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(
+                value: isProcessing ? null : (progress.total > 0 ? progress.current / progress.total : null),
+              ),
+              const SizedBox(height: 16),
+              Text(progress.stage),
+              const SizedBox(height: 8),
+              if (!isProcessing)
+                Text(
+                  '${progress.current} / ${progress.total} ($percent%)',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+            ],
+          );
+        },
       ),
     );
   }

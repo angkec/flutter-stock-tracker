@@ -5,6 +5,73 @@ import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 
+/// Isolate 中计算行业趋势的参数
+class _TrendComputeParams {
+  /// 每股票每日涨跌量: stockCode -> dateKey -> [up, down]
+  final Map<String, Map<String, List<double>>> stockVolumes;
+  /// 股票行业映射: stockCode -> industry
+  final Map<String, String> stockIndustries;
+  /// 要计算的日期列表
+  final List<String> dates;
+
+  _TrendComputeParams({
+    required this.stockVolumes,
+    required this.stockIndustries,
+    required this.dates,
+  });
+}
+
+/// Isolate 中计算行业趋势
+Map<String, List<Map<String, dynamic>>> _computeTrendInIsolate(_TrendComputeParams params) {
+  final result = <String, List<Map<String, dynamic>>>{};
+
+  // 按行业分组股票
+  final industryStocks = <String, List<String>>{};
+  for (final entry in params.stockIndustries.entries) {
+    industryStocks.putIfAbsent(entry.value, () => []).add(entry.key);
+  }
+
+  // 计算每个行业每天的趋势
+  for (final industry in industryStocks.keys) {
+    final stockCodes = industryStocks[industry]!;
+    final points = <Map<String, dynamic>>[];
+
+    for (final dateKey in params.dates) {
+      var ratioAboveCount = 0;
+      var totalStocks = 0;
+
+      for (final stockCode in stockCodes) {
+        final volumes = params.stockVolumes[stockCode]?[dateKey];
+        if (volumes == null) continue;
+        final up = volumes[0];
+        final down = volumes[1];
+        if (down <= 0) continue;
+
+        totalStocks++;
+        final ratio = up / down;
+        if (ratio > 1.0 && ratio <= 1000) {
+          ratioAboveCount++;
+        }
+      }
+
+      if (totalStocks > 0) {
+        points.add({
+          'date': dateKey,
+          'ratioAbovePercent': (ratioAboveCount / totalStocks) * 100,
+          'totalStocks': totalStocks,
+          'ratioAboveCount': ratioAboveCount,
+        });
+      }
+    }
+
+    if (points.isNotEmpty) {
+      result[industry] = points;
+    }
+  }
+
+  return result;
+}
+
 /// 行业趋势服务
 /// 计算每个行业的每日分钟涨跌量比趋势
 class IndustryTrendService extends ChangeNotifier {
@@ -14,6 +81,9 @@ class IndustryTrendService extends ChangeNotifier {
   Map<String, IndustryTrendData> _trendData = {};
   final bool _isLoading = false;
   int _missingDays = 0;
+
+  /// 计算时使用的K线数据版本
+  int _calculatedFromVersion = -1;
 
   /// 按行业名索引的趋势数据
   Map<String, IndustryTrendData> get trendData => Map.unmodifiable(_trendData);
@@ -40,74 +110,77 @@ class IndustryTrendService extends ChangeNotifier {
   /// 从历史K线数据重新计算趋势
   Future<void> recalculateFromKlineData(
     HistoricalKlineService klineService,
-    List<StockMonitorData> stocks,
-  ) async {
+    List<StockMonitorData> stocks, {
+    bool force = false,
+  }) async {
     if (stocks.isEmpty) return;
 
-    // 按行业分组股票
-    final industryStocks = <String, List<StockMonitorData>>{};
+    // 检查是否需要重算
+    final currentVersion = klineService.dataVersion;
+    if (!force && _calculatedFromVersion == currentVersion && _trendData.isNotEmpty) {
+      debugPrint('[IndustryTrend] 数据版本未变 (v$currentVersion)，跳过重算');
+      return;
+    }
+
+    debugPrint('[IndustryTrend] 开始重算趋势, ${stocks.length} 只股票, 数据版本 v$currentVersion');
+
+    // 准备传给 isolate 的数据（在主线程完成，避免传输大量 K 线数据）
+    final stockVolumes = <String, Map<String, List<double>>>{};
+    final stockIndustries = <String, String>{};
+
     for (final stock in stocks) {
       final industry = stock.industry;
-      if (industry != null && industry.isNotEmpty) {
-        industryStocks.putIfAbsent(industry, () => []).add(stock);
-      }
-    }
+      if (industry == null || industry.isEmpty) continue;
 
-    // 收集所有日期
-    final allDates = <String>{};
-    for (final stock in stocks) {
+      stockIndustries[stock.stock.code] = industry;
+
+      // 获取这只股票的每日涨跌量
       final volumes = klineService.getDailyVolumes(stock.stock.code);
-      allDates.addAll(volumes.keys);
-    }
-
-    // 计算每个行业每天的趋势
-    final newTrendData = <String, IndustryTrendData>{};
-
-    for (final entry in industryStocks.entries) {
-      final industry = entry.key;
-      final industryStockList = entry.value;
-      final points = <DailyRatioPoint>[];
-
-      for (final dateKey in allDates) {
-        var ratioAboveCount = 0;
-        var totalStocks = 0;
-
-        for (final stock in industryStockList) {
-          final volumes = klineService.getDailyVolumes(stock.stock.code);
-          final vol = volumes[dateKey];
-          if (vol == null) continue;
-          if (vol.down <= 0) continue;
-
-          totalStocks++;
-          final ratio = vol.up / vol.down;
-          if (ratio > 1.0 && ratio <= StockService.maxValidRatio) {
-            ratioAboveCount++;
-          }
-        }
-
-        if (totalStocks > 0) {
-          final ratioAbovePercent = (ratioAboveCount / totalStocks) * 100;
-          points.add(DailyRatioPoint(
-            date: HistoricalKlineService.parseDate(dateKey),
-            ratioAbovePercent: ratioAbovePercent,
-            totalStocks: totalStocks,
-            ratioAboveCount: ratioAboveCount,
-          ));
-        }
-      }
-
-      if (points.isNotEmpty) {
-        points.sort((a, b) => a.date.compareTo(b.date));
-        newTrendData[industry] = IndustryTrendData(
-          industry: industry,
-          points: points,
+      if (volumes.isNotEmpty) {
+        stockVolumes[stock.stock.code] = volumes.map(
+          (dateKey, vol) => MapEntry(dateKey, [vol.up, vol.down]),
         );
       }
     }
 
+    final dates = klineService.completeDates.toList();
+    debugPrint('[IndustryTrend] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期');
+
+    // 在 isolate 中计算
+    final computeResult = await compute(
+      _computeTrendInIsolate,
+      _TrendComputeParams(
+        stockVolumes: stockVolumes,
+        stockIndustries: stockIndustries,
+        dates: dates,
+      ),
+    );
+
+    // 转换结果
+    final newTrendData = <String, IndustryTrendData>{};
+    for (final entry in computeResult.entries) {
+      final industry = entry.key;
+      final points = entry.value.map((p) => DailyRatioPoint(
+        date: HistoricalKlineService.parseDate(p['date'] as String),
+        ratioAbovePercent: p['ratioAbovePercent'] as double,
+        totalStocks: p['totalStocks'] as int,
+        ratioAboveCount: p['ratioAboveCount'] as int,
+      )).toList()
+        ..sort((a, b) => a.date.compareTo(b.date));
+
+      newTrendData[industry] = IndustryTrendData(
+        industry: industry,
+        points: points,
+      );
+    }
+
+    debugPrint('[IndustryTrend] 计算完成, ${newTrendData.length} 个行业有数据');
+
     _trendData = newTrendData;
     _missingDays = 0;
+    _calculatedFromVersion = currentVersion;
     await _save();
+    debugPrint('[IndustryTrend] 保存完成 (基于数据版本 v$currentVersion)');
     notifyListeners();
   }
 
@@ -163,8 +236,9 @@ class IndustryTrendService extends ChangeNotifier {
       final jsonStr = prefs.getString(_storageKey);
       if (jsonStr != null) {
         final json = jsonDecode(jsonStr) as Map<String, dynamic>;
-        _trendData = _deserializeCache(json);
+        _deserializeCache(json);
         _cleanupOldData();
+        debugPrint('[IndustryTrend] 缓存加载完成, calculatedFromVersion=$_calculatedFromVersion, ${_trendData.length} 个行业');
         notifyListeners();
       }
     } catch (e) {
@@ -275,24 +349,26 @@ class IndustryTrendService extends ChangeNotifier {
     }
     return {
       'version': 1,
+      'calculatedFromVersion': _calculatedFromVersion,
       'data': data,
       'timestamp': DateTime.now().toIso8601String(),
     };
   }
 
   /// 反序列化缓存数据
-  Map<String, IndustryTrendData> _deserializeCache(Map<String, dynamic> json) {
-    final result = <String, IndustryTrendData>{};
-
+  void _deserializeCache(Map<String, dynamic> json) {
     // 检查版本
     final version = json['version'] as int? ?? 0;
     if (version != 1) {
-      return result; // 版本不兼容，返回空数据
+      return; // 版本不兼容
     }
 
-    final data = json['data'] as Map<String, dynamic>?;
-    if (data == null) return result;
+    _calculatedFromVersion = json['calculatedFromVersion'] as int? ?? -1;
 
+    final data = json['data'] as Map<String, dynamic>?;
+    if (data == null) return;
+
+    final result = <String, IndustryTrendData>{};
     for (final entry in data.entries) {
       try {
         result[entry.key] = IndustryTrendData.fromJson(entry.value as Map<String, dynamic>);
@@ -300,7 +376,6 @@ class IndustryTrendService extends ChangeNotifier {
         debugPrint('Failed to deserialize industry trend data for ${entry.key}: $e');
       }
     }
-
-    return result;
+    _trendData = result;
   }
 }

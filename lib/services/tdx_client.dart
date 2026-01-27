@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:archive/archive.dart';
+import 'package:flutter/foundation.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
@@ -599,6 +600,8 @@ class TdxClient {
   /// Default DateTime used when parsing fails
   static final DateTime _defaultDateTime = DateTime(2000, 1, 1);
 
+  static int _parseDateTimeDebugCount = 0;
+
   /// 解析日期时间
   /// For minute bars (category < 4 or 7 or 8): yearOrDate contains date, minOrTime contains minutes
   /// For day bars (category >= 4 except 7,8): yearOrDate contains year*10000+month*100+day
@@ -618,6 +621,12 @@ class TdxClient {
       // minOrTime is minutes from midnight
       hour = minOrTime ~/ 60;
       minute = minOrTime % 60;
+
+      // Debug first 10 calls
+      if (_parseDateTimeDebugCount < 10) {
+        _parseDateTimeDebugCount++;
+        debugPrint('[TDX] parseDateTime #$_parseDateTimeDebugCount: yearOrDate=$yearOrDate minOrTime=$minOrTime -> $year-$month-$day $hour:$minute');
+      }
     } else {
       // Day bars: yearOrDate format is yyyymmdd
       year = yearOrDate ~/ 10000;

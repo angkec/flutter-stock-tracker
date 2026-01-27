@@ -265,9 +265,9 @@ class StockService {
     DateTime resultDate;
 
     if (useFallback) {
-      // 找到最近的有效日期（非今天）
+      // 找到最近的有效日期（排除今天和未来日期）
       final sortedDates = allDates.toList()..sort((a, b) => b.compareTo(a));
-      final fallbackDates = sortedDates.where((d) => d != todayKey).toList();
+      final fallbackDates = sortedDates.where((d) => d.compareTo(todayKey) < 0).toList();
       print('🔍 [batchGetMonitorData] sortedDates=${sortedDates.take(5)}, fallbackDates=${fallbackDates.take(5)}');
       developer.log('[batchGetMonitorData] sortedDates=${sortedDates.take(5)}, fallbackDates=${fallbackDates.take(5)}');
       if (fallbackDates.isEmpty) {

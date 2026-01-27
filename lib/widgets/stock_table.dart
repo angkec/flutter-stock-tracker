@@ -50,6 +50,9 @@ class StockTable extends StatelessWidget {
   /// 是否显示表头（用于外部固定表头的场景）
   final bool showHeader;
 
+  /// 是否优先显示突破回踩股票
+  final bool prioritizeBreakout;
+
   /// 底部内边距（用于避免被底部元素遮挡）
   final double bottomPadding;
 
@@ -64,6 +67,7 @@ class StockTable extends StatelessWidget {
     this.todayTrendData,
     this.showIndustry = true,
     this.showHeader = true,
+    this.prioritizeBreakout = true,
     this.bottomPadding = 0,
   });
 
@@ -160,7 +164,7 @@ class StockTable extends StatelessWidget {
     return _codeWidth + _nameWidth + _changeWidth + _ratioWidth + (showIndustry ? _industryWidth : 0);
   }
 
-  Widget _buildRow(BuildContext context, StockMonitorData data, int index) {
+  Widget _buildRow(BuildContext context, StockMonitorData data, int index, List<StockMonitorData> displayStocks) {
     final ratioColor = data.ratio >= 1 ? upColor : downColor;
     final changeColor = data.changePercent >= 0 ? upColor : downColor;
     final isHighlighted = highlightCodes.contains(data.stock.code);
@@ -169,7 +173,7 @@ class StockTable extends StatelessWidget {
       onLongPress: onLongPress != null ? () => onLongPress!(data) : null,
       onTap: () {
         // 构建股票列表用于左右滑动切换
-        final stockList = stocks.map((s) => s.stock).toList();
+        final stockList = displayStocks.map((s) => s.stock).toList();
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => StockDetailScreen(
@@ -239,6 +243,17 @@ class StockTable extends StatelessWidget {
                         fontSize: 13,
                       ),
                     ),
+                    // 多日回踩标记（突破+回踩）- 蓝色星号
+                    if (data.isBreakout)
+                      const TextSpan(
+                        text: '★',
+                        style: TextStyle(
+                          color: Colors.cyan,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                    // 单日回踩标记 - 红色星号
                     if (data.isPullback)
                       const TextSpan(
                         text: '*',
@@ -405,6 +420,17 @@ class StockTable extends StatelessWidget {
 
     final totalWidth = getTotalWidth(showIndustry: showIndustry);
 
+    // 优先显示突破回踩股票（保持组内相对顺序）
+    List<StockMonitorData> displayStocks;
+    if (prioritizeBreakout && stocks.any((s) => s.isBreakout)) {
+      displayStocks = [...stocks]..sort((a, b) {
+        if (a.isBreakout == b.isBreakout) return 0;
+        return a.isBreakout ? -1 : 1;
+      });
+    } else {
+      displayStocks = stocks;
+    }
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SizedBox(
@@ -416,9 +442,9 @@ class StockTable extends StatelessWidget {
               child: ListView.builder(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: EdgeInsets.only(bottom: bottomPadding),
-                itemCount: stocks.length,
+                itemCount: displayStocks.length,
                 itemExtent: _rowHeight,
-                itemBuilder: (context, index) => _buildRow(context, stocks[index], index),
+                itemBuilder: (context, index) => _buildRow(context, displayStocks[index], index, displayStocks),
               ),
             ),
           ],

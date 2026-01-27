@@ -52,12 +52,10 @@ class BreakoutService extends ChangeNotifier {
     }
   }
 
-  /// 检测是否符合放量突破后回踩
+  /// 检测是否符合放量突破后回踩（纯日K结构检测，与 findBreakoutDays 逻辑一致）
   /// [dailyBars] 需要最近N天日K数据（按时间升序，最早的在前）
-  /// [minuteRatio] 今日分钟涨跌量比
-  /// [todayChangePercent] 今日涨跌幅（用于过滤暴涨）
   /// 返回 true 表示符合条件
-  bool isBreakoutPullback(List<KLine> dailyBars, double minuteRatio, [double? todayChangePercent]) {
+  bool isBreakoutPullback(List<KLine> dailyBars) {
     // 需要至少 5 + maxPullbackDays + 1 根K线
     // 5 for avg volume + max pullback days + breakout day
     final minBars = 5 + _config.maxPullbackDays + 1;
@@ -137,84 +135,9 @@ class BreakoutService extends ChangeNotifier {
         }
       }
 
-      // 6. 验证回踩期间（从突破日+1到今日）
-      final pullbackBars = dailyBars.sublist(breakoutIdx + 1);
-      final pullbackDays = pullbackBars.length;
-
-      // 回踩天数必须在 [minPullbackDays, maxPullbackDays] 范围内
-      if (pullbackDays < _config.minPullbackDays ||
-          pullbackDays > _config.maxPullbackDays) {
+      // 6. 验证回踩（复用 _hasValidPullbackAfter 逻辑，与 findBreakoutDays 一致）
+      if (!_hasValidPullbackAfter(dailyBars, breakoutIdx, breakoutBar)) {
         continue;
-      }
-
-      // 7. 计算总跌幅：今日收盘价相对参考价的跌幅
-      final todayBar = dailyBars.last;
-      final referencePrice = _config.dropReferencePoint == DropReferencePoint.breakoutClose
-          ? breakoutBar.close
-          : breakoutBar.high;
-      final totalDrop = (referencePrice - todayBar.close) / referencePrice;
-      if (totalDrop > _config.maxTotalDrop) {
-        continue;
-      }
-
-      // 7a. 最大单日跌幅检查（回踩阶段单天相对于参考点的最大跌幅）
-      if (_config.maxSingleDayDrop > 0) {
-        bool exceedsSingleDayDrop = false;
-        for (final bar in pullbackBars) {
-          final dayDrop = (referencePrice - bar.low) / referencePrice;
-          if (dayDrop > _config.maxSingleDayDrop) {
-            exceedsSingleDayDrop = true;
-            break;
-          }
-        }
-        if (exceedsSingleDayDrop) {
-          continue;
-        }
-      }
-
-      // 7b. 最大单日涨幅检查（回踩阶段单天相对于参考点的最大涨幅）
-      if (_config.maxSingleDayGain > 0) {
-        bool exceedsSingleDayGain = false;
-        for (final bar in pullbackBars) {
-          final dayGain = (bar.high - referencePrice) / referencePrice;
-          if (dayGain > _config.maxSingleDayGain) {
-            exceedsSingleDayGain = true;
-            break;
-          }
-        }
-        if (exceedsSingleDayGain) {
-          continue;
-        }
-      }
-
-      // 7c. 最大总涨幅检查（回踩期间的最大涨幅）
-      if (_config.maxTotalGain > 0) {
-        final maxHigh = pullbackBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
-        final totalGain = (maxHigh - referencePrice) / referencePrice;
-        if (totalGain > _config.maxTotalGain) {
-          continue;
-        }
-      }
-
-      // 8. 平均量比：回踩期间平均成交量 / 突破日成交量 <= maxAvgVolumeRatio
-      final avgPullbackVolume =
-          pullbackBars.map((b) => b.volume).reduce((a, b) => a + b) /
-              pullbackDays;
-      final avgVolumeRatio = avgPullbackVolume / breakoutBar.volume;
-      if (avgVolumeRatio > _config.maxAvgVolumeRatio) {
-        continue;
-      }
-
-      // 9. 今日分钟量比 >= minMinuteRatio
-      if (minuteRatio < _config.minMinuteRatio) {
-        continue;
-      }
-
-      // 10. 过滤回踩后暴涨
-      if (_config.filterSurgeAfterPullback && todayChangePercent != null) {
-        if (todayChangePercent > _config.surgeThreshold) {
-          continue;
-        }
       }
 
       // 所有条件都满足
@@ -363,7 +286,7 @@ class BreakoutService extends ChangeNotifier {
       if (_config.maxSingleDayDrop > 0) {
         double maxDayDrop = 0;
         for (final bar in pullbackBars) {
-          final dayDrop = (referencePrice - bar.low) / referencePrice;
+          final dayDrop = (referencePrice - bar.close) / referencePrice;
           if (dayDrop > maxDayDrop) maxDayDrop = dayDrop;
         }
         singleDayDropCheck = DetectionItem(
@@ -378,7 +301,7 @@ class BreakoutService extends ChangeNotifier {
       if (_config.maxSingleDayGain > 0) {
         double maxDayGain = 0;
         for (final bar in pullbackBars) {
-          final dayGain = (bar.high - referencePrice) / referencePrice;
+          final dayGain = (bar.close - referencePrice) / referencePrice;
           if (dayGain > maxDayGain) maxDayGain = dayGain;
         }
         singleDayGainCheck = DetectionItem(
@@ -452,7 +375,7 @@ class BreakoutService extends ChangeNotifier {
     if (_config.maxSingleDayDrop > 0) {
       double maxDayDrop = 0;
       for (final bar in pullbackBars) {
-        final dayDrop = (referencePrice - bar.low) / referencePrice;
+        final dayDrop = (referencePrice - bar.close) / referencePrice;
         if (dayDrop > maxDayDrop) maxDayDrop = dayDrop;
       }
       singleDayDropCheck = DetectionItem(
@@ -466,7 +389,7 @@ class BreakoutService extends ChangeNotifier {
     if (_config.maxSingleDayGain > 0) {
       double maxDayGain = 0;
       for (final bar in pullbackBars) {
-        final dayGain = (bar.high - referencePrice) / referencePrice;
+        final dayGain = (bar.close - referencePrice) / referencePrice;
         if (dayGain > maxDayGain) maxDayGain = dayGain;
       }
       singleDayGainCheck = DetectionItem(
@@ -694,7 +617,7 @@ class BreakoutService extends ChangeNotifier {
       if (_config.maxSingleDayDrop > 0) {
         bool exceedsSingleDayDrop = false;
         for (final bar in pullbackBars) {
-          final dayDrop = (referencePrice - bar.low) / referencePrice;
+          final dayDrop = (referencePrice - bar.close) / referencePrice;
           if (dayDrop > _config.maxSingleDayDrop) {
             exceedsSingleDayDrop = true;
             break;
@@ -709,7 +632,7 @@ class BreakoutService extends ChangeNotifier {
       if (_config.maxSingleDayGain > 0) {
         bool exceedsSingleDayGain = false;
         for (final bar in pullbackBars) {
-          final dayGain = (bar.high - referencePrice) / referencePrice;
+          final dayGain = (bar.close - referencePrice) / referencePrice;
           if (dayGain > _config.maxSingleDayGain) {
             exceedsSingleDayGain = true;
             break;

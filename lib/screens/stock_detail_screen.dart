@@ -59,6 +59,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   String? _ratioError;
 
   ChartMode _chartMode = ChartMode.daily; // 默认显示日线
+  bool _isChartScaling = false; // K线图是否正在缩放
 
   // 当前显示的股票索引和股票
   late int _currentIndex;
@@ -289,30 +290,6 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     }
   }
 
-  /// 通过 PageController 切换页面（带动画，支持循环）
-  void _animateToStock(int index) {
-    if (_pageController == null || widget.stockList == null) return;
-
-    final length = widget.stockList!.length;
-    // 循环处理索引
-    final targetIndex = index < 0
-        ? length - 1
-        : (index >= length ? 0 : index);
-
-    // 跨越边界时直接跳转（无法平滑动画）
-    if ((index < 0 && _currentIndex == 0) ||
-        (index >= length && _currentIndex == length - 1)) {
-      _pageController!.jumpToPage(targetIndex);
-      _switchToStock(targetIndex);
-    } else {
-      _pageController!.animateToPage(
-        targetIndex,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
-    }
-  }
-
   /// 构建自选股切换按钮
   Widget _buildWatchlistToggle() {
     final watchlistService = context.watch<WatchlistService>();
@@ -375,67 +352,34 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         actions: [
           // 自选股切换按钮
           _buildWatchlistToggle(),
-          // 列表导航按钮
-          if (hasStockList) ...[
-            IconButton(
-              icon: const Icon(Icons.chevron_left),
-              onPressed: () => _animateToStock(_currentIndex - 1),
-              tooltip: '上一只',
-            ),
-            IconButton(
-              icon: const Icon(Icons.chevron_right),
-              onPressed: () => _animateToStock(_currentIndex + 1),
-              tooltip: '下一只',
-            ),
-          ],
         ],
       ),
       body: hasStockList
-          ? GestureDetector(
-              onHorizontalDragUpdate: (details) {
-                // 手动控制 PageView 跟随手指移动
-                _pageController?.position.moveTo(
-                  _pageController!.position.pixels - details.delta.dx,
-                );
-              },
-              onHorizontalDragEnd: (details) {
-                final velocity = details.primaryVelocity ?? 0;
-                if (velocity > 300) {
-                  _animateToStock(_currentIndex - 1);
-                } else if (velocity < -300) {
-                  _animateToStock(_currentIndex + 1);
-                } else {
-                  // 回弹到当前页
-                  _pageController?.animateToPage(
-                    _currentIndex,
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOut,
-                  );
+          ? PageView.builder(
+              controller: _pageController,
+              // 缩放时禁用 PageView 滑动
+              physics: _isChartScaling
+                  ? const NeverScrollableScrollPhysics()
+                  : null,
+              itemCount: widget.stockList!.length,
+              onPageChanged: (index) {
+                if (index != _currentIndex) {
+                  _switchToStock(index);
                 }
               },
-              child: PageView.builder(
-                controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: widget.stockList!.length,
-                onPageChanged: (index) {
-                  if (index != _currentIndex) {
-                    _switchToStock(index);
-                  }
-                },
-                itemBuilder: (context, index) {
-                  // 当前页显示完整内容
-                  if (index == _currentIndex) {
-                    return _buildBody();
-                  }
-                  // 相邻页显示占位
-                  return Center(
-                    child: Text(
-                      widget.stockList![index].name,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  );
-                },
-              ),
+              itemBuilder: (context, index) {
+                // 当前页显示完整内容
+                if (index == _currentIndex) {
+                  return _buildBody();
+                }
+                // 相邻页显示占位
+                return Center(
+                  child: Text(
+                    widget.stockList![index].name,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                );
+              },
             )
           : _buildBody(),
     );
@@ -506,31 +450,24 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Flexible(
-                child: Text(
-                  _chartMode == ChartMode.minute ? '分时图' : 'K 线图',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                ),
+          Center(
+            child: SegmentedButton<ChartMode>(
+              segments: const [
+                ButtonSegment(value: ChartMode.minute, label: Text('分时')),
+                ButtonSegment(value: ChartMode.daily, label: Text('日线')),
+                ButtonSegment(value: ChartMode.weekly, label: Text('周线')),
+              ],
+              selected: {_chartMode},
+              onSelectionChanged: (selected) {
+                setState(() => _chartMode = selected.first);
+              },
+              showSelectedIcon: false,
+              style: const ButtonStyle(
+                visualDensity: VisualDensity.compact,
               ),
-              const SizedBox(width: 8),
-              SegmentedButton<ChartMode>(
-                segments: const [
-                  ButtonSegment(value: ChartMode.minute, label: Text('分时')),
-                  ButtonSegment(value: ChartMode.daily, label: Text('日线')),
-                  ButtonSegment(value: ChartMode.weekly, label: Text('周线')),
-                ],
-                selected: {_chartMode},
-                onSelectionChanged: (selected) {
-                  setState(() => _chartMode = selected.first);
-                },
-              ),
-            ],
+            ),
           ),
           const SizedBox(height: 12),
           _buildChart(),
@@ -629,6 +566,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       getDetectionResult: _chartMode == ChartMode.daily
           ? (index) => breakoutService.getDetectionResult(_dailyBars, index)
           : null,
+      onScaling: (isScaling) {
+        setState(() => _isChartScaling = isScaling);
+      },
     );
   }
 

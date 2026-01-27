@@ -11,6 +11,8 @@ import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/data_freshness.dart';
+import 'package:stock_rtwatcher/data/models/data_updated_event.dart';
+import 'package:stock_rtwatcher/data/models/fetch_result.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -23,6 +25,12 @@ class MockTdxClient extends TdxClient {
   bool disconnectCalled = false;
   bool shouldConnectSucceed = true;
   bool mockIsConnected = false;
+
+  // K线数据支持
+  Map<String, List<KLine>>? barsToReturn; // key: "${market}_${code}_${category}"
+  Exception? barsExceptionToThrow;
+  Map<String, Exception>? barsExceptionsByStock; // 每只股票独立的异常
+  List<({int market, String code, int category, int start, int count})> barRequests = [];
 
   @override
   bool get isConnected => mockIsConnected;
@@ -49,6 +57,48 @@ class MockTdxClient extends TdxClient {
       throw exceptionToThrow!;
     }
     return quotesToReturn ?? [];
+  }
+
+  @override
+  Future<List<KLine>> getSecurityBars({
+    required int market,
+    required String code,
+    required int category,
+    required int start,
+    required int count,
+  }) async {
+    // 记录请求
+    barRequests.add((market: market, code: code, category: category, start: start, count: count));
+
+    // 检查全局异常
+    if (barsExceptionToThrow != null) {
+      throw barsExceptionToThrow!;
+    }
+
+    // 检查针对特定股票的异常
+    if (barsExceptionsByStock != null && barsExceptionsByStock!.containsKey(code)) {
+      throw barsExceptionsByStock![code]!;
+    }
+
+    // 返回预设数据
+    final key = '${market}_${code}_$category';
+    if (barsToReturn != null && barsToReturn!.containsKey(key)) {
+      final allBars = barsToReturn![key]!;
+      // 模拟分页：从 start 开始取 count 条
+      // start=0 表示最新，所以从末尾往前取
+      final totalBars = allBars.length;
+      if (start >= totalBars) return [];
+      final endIndex = totalBars - start;
+      final startIndex = (endIndex - count).clamp(0, totalBars);
+      return allBars.sublist(startIndex, endIndex);
+    }
+
+    return [];
+  }
+
+  /// 清除请求记录
+  void clearBarRequests() {
+    barRequests.clear();
   }
 }
 
@@ -552,6 +602,490 @@ void main() {
 
       // 不应该调用 autoConnect
       expect(mockTdxClient.connectCalled, isFalse);
+    });
+  });
+
+  group('MarketDataRepository - fetchMissingData', () {
+    late MarketDataRepository repository;
+    late MockTdxClient mockTdxClient;
+    late KLineMetadataManager manager;
+    late MarketDatabase database;
+    late KLineFileStorage fileStorage;
+    late Directory testDir;
+
+    setUp(() async {
+      // 创建临时测试目录
+      testDir = await Directory.systemTemp.createTemp('market_data_repo_fetch_test_');
+
+      // 初始化文件存储
+      fileStorage = KLineFileStorage();
+      fileStorage.setBaseDirPathForTesting(testDir.path);
+      await fileStorage.initialize();
+
+      // 初始化数据库
+      database = MarketDatabase();
+      await database.database;
+
+      // 创建元数据管理器
+      manager = KLineMetadataManager(
+        database: database,
+        fileStorage: fileStorage,
+      );
+
+      // 创建 mock TdxClient
+      mockTdxClient = MockTdxClient();
+
+      // 创建 repository
+      repository = MarketDataRepository(
+        metadataManager: manager,
+        tdxClient: mockTdxClient,
+      );
+    });
+
+    tearDown(() async {
+      await repository.dispose();
+
+      // 关闭数据库
+      try {
+        await database.close();
+      } catch (_) {}
+
+      // 重置单例
+      MarketDatabase.resetInstance();
+
+      // 删除测试目录
+      if (await testDir.exists()) {
+        await testDir.delete(recursive: true);
+      }
+
+      // 删除测试数据库文件
+      try {
+        final dbPath = await getDatabasesPath();
+        final path = '$dbPath/market_data.db';
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    });
+
+    /// 生成测试用的K线数据
+    List<KLine> generateTestKlines({
+      required DateTime startDate,
+      required int count,
+      required bool isMinuteData,
+    }) {
+      final klines = <KLine>[];
+      var currentTime = startDate;
+
+      for (var i = 0; i < count; i++) {
+        klines.add(KLine(
+          datetime: currentTime,
+          open: 10.0 + i * 0.1,
+          close: 10.0 + i * 0.1 + 0.05,
+          high: 10.0 + i * 0.1 + 0.1,
+          low: 10.0 + i * 0.1 - 0.05,
+          volume: 1000 + i * 10,
+          amount: 10000 + i * 100,
+        ));
+
+        if (isMinuteData) {
+          currentTime = currentTime.add(const Duration(minutes: 1));
+        } else {
+          currentTime = currentTime.add(const Duration(days: 1));
+        }
+      }
+
+      return klines;
+    }
+
+    test('should fetch missing data and save to storage', () async {
+      // 准备测试数据
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 生成 mock K线数据（5条1分钟数据）
+      final mockKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15, 9, 30),
+        count: 5,
+        isMinuteData: true,
+      );
+
+      // 设置 mock 返回数据（深市股票，market=0，1分钟=category 7）
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': mockKlines,
+      };
+
+      // 调用 fetchMissingData
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 验证结果
+      expect(result.totalStocks, equals(1));
+      expect(result.successCount, equals(1));
+      expect(result.failureCount, equals(0));
+      expect(result.totalRecords, greaterThan(0));
+      expect(result.errors, isEmpty);
+
+      // 验证数据已保存到存储
+      final savedKlines = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(savedKlines['000001'], isNotEmpty);
+      expect(savedKlines['000001']!.length, equals(5));
+    });
+
+    test('should report progress during fetch', () async {
+      // 准备测试数据
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 生成 mock K线数据
+      final mockKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15, 9, 30),
+        count: 5,
+        isMinuteData: true,
+      );
+
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': mockKlines,
+        '0_000002_7': mockKlines,
+        '1_600000_7': mockKlines,
+      };
+
+      // 跟踪进度回调
+      final progressCalls = <(int, int)>[];
+
+      // 调用 fetchMissingData
+      await repository.fetchMissingData(
+        stockCodes: ['000001', '000002', '600000'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+        onProgress: (current, total) {
+          progressCalls.add((current, total));
+        },
+      );
+
+      // 验证进度回调
+      expect(progressCalls, isNotEmpty);
+      expect(progressCalls.length, equals(3)); // 每只股票一次
+      expect(progressCalls[0], equals((1, 3)));
+      expect(progressCalls[1], equals((2, 3)));
+      expect(progressCalls[2], equals((3, 3)));
+    });
+
+    test('should emit DataUpdatedEvent after successful fetch', () async {
+      // 准备测试数据
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      final mockKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15, 9, 30),
+        count: 5,
+        isMinuteData: true,
+      );
+
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': mockKlines,
+      };
+
+      // 监听 dataUpdatedStream - 设置监听器在调用 fetchMissingData 之前
+      final events = <DataUpdatedEvent>[];
+      final subscription = repository.dataUpdatedStream.listen(events.add);
+
+      // 调用 fetchMissingData
+      await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 让事件循环处理一次（事件应该在 fetchMissingData 返回前已添加到流）
+      await Future.delayed(Duration.zero);
+
+      // 验证事件
+      expect(events, isNotEmpty);
+      expect(events.first.stockCodes, contains('000001'));
+      expect(events.first.dataType, equals(KLineDataType.oneMinute));
+      expect(events.first.dataVersion, greaterThan(0));
+
+      await subscription.cancel();
+    });
+
+    test('should emit DataFetching status during fetch', () async {
+      // 准备测试数据
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      final mockKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15, 9, 30),
+        count: 5,
+        isMinuteData: true,
+      );
+
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': mockKlines,
+      };
+
+      // 收集状态变化 - 设置监听器在调用 fetchMissingData 之前
+      final statusChanges = <DataStatus>[];
+      final subscription = repository.statusStream.listen(statusChanges.add);
+
+      // 调用 fetchMissingData
+      await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 让事件循环处理一次（状态应该在 fetchMissingData 返回前已添加到流）
+      await Future.delayed(Duration.zero);
+
+      // 验证状态变化：应该有 DataFetching 和 DataReady
+      expect(statusChanges.any((s) => s is DataFetching), isTrue);
+      expect(statusChanges.any((s) => s is DataReady), isTrue);
+
+      await subscription.cancel();
+    });
+
+    test('should handle errors per-stock without aborting', () async {
+      // 准备测试数据
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      final mockKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15, 9, 30),
+        count: 5,
+        isMinuteData: true,
+      );
+
+      // 设置：000001 成功，000002 失败
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': mockKlines,
+      };
+      mockTdxClient.barsExceptionsByStock = {
+        '000002': Exception('Network error for 000002'),
+      };
+
+      // 调用 fetchMissingData
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001', '000002'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 验证结果
+      expect(result.totalStocks, equals(2));
+      expect(result.successCount, equals(1));
+      expect(result.failureCount, equals(1));
+      expect(result.errors.containsKey('000002'), isTrue);
+
+      // 验证成功的股票数据已保存
+      final savedKlines = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(savedKlines['000001'], isNotEmpty);
+    });
+
+    test('should handle connection failure', () async {
+      // 设置连接失败
+      mockTdxClient.shouldConnectSucceed = false;
+
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 调用 fetchMissingData
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 验证返回失败结果
+      expect(result.totalStocks, equals(1));
+      expect(result.successCount, equals(0));
+      expect(result.failureCount, equals(1));
+    });
+
+    test('should map data type to correct TDX category', () async {
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 16),
+      );
+
+      // 测试1分钟数据
+      final minuteKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15, 9, 30),
+        count: 5,
+        isMinuteData: true,
+      );
+
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': minuteKlines,  // category 7 = 1分钟
+      };
+
+      await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 验证请求使用了正确的 category
+      expect(mockTdxClient.barRequests.isNotEmpty, isTrue);
+      expect(mockTdxClient.barRequests.first.category, equals(7)); // 1分钟
+
+      // 清除请求记录
+      mockTdxClient.clearBarRequests();
+
+      // 测试日线数据
+      final dailyKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15),
+        count: 5,
+        isMinuteData: false,
+      );
+
+      mockTdxClient.barsToReturn = {
+        '0_000002_4': dailyKlines,  // category 4 = 日线
+      };
+
+      await repository.fetchMissingData(
+        stockCodes: ['000002'],
+        dateRange: dateRange,
+        dataType: KLineDataType.daily,
+      );
+
+      expect(mockTdxClient.barRequests.isNotEmpty, isTrue);
+      expect(mockTdxClient.barRequests.first.category, equals(4)); // 日线
+    });
+
+    test('should invalidate cache for updated stocks', () async {
+      // 先手动添加一些缓存数据
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 首先保存一些旧数据
+      final oldKlines = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: oldKlines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 加载以填充缓存
+      final cachedData1 = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(cachedData1['000001']!.length, equals(1));
+
+      // 准备新数据
+      final newKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15, 9, 31),
+        count: 3,
+        isMinuteData: true,
+      );
+
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': newKlines,
+      };
+
+      // 获取新数据
+      await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 再次加载，应该得到更新后的数据
+      final cachedData2 = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 数据应该已更新（旧数据 + 新数据去重）
+      expect(cachedData2['000001']!.length, greaterThan(1));
+    });
+
+    test('should return correct FetchResult duration', () async {
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      final mockKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15, 9, 30),
+        count: 5,
+        isMinuteData: true,
+      );
+
+      mockTdxClient.barsToReturn = {
+        '0_000001_7': mockKlines,
+      };
+
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 验证 duration 是正数
+      expect(result.duration, isA<Duration>());
+      expect(result.duration.inMicroseconds, greaterThanOrEqualTo(0));
+    });
+
+    test('should handle empty stock codes list', () async {
+      final dateRange = DateRange(
+        DateTime(2024, 1, 15),
+        DateTime(2024, 1, 15, 9, 35),
+      );
+
+      final result = await repository.fetchMissingData(
+        stockCodes: [],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(result.totalStocks, equals(0));
+      expect(result.successCount, equals(0));
+      expect(result.failureCount, equals(0));
+      expect(result.totalRecords, equals(0));
     });
   });
 }

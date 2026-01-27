@@ -16,6 +16,7 @@ class KLineChart extends StatefulWidget {
   final Set<int>? markedIndices; // 需要标记的K线索引（如突破日）
   final Map<int, int>? nearMissIndices; // 近似命中的K线索引及失败条件数
   final BreakoutDetectionResult? Function(int index)? getDetectionResult; // 获取检测结果的回调
+  final ValueChanged<bool>? onScaling; // 缩放状态变化回调（true=开始缩放，false=结束缩放）
 
   const KLineChart({
     super.key,
@@ -25,11 +26,13 @@ class KLineChart extends StatefulWidget {
     this.markedIndices,
     this.nearMissIndices,
     this.getDetectionResult,
+    this.onScaling,
   });
 
   @override
   State<KLineChart> createState() => _KLineChartState();
 }
+
 
 class _KLineChartState extends State<KLineChart> {
   int? _selectedIndex;
@@ -37,7 +40,11 @@ class _KLineChartState extends State<KLineChart> {
   // 缩放相关状态
   late int _visibleCount; // 可见K线数量
   late int _startIndex;   // 起始索引
-  double _baseScale = 1.0; // 缩放基准
+
+  // 双指缩放追踪
+  final Map<int, Offset> _pointers = {};
+  double? _initialPinchDistance;
+  int _initialVisibleCount = 30;
 
   // 缩放范围
   static const int _minVisibleCount = 10;
@@ -118,31 +125,95 @@ class _KLineChartState extends State<KLineChart> {
                 visibleSelectedIndex = _selectedIndex! - _startIndex;
               }
 
+              // 判断是否可以滚动
+              final canScrollLeft = _startIndex > 0;
+              final canScrollRight = _startIndex + _visibleCount < widget.bars.length;
+              final isZoomed = _visibleCount < widget.bars.length;
+
               return Stack(
                 children: [
-                  GestureDetector(
-                    // 使用长按手势来选择K线，避免与外层页面滑动冲突
-                    onLongPressStart: (details) => _handleTouch(details.localPosition, constraints.maxWidth),
-                    onLongPressMoveUpdate: (details) => _handleTouch(details.localPosition, constraints.maxWidth),
-                    onLongPressEnd: (_) => _clearSelection(),
-                    // 双指缩放
-                    onScaleStart: _handleScaleStart,
-                    onScaleUpdate: (details) => _handleScaleUpdate(details, constraints.maxWidth),
-                    child: CustomPaint(
-                      size: Size(constraints.maxWidth, widget.height),
-                      painter: _KLinePainter(
-                        bars: visibleBars,
-                        ratios: widget.ratios,
-                        selectedIndex: visibleSelectedIndex,
-                        markedIndices: visibleMarkedIndices,
-                        nearMissIndices: visibleNearMissIndices,
-                        crosshairColor: crosshairColor,
-                        startIndex: _startIndex, // 传递起始索引用于日期匹配
+                  Listener(
+                    onPointerDown: (event) => _onPointerDown(event),
+                    onPointerMove: (event) => _onPointerMove(event),
+                    onPointerUp: (event) => _onPointerUp(event),
+                    onPointerCancel: (event) => _onPointerUp(event),
+                    child: GestureDetector(
+                      // 使用长按手势来选择K线，避免与外层页面滑动冲突
+                      onLongPressStart: (details) => _handleTouch(details.localPosition, constraints.maxWidth),
+                      onLongPressMoveUpdate: (details) => _handleTouch(details.localPosition, constraints.maxWidth),
+                      onLongPressEnd: (_) => _clearSelection(),
+                      child: CustomPaint(
+                        size: Size(constraints.maxWidth, widget.height),
+                        painter: _KLinePainter(
+                          bars: visibleBars,
+                          ratios: widget.ratios,
+                          selectedIndex: visibleSelectedIndex,
+                          markedIndices: visibleMarkedIndices,
+                          nearMissIndices: visibleNearMissIndices,
+                          crosshairColor: crosshairColor,
+                          startIndex: _startIndex, // 传递起始索引用于日期匹配
+                        ),
                       ),
                     ),
                   ),
                   // 检测结果浮层
                   _buildDetectionOverlay(),
+                  // 左侧滚动按钮
+                  if (isZoomed && canScrollLeft)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 20,
+                      child: GestureDetector(
+                        onTap: () => _scrollLeft(),
+                        onLongPress: () => _scrollLeft(fast: true),
+                        child: Container(
+                          width: 32,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Theme.of(context).colorScheme.surface.withValues(alpha: 0.8),
+                                Theme.of(context).colorScheme.surface.withValues(alpha: 0.0),
+                              ],
+                            ),
+                          ),
+                          child: Center(
+                            child: Icon(
+                              Icons.chevron_left,
+                              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // 右侧滚动按钮
+                  if (isZoomed && canScrollRight)
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      bottom: 20,
+                      child: GestureDetector(
+                        onTap: () => _scrollRight(),
+                        onLongPress: () => _scrollRight(fast: true),
+                        child: Container(
+                          width: 32,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Theme.of(context).colorScheme.surface.withValues(alpha: 0.0),
+                                Theme.of(context).colorScheme.surface.withValues(alpha: 0.8),
+                              ],
+                            ),
+                          ),
+                          child: Center(
+                            child: Icon(
+                              Icons.chevron_right,
+                              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               );
             },
@@ -154,9 +225,28 @@ class _KLineChartState extends State<KLineChart> {
 
   void _handleTouch(Offset position, double chartWidth) {
     const sidePadding = 5.0;
+    const edgeThreshold = 40.0; // 边缘触发滚动的阈值
     final effectiveWidth = chartWidth - sidePadding * 2;
     final visibleCount = _visibleCount.clamp(1, widget.bars.length);
     final barSpacing = effectiveWidth / visibleCount;
+
+    // 检测是否在边缘区域，如果是则滚动
+    if (position.dx < edgeThreshold && _startIndex > 0) {
+      // 在左边缘，向左滚动
+      setState(() {
+        _startIndex = (_startIndex - 1).clamp(0, widget.bars.length - _visibleCount);
+        _selectedIndex = _startIndex;
+      });
+      return;
+    } else if (position.dx > chartWidth - edgeThreshold &&
+               _startIndex + _visibleCount < widget.bars.length) {
+      // 在右边缘，向右滚动
+      setState(() {
+        _startIndex = (_startIndex + 1).clamp(0, widget.bars.length - _visibleCount);
+        _selectedIndex = _startIndex + _visibleCount - 1;
+      });
+      return;
+    }
 
     // 计算触摸位置对应的K线索引（相对于可见范围）
     final x = position.dx - sidePadding;
@@ -170,27 +260,74 @@ class _KLineChartState extends State<KLineChart> {
     }
   }
 
-  void _handleScaleStart(ScaleStartDetails details) {
-    _baseScale = _visibleCount.toDouble();
+  // 双指缩放：追踪触点
+  void _onPointerDown(PointerDownEvent event) {
+    _pointers[event.pointer] = event.localPosition;
+    if (_pointers.length == 2) {
+      // 开始双指操作，记录初始距离
+      final positions = _pointers.values.toList();
+      _initialPinchDistance = (positions[0] - positions[1]).distance;
+      _initialVisibleCount = _visibleCount;
+      // 通知父组件开始缩放
+      widget.onScaling?.call(true);
+    }
   }
 
-  void _handleScaleUpdate(ScaleUpdateDetails details, double chartWidth) {
-    if (details.pointerCount < 2) return; // 只处理双指手势
+  void _onPointerMove(PointerMoveEvent event) {
+    if (!_pointers.containsKey(event.pointer)) return;
+    _pointers[event.pointer] = event.localPosition;
 
-    // 计算新的可见数量（缩小scale = 放大图表 = 减少可见数量）
-    final newVisibleCount = (_baseScale / details.scale)
-        .round()
-        .clamp(_minVisibleCount, _maxVisibleCount);
+    if (_pointers.length == 2 && _initialPinchDistance != null) {
+      // 计算当前双指距离
+      final positions = _pointers.values.toList();
+      final currentDistance = (positions[0] - positions[1]).distance;
 
-    if (newVisibleCount != _visibleCount) {
-      setState(() {
-        // 保持缩放中心点
-        final centerIndex = _startIndex + _visibleCount ~/ 2;
-        _visibleCount = newVisibleCount;
-        _startIndex = (centerIndex - _visibleCount ~/ 2)
-            .clamp(0, widget.bars.length - _visibleCount);
-      });
+      // 计算缩放比例
+      final scale = currentDistance / _initialPinchDistance!;
+
+      // 计算新的可见数量（放大手势 = 减少可见数量）
+      final newVisibleCount = (_initialVisibleCount / scale)
+          .round()
+          .clamp(_minVisibleCount, _maxVisibleCount);
+
+      if (newVisibleCount != _visibleCount) {
+        setState(() {
+          // 保持缩放中心点
+          final centerIndex = _startIndex + _visibleCount ~/ 2;
+          _visibleCount = newVisibleCount;
+          _startIndex = (centerIndex - _visibleCount ~/ 2)
+              .clamp(0, widget.bars.length - _visibleCount);
+        });
+      }
     }
+  }
+
+  void _onPointerUp(PointerEvent event) {
+    final wasScaling = _pointers.length >= 2;
+    _pointers.remove(event.pointer);
+    if (_pointers.length < 2) {
+      _initialPinchDistance = null;
+      // 通知父组件结束缩放
+      if (wasScaling) {
+        widget.onScaling?.call(false);
+      }
+    }
+  }
+
+  // 向左滚动（查看更早的数据）
+  void _scrollLeft({bool fast = false}) {
+    final scrollAmount = fast ? _visibleCount ~/ 2 : _visibleCount ~/ 4;
+    setState(() {
+      _startIndex = (_startIndex - scrollAmount).clamp(0, widget.bars.length - _visibleCount);
+    });
+  }
+
+  // 向右滚动（查看更新的数据）
+  void _scrollRight({bool fast = false}) {
+    final scrollAmount = fast ? _visibleCount ~/ 2 : _visibleCount ~/ 4;
+    setState(() {
+      _startIndex = (_startIndex + scrollAmount).clamp(0, widget.bars.length - _visibleCount);
+    });
   }
 
   void _clearSelection() {

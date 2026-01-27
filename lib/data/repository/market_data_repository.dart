@@ -231,15 +231,209 @@ class MarketDataRepository implements DataRepository {
     required KLineDataType dataType,
     ProgressCallback? onProgress,
   }) async {
-    // TODO: Implement
+    final stopwatch = Stopwatch()..start();
+    final total = stockCodes.length;
+
+    // 处理空列表
+    if (total == 0) {
+      return FetchResult(
+        totalStocks: 0,
+        successCount: 0,
+        failureCount: 0,
+        errors: {},
+        totalRecords: 0,
+        duration: stopwatch.elapsed,
+      );
+    }
+
+    // 发出 DataFetching 状态
+    _statusController.add(DataFetching(
+      current: 0,
+      total: total,
+      currentStock: stockCodes.first,
+    ));
+
+    // 连接到 TDX 服务器
+    if (!_tdxClient.isConnected) {
+      final connected = await _tdxClient.autoConnect();
+      if (!connected) {
+        debugPrint('fetchMissingData: 无法连接到 TDX 服务器');
+        stopwatch.stop();
+
+        // 所有股票都视为失败
+        final errors = <String, String>{};
+        for (final code in stockCodes) {
+          errors[code] = '无法连接到 TDX 服务器';
+        }
+
+        _statusController.add(DataReady(await _metadataManager.getCurrentVersion()));
+
+        return FetchResult(
+          totalStocks: total,
+          successCount: 0,
+          failureCount: total,
+          errors: errors,
+          totalRecords: 0,
+          duration: stopwatch.elapsed,
+        );
+      }
+    }
+
+    // 跟踪成功和失败
+    var successCount = 0;
+    var failureCount = 0;
+    var totalRecords = 0;
+    final errors = <String, String>{};
+    final updatedStockCodes = <String>[];
+
+    // 遍历股票代码
+    for (var i = 0; i < total; i++) {
+      final stockCode = stockCodes[i];
+
+      // 更新状态
+      _statusController.add(DataFetching(
+        current: i + 1,
+        total: total,
+        currentStock: stockCode,
+      ));
+
+      try {
+        // 获取 K 线数据
+        final klines = await _fetchKlinesForStock(
+          stockCode: stockCode,
+          dateRange: dateRange,
+          dataType: dataType,
+        );
+
+        if (klines.isNotEmpty) {
+          // 保存数据
+          await _metadataManager.saveKlineData(
+            stockCode: stockCode,
+            newBars: klines,
+            dataType: dataType,
+          );
+
+          // 清除缓存
+          _invalidateCache(stockCode, dataType);
+
+          totalRecords += klines.length;
+          updatedStockCodes.add(stockCode);
+        }
+
+        successCount++;
+        debugPrint('fetchMissingData: $stockCode 成功，获取 ${klines.length} 条数据');
+      } catch (e, stackTrace) {
+        failureCount++;
+        errors[stockCode] = e.toString();
+        debugPrint('fetchMissingData: $stockCode 失败 - $e');
+        if (kDebugMode) {
+          debugPrint('Stack trace: $stackTrace');
+        }
+      }
+
+      // 报告进度
+      onProgress?.call(i + 1, total);
+    }
+
+    stopwatch.stop();
+
+    // 获取当前版本号
+    final currentVersion = await _metadataManager.getCurrentVersion();
+
+    // 发出数据更新事件（仅当有成功更新时）
+    if (updatedStockCodes.isNotEmpty) {
+      _dataUpdatedController.add(DataUpdatedEvent(
+        stockCodes: updatedStockCodes,
+        dateRange: dateRange,
+        dataType: dataType,
+        dataVersion: currentVersion,
+      ));
+    }
+
+    // 发出 DataReady 状态
+    _statusController.add(DataReady(currentVersion));
+
     return FetchResult(
-      totalStocks: 0,
-      successCount: 0,
-      failureCount: 0,
-      errors: {},
-      totalRecords: 0,
-      duration: Duration.zero,
+      totalStocks: total,
+      successCount: successCount,
+      failureCount: failureCount,
+      errors: errors,
+      totalRecords: totalRecords,
+      duration: stopwatch.elapsed,
     );
+  }
+
+  /// 从 TDX 获取单只股票的 K 线数据
+  ///
+  /// [stockCode] 股票代码
+  /// [dateRange] 日期范围
+  /// [dataType] 数据类型
+  ///
+  /// 分批获取数据，直到获取到 dateRange.start 之前的数据或达到批次上限
+  Future<List<KLine>> _fetchKlinesForStock({
+    required String stockCode,
+    required DateRange dateRange,
+    required KLineDataType dataType,
+  }) async {
+    final market = _mapCodeToMarket(stockCode);
+    final category = _mapDataTypeToCategory(dataType);
+
+    const batchSize = 800; // 每批数量
+    const maxBatches = 10; // 最大批次数（安全限制）
+
+    final allKlines = <KLine>[];
+    var start = 0;
+
+    for (var batch = 0; batch < maxBatches; batch++) {
+      final klines = await _tdxClient.getSecurityBars(
+        market: market,
+        code: stockCode,
+        category: category,
+        start: start,
+        count: batchSize,
+      );
+
+      if (klines.isEmpty) {
+        if (batch == 0) {
+          debugPrint('Warning: First batch for $stockCode returned empty - may indicate data unavailability');
+        }
+        break; // 没有更多数据
+      }
+
+      allKlines.addAll(klines);
+
+      // 检查是否已获取到足够早的数据
+      // K线数据按时间升序排列，第一条是最旧的
+      final oldestBar = klines.first;
+      if (oldestBar.datetime.isBefore(dateRange.start)) {
+        break; // 已获取到范围起始日期之前的数据
+      }
+
+      // 移动到下一批
+      start += batchSize;
+    }
+
+    // 过滤结果到 dateRange 内
+    final filteredKlines = allKlines.where((kline) {
+      return dateRange.contains(kline.datetime);
+    }).toList();
+
+    // 按时间排序
+    filteredKlines.sort((a, b) => a.datetime.compareTo(b.datetime));
+
+    return filteredKlines;
+  }
+
+  /// 映射数据类型到 TDX category
+  /// oneMinute -> 7 (1分钟K线)
+  /// daily -> 4 (日线)
+  int _mapDataTypeToCategory(KLineDataType dataType) {
+    switch (dataType) {
+      case KLineDataType.oneMinute:
+        return 7; // 1分钟K线
+      case KLineDataType.daily:
+        return 4; // 日线
+    }
   }
 
   @override

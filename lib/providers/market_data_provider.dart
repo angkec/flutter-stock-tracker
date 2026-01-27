@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:stock_rtwatcher/config/debug_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
@@ -11,6 +12,26 @@ import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
+
+/// 在隔离线程中解析股票监控数据 JSON
+List<StockMonitorData> _parseMarketDataJson(String jsonStr) {
+  final List<dynamic> jsonList = json.decode(jsonStr);
+  return jsonList
+      .map((e) => StockMonitorData.fromJson(e as Map<String, dynamic>))
+      .toList();
+}
+
+/// 在隔离线程中解析 KLine 数据 JSON
+Map<String, List<KLine>> _parseKLineJson(String jsonStr) {
+  final Map<String, dynamic> data = jsonDecode(jsonStr);
+  return data.map((k, v) => MapEntry(
+    k,
+    (v as List)
+        .where((item) => item is Map<String, dynamic>)
+        .map((item) => KLine.fromJson(item as Map<String, dynamic>))
+        .toList(),
+  ));
+}
 
 enum RefreshStage {
   idle,           // 空闲
@@ -52,10 +73,10 @@ class MarketDataProvider extends ChangeNotifier {
   Set<String> _watchlistCodes = {};
 
   // 缓存日K数据用于重算回踩
-  Map<String, List<dynamic>> _dailyBarsCache = {};
+  Map<String, List<KLine>> _dailyBarsCache = {};
 
-  // 缓存分时数据
-  Map<String, List<dynamic>> _minuteDataCache = {};
+  // 分时数据计数（不保留完整对象，避免 Android OOM）
+  int _minuteDataCount = 0;
 
   // Timer for debounce saving
   Timer? _saveDebounceTimer;
@@ -80,22 +101,20 @@ class MarketDataProvider extends ChangeNotifier {
   RefreshStage get stage => _stage;
   String? get stageDescription => _stageDescription;
   String? get lastFetchDate => _lastFetchDate;
-  int get minuteDataCacheCount => _minuteDataCache.length;
+  int get minuteDataCacheCount => _minuteDataCount;
 
   // Cache info getters
   int get dailyBarsCacheCount => _dailyBarsCache.length;
 
   /// 获取日K缓存数据（用于回测）
-  Map<String, List<KLine>> get dailyBarsCache {
-    return _dailyBarsCache.map((k, v) => MapEntry(k, v.cast<KLine>()));
-  }
+  Map<String, List<KLine>> get dailyBarsCache => _dailyBarsCache;
 
   /// 获取股票数据映射（用于回测）
   Map<String, StockMonitorData> get stockDataMap {
     return {for (final data in _allData) data.stock.code: data};
   }
   String get dailyBarsCacheSize => _formatSize(_estimateDailyBarsSize());
-  String get minuteDataCacheSize => _formatSize(_estimateMinuteDataSize());
+  String get minuteDataCacheSize => _formatSize(_minuteDataCount * 240 * 40);
   String? get industryDataCacheSize => _industryService.isLoaded
       ? _formatSize(_estimateIndustryDataSize())
       : null;
@@ -218,10 +237,7 @@ class MarketDataProvider extends ChangeNotifier {
       final dateStr = prefs.getString('market_data_date');
 
       if (jsonStr != null) {
-        final List<dynamic> jsonList = json.decode(jsonStr);
-        _allData = jsonList
-            .map((e) => StockMonitorData.fromJson(e as Map<String, dynamic>))
-            .toList();
+        _allData = _parseMarketDataJson(jsonStr);
         _updateTime = timeStr;
         if (dateStr != null) {
           _dataDate = DateTime.tryParse(dateStr);
@@ -233,13 +249,7 @@ class MarketDataProvider extends ChangeNotifier {
       final dailyBarsJson = prefs.getString(_dailyBarsCacheKey);
       if (dailyBarsJson != null) {
         try {
-          final Map<String, dynamic> data = jsonDecode(dailyBarsJson);
-          _dailyBarsCache = data.map((k, v) => MapEntry(
-            k,
-            (v as List).map((item) =>
-              item is Map<String, dynamic> ? KLine.fromJson(item) : item
-            ).toList(),
-          ));
+          _dailyBarsCache = _parseKLineJson(dailyBarsJson);
         } catch (e) {
           debugPrint('Failed to load daily bars cache: $e');
           await prefs.remove(_dailyBarsCacheKey);
@@ -249,31 +259,10 @@ class MarketDataProvider extends ChangeNotifier {
       // Load last fetch date
       _lastFetchDate = prefs.getString(_lastFetchDateKey);
 
-      // Load minute data cache (with daily auto-clear)
-      final minuteCacheDate = prefs.getString(_minuteDataDateKey);
-      final today = DateTime.now().toString().substring(0, 10);
-
-      if (minuteCacheDate == today) {
-        // Same day - load cache
-        final minuteJson = prefs.getString(_minuteDataCacheKey);
-        if (minuteJson != null) {
-          try {
-            final Map<String, dynamic> data = jsonDecode(minuteJson);
-            _minuteDataCache = data.map((k, v) => MapEntry(
-              k,
-              (v as List).map((item) =>
-                item is Map<String, dynamic> ? KLine.fromJson(item) : item
-              ).toList(),
-            ));
-          } catch (e) {
-            debugPrint('Failed to load minute data cache: $e');
-            await prefs.remove(_minuteDataCacheKey);
-          }
-        }
-      } else {
-        // Different day - clear cache
+      // Clean up legacy minute data cache from SharedPreferences (no longer persisted)
+      if (prefs.containsKey(_minuteDataCacheKey)) {
         await prefs.remove(_minuteDataCacheKey);
-        await prefs.setString(_minuteDataDateKey, today);
+        await prefs.remove(_minuteDataDateKey);
       }
     } catch (e) {
       debugPrint('Failed to load cache: $e');
@@ -301,10 +290,9 @@ class MarketDataProvider extends ChangeNotifier {
   Future<void> _persistDailyBarsCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // Convert KLine objects to JSON
       final data = _dailyBarsCache.map((k, v) => MapEntry(
         k,
-        v.map((bar) => bar is KLine ? bar.toJson() : bar).toList(),
+        v.map((bar) => bar.toJson()).toList(),
       ));
       await prefs.setString(_dailyBarsCacheKey, jsonEncode(data));
 
@@ -317,30 +305,12 @@ class MarketDataProvider extends ChangeNotifier {
     }
   }
 
-  /// Persist minute data cache to SharedPreferences
-  Future<void> _persistMinuteDataCache() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      // Convert KLine objects to JSON
-      final data = _minuteDataCache.map((k, v) => MapEntry(
-        k,
-        v.map((bar) => bar is KLine ? bar.toJson() : bar).toList(),
-      ));
-      await prefs.setString(_minuteDataCacheKey, jsonEncode(data));
-
-      final today = DateTime.now().toString().substring(0, 10);
-      await prefs.setString(_minuteDataDateKey, today);
-    } catch (e) {
-      debugPrint('Failed to persist minute data cache: $e');
-    }
-  }
 
   /// Schedule persistence with debounce
   void _schedulePersist() {
     _saveDebounceTimer?.cancel();
     _saveDebounceTimer = Timer(const Duration(milliseconds: 500), () {
       _persistDailyBarsCache();
-      _persistMinuteDataCache();
     });
   }
 
@@ -371,9 +341,12 @@ class MarketDataProvider extends ChangeNotifier {
       // 获取所有股票
       print('🔍 [MarketDataProvider.refresh] Getting all stocks...');
       developer.log('[MarketDataProvider.refresh] Getting all stocks...');
-      final stocks = await _stockService.getAllStocks();
+      var stocks = await _stockService.getAllStocks();
       print('🔍 [MarketDataProvider.refresh] Got ${stocks.length} stocks');
       developer.log('[MarketDataProvider.refresh] Got ${stocks.length} stocks');
+
+      // Debug 模式下限制股票数量
+      stocks = DebugConfig.limitStocks(stocks);
 
       // Set initial stage
       if (!silent) {
@@ -394,7 +367,7 @@ class MarketDataProvider extends ChangeNotifier {
 
       // 清空旧数据，准备渐进式更新
       _allData = [];
-      _minuteDataCache.clear();
+      _minuteDataCount = 0;
 
       // 批量获取数据（渐进式更新）
       final result = await _stockService.batchGetMonitorData(
@@ -413,8 +386,7 @@ class MarketDataProvider extends ChangeNotifier {
           notifyListeners();
         },
         onBarsData: (code, bars) {
-          // 缓存原始分时K线数据
-          _minuteDataCache[code] = bars;
+          _minuteDataCount++;
         },
       );
 
@@ -434,12 +406,20 @@ class MarketDataProvider extends ChangeNotifier {
 
       // 检测高质量回踩 (this fetches daily bars)
       if (_pullbackService != null && _allData.isNotEmpty) {
-        await _detectPullbacks();
+        try {
+          await _detectPullbacks();
+        } catch (e) {
+          debugPrint('Pullback detection failed: $e');
+        }
       }
 
       // 检测突破回踩
       if (_breakoutService != null && _allData.isNotEmpty) {
-        await _detectBreakouts();
+        try {
+          await _detectBreakouts();
+        } catch (e) {
+          debugPrint('Breakout detection failed: $e');
+        }
       }
 
       // Update stage to analyzing
@@ -539,7 +519,7 @@ class MarketDataProvider extends ChangeNotifier {
       final dailyBars = _dailyBarsCache[data.stock.code];
       final isPullback = dailyBars != null &&
           dailyBars.length >= 7 &&
-          _pullbackService!.isPullback(dailyBars.cast()) &&
+          _pullbackService!.isPullback(dailyBars) &&
           data.ratio >= _pullbackService!.config.minMinuteRatio;
 
       updatedData.add(data.copyWith(isPullback: isPullback, isBreakout: data.isBreakout));
@@ -580,11 +560,7 @@ class MarketDataProvider extends ChangeNotifier {
       final dailyBars = _dailyBarsCache[data.stock.code];
       final isBreakout = dailyBars != null &&
           dailyBars.isNotEmpty &&
-          _breakoutService!.isBreakoutPullback(
-            dailyBars.cast(),
-            data.ratio,
-            data.changePercent / 100,  // 转换为小数
-          );
+          _breakoutService!.isBreakoutPullback(dailyBars);
 
       updatedData.add(data.copyWith(isPullback: data.isPullback, isBreakout: isBreakout));
     }
@@ -603,11 +579,7 @@ class MarketDataProvider extends ChangeNotifier {
   }
 
   int _estimateMinuteDataSize() {
-    int total = 0;
-    for (final data in _minuteDataCache.values) {
-      total += data.length * 40; // ~40 bytes per minute data
-    }
-    return total;
+    return _minuteDataCount * 240 * 40; // ~40 bytes per bar, ~240 bars per stock
   }
 
   int _estimateIndustryDataSize() {
@@ -636,9 +608,7 @@ class MarketDataProvider extends ChangeNotifier {
   }
 
   Future<void> clearMinuteDataCache() async {
-    _minuteDataCache.clear();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_minuteDataCacheKey);
+    _minuteDataCount = 0;
     notifyListeners();
   }
 

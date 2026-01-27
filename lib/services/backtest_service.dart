@@ -229,7 +229,7 @@ class BacktestService extends ChangeNotifier {
     // 检查最大单日跌幅
     if (config.maxSingleDayDrop > 0) {
       for (final bar in pullbackBars) {
-        final dayDrop = (referencePrice - bar.low) / referencePrice;
+        final dayDrop = (referencePrice - bar.close) / referencePrice;
         if (dayDrop > config.maxSingleDayDrop) return false;
       }
     }
@@ -237,7 +237,7 @@ class BacktestService extends ChangeNotifier {
     // 检查最大单日涨幅
     if (config.maxSingleDayGain > 0) {
       for (final bar in pullbackBars) {
-        final dayGain = (bar.high - referencePrice) / referencePrice;
+        final dayGain = (bar.close - referencePrice) / referencePrice;
         if (dayGain > config.maxSingleDayGain) return false;
       }
     }
