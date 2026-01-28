@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
+import 'package:stock_rtwatcher/widgets/ai_analysis_sheet.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
@@ -77,6 +78,26 @@ class WatchlistScreenState extends State<WatchlistScreen> {
     );
   }
 
+  void _showAIAnalysis() {
+    final watchlistService = context.read<WatchlistService>();
+    final marketProvider = context.read<MarketDataProvider>();
+
+    // 从 marketProvider 获取自选股的 Stock 对象
+    final stocks = marketProvider.allData
+        .where((d) => watchlistService.contains(d.stock.code))
+        .map((d) => d.stock)
+        .toList();
+
+    if (stocks.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先添加自选股')),
+      );
+      return;
+    }
+
+    AIAnalysisSheet.show(context, stocks);
+  }
+
   @override
   Widget build(BuildContext context) {
     final watchlistService = context.watch<WatchlistService>();
@@ -122,6 +143,12 @@ class WatchlistScreenState extends State<WatchlistScreen> {
                 ElevatedButton(
                   onPressed: _addStock,
                   child: const Text('添加'),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.auto_awesome),
+                  tooltip: 'AI 分析',
+                  onPressed: _showAIAnalysis,
                 ),
               ],
             ),
