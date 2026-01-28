@@ -240,6 +240,8 @@ class DataManagementScreen extends StatelessWidget {
   }
 
   /// Get status of kline data from DataRepository
+  ///
+  /// 简化检查：只抽样检查少量股票，避免遍历全部股票导致卡顿
   Future<({String subtitle, int missingDays})> _getKlineStatus(
     DataRepository repository,
     MarketDataProvider provider,
@@ -249,50 +251,39 @@ class DataManagementScreen extends StatelessWidget {
     }
 
     try {
-      final stockCodes = provider.allData.map((d) => d.stock.code).toList();
+      final allStockCodes = provider.allData.map((d) => d.stock.code).toList();
+
+      // 只抽样检查前 50 只股票，避免检查全部导致卡顿
+      const sampleSize = 50;
+      final sampleCodes = allStockCodes.length > sampleSize
+          ? allStockCodes.sublist(0, sampleSize)
+          : allStockCodes;
+
       final freshness = await repository.checkFreshness(
-        stockCodes: stockCodes,
+        stockCodes: sampleCodes,
         dataType: KLineDataType.oneMinute,
       );
 
-      int missingCount = 0;
-      int staleCount = 0;
       int freshCount = 0;
       for (final entry in freshness.entries) {
-        switch (entry.value) {
-          case Missing():
-            missingCount++;
-          case Stale():
-            staleCount++;
-          case Fresh():
-            freshCount++;
+        if (entry.value is Fresh) {
+          freshCount++;
         }
       }
 
-      final total = stockCodes.length;
       final dateRange = DateRange(
         DateTime.now().subtract(const Duration(days: 30)),
         DateTime.now(),
       );
       final dateRangeStr = '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}';
 
-      // 判断数据完整性：以股票覆盖率为准
-      // - 如果 >95% 的股票有数据，视为数据完整
-      // - 否则显示缺失的股票数量
-      final coveragePercent = total > 0 ? (freshCount + staleCount) * 100 ~/ total : 0;
-
-      if (missingCount == 0 && staleCount == 0) {
-        // 全部 Fresh
-        return (subtitle: '$dateRangeStr，数据完整', missingDays: 0);
-      } else if (coveragePercent >= 95) {
-        // 绝大多数有数据，忽略少量缺失
-        return (subtitle: '$dateRangeStr，数据完整', missingDays: 0);
-      } else if (freshCount == 0 && staleCount == 0) {
-        // 完全没有数据
+      // 简单判断：如果抽样中大部分有数据，就认为数据完整
+      if (freshCount == 0) {
         return (subtitle: '$dateRangeStr，暂无数据', missingDays: 30);
+      } else if (freshCount >= sampleCodes.length * 0.8) {
+        return (subtitle: '$dateRangeStr，数据完整', missingDays: 0);
       } else {
-        // 有明显缺失
-        return (subtitle: '$dateRangeStr，$missingCount 只股票缺失数据', missingDays: missingCount);
+        return (subtitle: '$dateRangeStr，部分数据缺失', missingDays: 1);
       }
     } catch (e) {
       debugPrint('[DataManagement] 获取K线状态失败: $e');
