@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:stock_rtwatcher/config/debug_config.dart';
 import 'package:stock_rtwatcher/data/models/data_freshness.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
@@ -316,6 +317,9 @@ class DataManagementScreen extends StatelessWidget {
       builder: (_) => _ProgressDialog(progressNotifier: progressNotifier),
     );
 
+    // 阻止锁屏
+    await WakelockPlus.enable();
+
     try {
       var stocks = marketProvider.allData.map((d) => d.stock).toList();
 
@@ -359,6 +363,9 @@ class DataManagementScreen extends StatelessWidget {
         debugPrint('[DataManagement] 行业排名计算完成');
       }
     } finally {
+      // 恢复锁屏
+      await WakelockPlus.disable();
+
       // 关闭进度对话框
       if (context.mounted) {
         Navigator.of(context).pop();
