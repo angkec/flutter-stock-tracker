@@ -287,8 +287,8 @@ class MarketDataRepository implements DataRepository {
     final updatedStockCodes = <String>[];
     var completedCount = 0;
 
-    // 并发控制：同时最多 5 个请求
-    const maxConcurrent = 5;
+    // 并发控制：同时最多 10 个请求（滑动窗口模式）
+    const maxConcurrent = 10;
 
     // 处理单只股票的函数
     Future<void> processStock(String stockCode) async {
@@ -335,10 +335,29 @@ class MarketDataRepository implements DataRepository {
       onProgress?.call(completedCount, total);
     }
 
-    // 分批并发处理
-    for (var i = 0; i < total; i += maxConcurrent) {
-      final batch = stockCodes.skip(i).take(maxConcurrent).toList();
-      await Future.wait(batch.map(processStock));
+    // 滑动窗口并发：始终保持 maxConcurrent 个任务运行
+    var activeCount = 0;
+    var nextIndex = 0;
+    final completer = Completer<void>();
+
+    void startNext() {
+      while (nextIndex < total && activeCount < maxConcurrent) {
+        final index = nextIndex++;
+        activeCount++;
+        processStock(stockCodes[index]).whenComplete(() {
+          activeCount--;
+          if (nextIndex < total) {
+            startNext();
+          } else if (activeCount == 0) {
+            completer.complete();
+          }
+        });
+      }
+    }
+
+    startNext();
+    if (total > 0) {
+      await completer.future;
     }
 
     stopwatch.stop();
