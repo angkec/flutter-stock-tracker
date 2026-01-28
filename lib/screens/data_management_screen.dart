@@ -255,25 +255,45 @@ class DataManagementScreen extends StatelessWidget {
         dataType: KLineDataType.oneMinute,
       );
 
-      int missingDays = 0;
+      int missingCount = 0;
+      int staleCount = 0;
+      int freshCount = 0;
       for (final entry in freshness.entries) {
         switch (entry.value) {
           case Missing():
-            missingDays += 30;
-          case Stale(:final missingRange):
-            missingDays += missingRange.duration.inDays.clamp(1, 30);
+            missingCount++;
+          case Stale():
+            staleCount++;
           case Fresh():
-            break;
+            freshCount++;
         }
       }
 
+      final total = stockCodes.length;
       final dateRange = DateRange(
         DateTime.now().subtract(const Duration(days: 30)),
         DateTime.now(),
       );
-      final subtitle = '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}，缺失约 $missingDays 天';
+      final dateRangeStr = '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}';
 
-      return (subtitle: subtitle, missingDays: missingDays);
+      // 判断数据完整性：以股票覆盖率为准
+      // - 如果 >95% 的股票有数据，视为数据完整
+      // - 否则显示缺失的股票数量
+      final coveragePercent = total > 0 ? (freshCount + staleCount) * 100 ~/ total : 0;
+
+      if (missingCount == 0 && staleCount == 0) {
+        // 全部 Fresh
+        return (subtitle: '$dateRangeStr，数据完整', missingDays: 0);
+      } else if (coveragePercent >= 95) {
+        // 绝大多数有数据，忽略少量缺失
+        return (subtitle: '$dateRangeStr，数据完整', missingDays: 0);
+      } else if (freshCount == 0 && staleCount == 0) {
+        // 完全没有数据
+        return (subtitle: '$dateRangeStr，暂无数据', missingDays: 30);
+      } else {
+        // 有明显缺失
+        return (subtitle: '$dateRangeStr，$missingCount 只股票缺失数据', missingDays: missingCount);
+      }
     } catch (e) {
       debugPrint('[DataManagement] 获取K线状态失败: $e');
       return (subtitle: '状态未知', missingDays: 0);
