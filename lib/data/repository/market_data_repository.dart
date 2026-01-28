@@ -285,18 +285,13 @@ class MarketDataRepository implements DataRepository {
     var totalRecords = 0;
     final errors = <String, String>{};
     final updatedStockCodes = <String>[];
+    var completedCount = 0;
 
-    // 遍历股票代码
-    for (var i = 0; i < total; i++) {
-      final stockCode = stockCodes[i];
+    // 并发控制：同时最多 5 个请求
+    const maxConcurrent = 5;
 
-      // 更新状态
-      _statusController.add(DataFetching(
-        current: i + 1,
-        total: total,
-        currentStock: stockCode,
-      ));
-
+    // 处理单只股票的函数
+    Future<void> processStock(String stockCode) async {
       try {
         // 获取 K 线数据
         final klines = await _fetchKlinesForStock(
@@ -321,7 +316,6 @@ class MarketDataRepository implements DataRepository {
         }
 
         successCount++;
-        debugPrint('fetchMissingData: $stockCode 成功，获取 ${klines.length} 条数据');
       } catch (e, stackTrace) {
         failureCount++;
         errors[stockCode] = e.toString();
@@ -331,8 +325,20 @@ class MarketDataRepository implements DataRepository {
         }
       }
 
-      // 报告进度
-      onProgress?.call(i + 1, total);
+      // 更新进度
+      completedCount++;
+      _statusController.add(DataFetching(
+        current: completedCount,
+        total: total,
+        currentStock: stockCode,
+      ));
+      onProgress?.call(completedCount, total);
+    }
+
+    // 分批并发处理
+    for (var i = 0; i < total; i += maxConcurrent) {
+      final batch = stockCodes.skip(i).take(maxConcurrent).toList();
+      await Future.wait(batch.map(processStock));
     }
 
     stopwatch.stop();
