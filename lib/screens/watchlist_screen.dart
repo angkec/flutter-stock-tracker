@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
+import 'package:stock_rtwatcher/screens/ai_settings_screen.dart';
 import 'package:stock_rtwatcher/widgets/ai_analysis_sheet.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
@@ -149,6 +150,15 @@ class WatchlistScreenState extends State<WatchlistScreen> {
                   icon: const Icon(Icons.auto_awesome),
                   tooltip: 'AI 分析',
                   onPressed: _showAIAnalysis,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.settings),
+                  tooltip: '设置',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AISettingsScreen()),
+                    );
+                  },
                 ),
               ],
             ),
