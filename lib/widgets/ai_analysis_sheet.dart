@@ -236,34 +236,52 @@ class _AIAnalysisSheetState extends State<AIAnalysisSheet> {
         final r = recommendations[index];
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${r.stockName} (${r.stockCode})',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                  ),
-                ],
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 16, top: 4),
+              // 排名圆圈
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: r.rank == 1
+                      ? Theme.of(context).colorScheme.primary
+                      : r.rank == 2
+                          ? Theme.of(context).colorScheme.secondary
+                          : Theme.of(context).colorScheme.surfaceContainerHighest,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
                 child: Text(
-                  r.reason,
-                  style: Theme.of(context).textTheme.bodyMedium,
+                  '${r.rank}',
+                  style: TextStyle(
+                    color: r.rank <= 2
+                        ? Theme.of(context).colorScheme.onPrimary
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // 股票信息
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${r.stockName} (${r.stockCode})',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      r.reason,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
                 ),
               ),
             ],
