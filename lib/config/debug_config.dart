@@ -6,7 +6,7 @@ class DebugConfig {
   static const int maxStocksInDebug = 100;
 
   /// Release 模式下最大股票数量（0 表示不限制）
-  static const int maxStocksInRelease = 3000;
+  static const int maxStocksInRelease = 0;
 
   /// 获取当前模式下的最大股票数量
   static int get maxStocks => kDebugMode ? maxStocksInDebug : maxStocksInRelease;
