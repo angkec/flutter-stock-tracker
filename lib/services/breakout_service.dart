@@ -172,7 +172,12 @@ class BreakoutService extends ChangeNotifier {
   /// 获取指定日期的突破检测详细结果
   /// [dailyBars] 日K数据（按时间升序）
   /// [index] 要检测的K线索引
-  BreakoutDetectionResult? getDetectionResult(List<KLine> dailyBars, int index) {
+  /// [stockCode] 股票代码（用于分钟量比检测）
+  Future<BreakoutDetectionResult?> getDetectionResult(
+    List<KLine> dailyBars,
+    int index, {
+    String? stockCode,
+  }) async {
     // 需要至少6根K线（5根算均量 + 当前日）
     if (dailyBars.length < 6 || index < 5 || index >= dailyBars.length) {
       return null;
@@ -252,13 +257,32 @@ class BreakoutService extends ChangeNotifier {
       );
     }
 
-    // 6. 如果突破日条件通过，检测回踩
+    // 6. 分钟量比检测
+    DetectionItem? minuteRatioCheck;
+    if (_config.minBreakoutMinuteRatio > 0 &&
+        stockCode != null &&
+        _historicalKlineService != null) {
+      final ratio = await _historicalKlineService!.getDailyRatio(
+        stockCode,
+        bar.datetime,
+      );
+      minuteRatioCheck = DetectionItem(
+        name: '分钟量比',
+        passed: ratio != null && ratio >= _config.minBreakoutMinuteRatio,
+        detail: ratio != null
+            ? '${ratio.toStringAsFixed(2)} (需≥${_config.minBreakoutMinuteRatio})'
+            : '数据不足',
+      );
+    }
+
+    // 7. 如果突破日条件通过，检测回踩
     PullbackDetectionResult? pullbackResult;
     final breakoutPassed = isUpDay.passed &&
         volumeCheck.passed &&
         (maBreakCheck?.passed ?? true) &&
         (highBreakCheck?.passed ?? true) &&
-        (upperShadowCheck?.passed ?? true);
+        (upperShadowCheck?.passed ?? true) &&
+        (minuteRatioCheck?.passed ?? true);
 
     if (breakoutPassed) {
       pullbackResult = _getPullbackDetectionResult(dailyBars, index, bar);
@@ -270,6 +294,7 @@ class BreakoutService extends ChangeNotifier {
       maBreakCheck: maBreakCheck,
       highBreakCheck: highBreakCheck,
       upperShadowCheck: upperShadowCheck,
+      minuteRatioCheck: minuteRatioCheck,
       pullbackResult: pullbackResult,
     );
   }
