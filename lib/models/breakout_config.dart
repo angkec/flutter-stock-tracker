@@ -128,6 +128,9 @@ class BreakoutConfig {
   /// 最大上引线比例（上引线长度 / 实体长度，0=不检测）
   final double maxUpperShadowRatio;
 
+  /// 突破日最小分钟量比（0=不检测）
+  final double minBreakoutMinuteRatio;
+
   // === 回踩阶段条件 ===
   /// 最小回踩天数
   final int minPullbackDays;
@@ -167,6 +170,7 @@ class BreakoutConfig {
     this.maBreakDays = 0,
     this.highBreakDays = 10,
     this.maxUpperShadowRatio = 0.2,
+    this.minBreakoutMinuteRatio = 0,
     this.minPullbackDays = 1,
     this.maxPullbackDays = 5,
     this.maxTotalDrop = 0.01,
@@ -188,6 +192,7 @@ class BreakoutConfig {
     int? maBreakDays,
     int? highBreakDays,
     double? maxUpperShadowRatio,
+    double? minBreakoutMinuteRatio,
     int? minPullbackDays,
     int? maxPullbackDays,
     double? maxTotalDrop,
@@ -205,6 +210,7 @@ class BreakoutConfig {
       maBreakDays: maBreakDays ?? this.maBreakDays,
       highBreakDays: highBreakDays ?? this.highBreakDays,
       maxUpperShadowRatio: maxUpperShadowRatio ?? this.maxUpperShadowRatio,
+      minBreakoutMinuteRatio: minBreakoutMinuteRatio ?? this.minBreakoutMinuteRatio,
       minPullbackDays: minPullbackDays ?? this.minPullbackDays,
       maxPullbackDays: maxPullbackDays ?? this.maxPullbackDays,
       maxTotalDrop: maxTotalDrop ?? this.maxTotalDrop,
@@ -224,6 +230,7 @@ class BreakoutConfig {
     'maBreakDays': maBreakDays,
     'highBreakDays': highBreakDays,
     'maxUpperShadowRatio': maxUpperShadowRatio,
+    'minBreakoutMinuteRatio': minBreakoutMinuteRatio,
     'minPullbackDays': minPullbackDays,
     'maxPullbackDays': maxPullbackDays,
     'maxTotalDrop': maxTotalDrop,
@@ -242,6 +249,7 @@ class BreakoutConfig {
     maBreakDays: (json['maBreakDays'] as int?) ?? 0,
     highBreakDays: (json['highBreakDays'] as int?) ?? 10,
     maxUpperShadowRatio: (json['maxUpperShadowRatio'] as num?)?.toDouble() ?? 0.2,
+    minBreakoutMinuteRatio: (json['minBreakoutMinuteRatio'] as num?)?.toDouble() ?? 0,
     minPullbackDays: (json['minPullbackDays'] as int?) ?? 1,
     maxPullbackDays: (json['maxPullbackDays'] as int?) ?? 5,
     maxTotalDrop: (json['maxTotalDrop'] as num?)?.toDouble() ??
