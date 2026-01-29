@@ -94,13 +94,15 @@ class MyApp extends StatelessWidget {
           service.loadConfig(); // 异步加载回测配置
           return service;
         }),
-        ChangeNotifierProxyProvider5<TdxPool, StockService, IndustryService, PullbackService, BreakoutService, MarketDataProvider>(
+        ChangeNotifierProxyProvider6<TdxPool, StockService, IndustryService, PullbackService, BreakoutService, HistoricalKlineService, MarketDataProvider>(
           create: (context) {
             final pool = context.read<TdxPool>();
             final stockService = context.read<StockService>();
             final industryService = context.read<IndustryService>();
             final pullbackService = context.read<PullbackService>();
             final breakoutService = context.read<BreakoutService>();
+            final historicalKlineService = context.read<HistoricalKlineService>();
+            breakoutService.setHistoricalKlineService(historicalKlineService);
             final provider = MarketDataProvider(
               pool: pool,
               stockService: stockService,
@@ -111,7 +113,8 @@ class MyApp extends StatelessWidget {
             provider.loadFromCache();
             return provider;
           },
-          update: (_, pool, stockService, industryService, pullbackService, breakoutService, previous) {
+          update: (_, pool, stockService, industryService, pullbackService, breakoutService, historicalKlineService, previous) {
+            breakoutService.setHistoricalKlineService(historicalKlineService);
             previous!.setPullbackService(pullbackService);
             previous.setBreakoutService(breakoutService);
             return previous;
