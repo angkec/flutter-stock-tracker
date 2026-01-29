@@ -45,13 +45,13 @@ void main() {
       service = BreakoutService();
     });
 
-    test('需要至少6根K线', () {
+    test('需要至少6根K线', () async {
       final bars = generateBaseData().sublist(0, 5); // 只有5根
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result, isEmpty);
     });
 
-    test('非上涨日不会被选中', () {
+    test('非上涨日不会被选中', () async {
       final bars = generateBaseData();
       // 添加一根下跌日（close < open）但放量
       bars.add(makeBar(
@@ -63,11 +63,11 @@ void main() {
         volume: 200.0, // 放量
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isFalse); // index 6 不应该被选中
     });
 
-    test('不放量不会被选中', () {
+    test('不放量不会被选中', () async {
       final bars = generateBaseData();
       // 添加一根上涨日但不放量
       bars.add(makeBar(
@@ -79,11 +79,11 @@ void main() {
         volume: 100.0, // 不放量（等于均量，需要 > 1.5倍）
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isFalse);
     });
 
-    test('放量上涨日且有有效回踩会被选中', () {
+    test('放量上涨日且有有效回踩会被选中', () async {
       service.updateConfig(const BreakoutConfig(
         breakVolumeMultiplier: 1.5,
         maBreakDays: 0,
@@ -119,7 +119,7 @@ void main() {
         volume: 80.0, // 量比 80/200 = 0.4 < 1.0
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isTrue, reason: '突破日应该被选中');
     });
   });
@@ -145,7 +145,7 @@ void main() {
       ));
     });
 
-    test('minPullbackDays=1, maxPullbackDays=5: T+1满足条件即可', () {
+    test('minPullbackDays=1, maxPullbackDays=5: T+1满足条件即可', () async {
       final bars = generateBaseData(); // 0-5
 
       // index 6: 突破日
@@ -168,11 +168,11 @@ void main() {
         volume: 80.0,
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isTrue, reason: 'T+1有效回踩，突破日应被选中');
     });
 
-    test('minPullbackDays=2: 只有T+1数据时不满足最小天数要求', () {
+    test('minPullbackDays=2: 只有T+1数据时不满足最小天数要求', () async {
       service.updateConfig(service.config.copyWith(
         minPullbackDays: 2,
         maxPullbackDays: 5,
@@ -201,11 +201,11 @@ void main() {
       ));
 
       // 只有T+1数据，没有T+2，不满足min=2的最小天数要求
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isFalse, reason: 'min=2但只有T+1数据，不应被选中');
     });
 
-    test('minPullbackDays=2: T+1和T+2一起作为2天回踩期检测', () {
+    test('minPullbackDays=2: T+1和T+2一起作为2天回踩期检测', () async {
       // 此测试验证：当min=2时，T+1和T+2的数据是累计计算的
       // 比如平均量比 = (T+1量 + T+2量) / 2 / 突破日量
       service.updateConfig(service.config.copyWith(
@@ -248,7 +248,7 @@ void main() {
       ));
 
       // 平均量比=0.525 > 0.5，不满足
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isFalse, reason: '2天平均量比0.525超过max0.5');
 
       // 降低T+2的量使平均量比<=0.5
@@ -261,11 +261,11 @@ void main() {
         volume: 100.0, // 平均量=(80+100)/2=90, 量比90/200=0.45<=0.5
       );
 
-      final result2 = service.findBreakoutDays(bars);
+      final result2 = await service.findBreakoutDays(bars);
       expect(result2.contains(6), isTrue, reason: '2天平均量比0.45满足<=0.5');
     });
 
-    test('minPullbackDays=2: 需要T+2才能成功', () {
+    test('minPullbackDays=2: 需要T+2才能成功', () async {
       service.updateConfig(service.config.copyWith(
         minPullbackDays: 2,
         maxPullbackDays: 5,
@@ -303,11 +303,11 @@ void main() {
         volume: 70.0, // 平均量 (80+70)/2=75, 量比 75/200=0.375
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isTrue, reason: 'min=2, T+2有效回踩，应被选中');
     });
 
-    test('maxPullbackDays=3: T+4及之后不再检测', () {
+    test('maxPullbackDays=3: T+4及之后不再检测', () async {
       service.updateConfig(service.config.copyWith(
         minPullbackDays: 1,
         maxPullbackDays: 3,
@@ -347,11 +347,11 @@ void main() {
         volume: 50.0,
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isFalse, reason: 'max=3, T+1到T+3都不满足，T+4不检测');
     });
 
-    test('回踩期间跌幅过大则失败', () {
+    test('回踩期间跌幅过大则失败', () async {
       service.updateConfig(service.config.copyWith(
         maxTotalDrop: 0.05, // 5%
       ));
@@ -378,11 +378,11 @@ void main() {
         volume: 80.0,
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isFalse, reason: '跌幅8.3%超过max5%');
     });
 
-    test('回踩期间量比过大则失败', () {
+    test('回踩期间量比过大则失败', () async {
       service.updateConfig(service.config.copyWith(
         maxAvgVolumeRatio: 0.5, // 回踩期平均量不能超过突破日的50%
       ));
@@ -409,7 +409,7 @@ void main() {
         volume: 150.0, // 150/200 = 0.75 > 0.5
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isFalse, reason: '量比0.75超过max0.5');
     });
   });
@@ -468,7 +468,7 @@ void main() {
       ));
     });
 
-    test('边界: min=1, max=1 只检测T+1', () {
+    test('边界: min=1, max=1 只检测T+1', () async {
       service.updateConfig(service.config.copyWith(
         minPullbackDays: 1,
         maxPullbackDays: 1,
@@ -476,14 +476,14 @@ void main() {
 
       // T+1有效
       var bars = createBreakoutScenario(pullbackDays: 1, validPullback: true);
-      expect(service.findBreakoutDays(bars).contains(6), isTrue);
+      expect((await service.findBreakoutDays(bars)).contains(6), isTrue);
 
       // T+1无效
       bars = createBreakoutScenario(pullbackDays: 1, validPullback: false);
-      expect(service.findBreakoutDays(bars).contains(6), isFalse);
+      expect((await service.findBreakoutDays(bars)).contains(6), isFalse);
     });
 
-    test('边界: min=3, max=3 只检测T+3', () {
+    test('边界: min=3, max=3 只检测T+3', () async {
       service.updateConfig(service.config.copyWith(
         minPullbackDays: 3,
         maxPullbackDays: 3,
@@ -491,16 +491,16 @@ void main() {
 
       // 只有2天回踩数据
       var bars = createBreakoutScenario(pullbackDays: 2, validPullback: true);
-      expect(service.findBreakoutDays(bars).contains(6), isFalse,
+      expect((await service.findBreakoutDays(bars)).contains(6), isFalse,
           reason: '只有T+1,T+2数据，无法检测T+3');
 
       // 有3天回踩数据
       bars = createBreakoutScenario(pullbackDays: 3, validPullback: true);
-      expect(service.findBreakoutDays(bars).contains(6), isTrue,
+      expect((await service.findBreakoutDays(bars)).contains(6), isTrue,
           reason: '有T+3数据且有效');
     });
 
-    test('min=1, max=5: T+1和T+2失败，T+3成功', () {
+    test('min=1, max=5: T+1和T+2失败，T+3成功', () async {
       // 验证：从min开始逐个检测，直到找到第一个成功的周期
       service.updateConfig(service.config.copyWith(
         minPullbackDays: 1,
@@ -550,12 +550,12 @@ void main() {
         volume: 40.0,
       ));
 
-      final result = service.findBreakoutDays(bars);
+      final result = await service.findBreakoutDays(bars);
       expect(result.contains(6), isTrue,
           reason: 'T+1失败(8.3%), T+2失败(10%), 但T+3成功(4.2%), 应被选中');
     });
 
-    test('验证检测点: min=2, max=4 应该检测T+2,T+3,T+4', () {
+    test('验证检测点: min=2, max=4 应该检测T+2,T+3,T+4', () async {
       service.updateConfig(service.config.copyWith(
         minPullbackDays: 2,
         maxPullbackDays: 4,
@@ -563,21 +563,21 @@ void main() {
 
       // 只有T+1数据 - 不应成功
       var bars = createBreakoutScenario(pullbackDays: 1, validPullback: true);
-      expect(service.findBreakoutDays(bars).contains(6), isFalse,
+      expect((await service.findBreakoutDays(bars)).contains(6), isFalse,
           reason: 'min=2, 只有T+1不够');
 
       // 有T+2数据 - 应该成功（在T+2检测点成功）
       bars = createBreakoutScenario(pullbackDays: 2, validPullback: true);
-      expect(service.findBreakoutDays(bars).contains(6), isTrue,
+      expect((await service.findBreakoutDays(bars)).contains(6), isTrue,
           reason: 'min=2, T+2应该被检测');
 
       // 有T+3数据 - 应该成功
       bars = createBreakoutScenario(pullbackDays: 3, validPullback: true);
-      expect(service.findBreakoutDays(bars).contains(6), isTrue);
+      expect((await service.findBreakoutDays(bars)).contains(6), isTrue);
 
       // 有T+4数据 - 应该成功
       bars = createBreakoutScenario(pullbackDays: 4, validPullback: true);
-      expect(service.findBreakoutDays(bars).contains(6), isTrue);
+      expect((await service.findBreakoutDays(bars)).contains(6), isTrue);
 
       // 有T+5数据但max=4 - T+5不应被检测
       // 如果T+2到T+4都无效，T+5有效也不行
@@ -610,7 +610,7 @@ void main() {
         low: 11.0,
         volume: 50.0,
       ));
-      expect(service.findBreakoutDays(bars).contains(6), isFalse,
+      expect((await service.findBreakoutDays(bars)).contains(6), isFalse,
           reason: 'max=4, T+5不应被检测');
     });
   });
@@ -636,7 +636,7 @@ void main() {
       ));
     });
 
-    test('完全满足条件的不在近似命中中', () {
+    test('完全满足条件的不在近似命中中', () async {
       final bars = generateBaseData();
       // 完美突破日
       bars.add(makeBar(
@@ -657,11 +657,11 @@ void main() {
         volume: 80.0,
       ));
 
-      final nearMisses = service.findNearMissBreakoutDays(bars);
+      final nearMisses = await service.findNearMissBreakoutDays(bars);
       expect(nearMisses.containsKey(6), isFalse);
     });
 
-    test('差1个条件的应该在近似命中中', () {
+    test('差1个条件的应该在近似命中中', () async {
       // 设置需要突破前10日高点
       service.updateConfig(service.config.copyWith(
         highBreakDays: 10,
@@ -700,7 +700,7 @@ void main() {
         volume: 80.0,
       ));
 
-      final nearMisses = service.findNearMissBreakoutDays(bars);
+      final nearMisses = await service.findNearMissBreakoutDays(bars);
       // 应该找到index 11，差1个条件（前高突破）
       expect(nearMisses.containsKey(11), isTrue);
       expect(nearMisses[11], equals(1));
