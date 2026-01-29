@@ -13,6 +13,7 @@ import 'package:stock_rtwatcher/widgets/industry_heat_bar.dart';
 import 'package:stock_rtwatcher/widgets/industry_trend_chart.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
+import 'package:stock_rtwatcher/models/breakout_config.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
@@ -61,6 +62,11 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   ChartMode _chartMode = ChartMode.daily; // 默认显示日线
   bool _isChartScaling = false; // K线图是否正在缩放
 
+  // 突破检测结果缓存（用于同步访问异步计算的结果）
+  Map<int, BreakoutDetectionResult?> _detectionResultsCache = {};
+  Set<int> _breakoutIndices = {};
+  Map<int, int> _nearMissIndices = {};
+
   // 当前显示的股票索引和股票
   late int _currentIndex;
   late Stock _currentStock;
@@ -101,6 +107,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       _weeklyBars = [];
       _todayBars = [];
       _ratioHistory = [];
+      _detectionResultsCache = {};
+      _breakoutIndices = {};
+      _nearMissIndices = {};
       _klineError = null;
       _ratioError = null;
     });
@@ -208,6 +217,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         _weeklyBars = weekly;
         _isLoadingKLine = false;
       });
+
+      // 预加载突破检测结果（异步，不阻塞UI）
+      _preloadDetectionResults();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -286,6 +298,47 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       setState(() {
         _ratioError = '加载量比历史失败: $e';
         _isLoadingRatio = false;
+      });
+    }
+  }
+
+  /// 预加载突破检测结果到缓存
+  /// 在日K数据加载完成后调用，用于将异步检测结果预先计算并缓存
+  Future<void> _preloadDetectionResults() async {
+    if (_dailyBars.isEmpty) return;
+
+    final breakoutService = context.read<BreakoutService>();
+
+    // 计算突破日标记（异步）
+    final breakouts = await breakoutService.findBreakoutDays(
+      _dailyBars,
+      stockCode: _currentStock.code,
+    );
+
+    // 计算近似命中（同步）
+    final nearMisses = breakoutService.findNearMissBreakoutDays(_dailyBars);
+    // 从近似命中中移除已经是突破日的索引
+    if (breakouts.isNotEmpty) {
+      nearMisses.removeWhere((key, _) => breakouts.contains(key));
+    }
+
+    // 计算每个索引的检测结果
+    final newCache = <int, BreakoutDetectionResult?>{};
+    // 从索引5开始（需要至少5根K线计算均量）
+    for (int i = 5; i < _dailyBars.length; i++) {
+      final result = await breakoutService.getDetectionResult(
+        _dailyBars,
+        i,
+        stockCode: _currentStock.code,
+      );
+      newCache[i] = result;
+    }
+
+    if (mounted) {
+      setState(() {
+        _breakoutIndices = breakouts;
+        _nearMissIndices = nearMisses;
+        _detectionResultsCache = newCache;
       });
     }
   }
@@ -544,19 +597,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         ),
       );
     }
-    // 计算突破日标记和近似命中（仅日K）
-    final breakoutService = context.read<BreakoutService>();
-    Set<int>? markedIndices;
-    Map<int, int>? nearMissIndices;
-    if (_chartMode == ChartMode.daily && _dailyBars.isNotEmpty) {
-      markedIndices = breakoutService.findBreakoutDays(_dailyBars);
-      // 计算近似命中（差1-2个条件的日K）
-      nearMissIndices = breakoutService.findNearMissBreakoutDays(_dailyBars);
-      // 从近似命中中移除已经是突破日的索引
-      if (markedIndices.isNotEmpty) {
-        nearMissIndices.removeWhere((key, _) => markedIndices!.contains(key));
-      }
-    }
+    // 使用预加载的突破日标记和近似命中（仅日K）
+    final markedIndices = _chartMode == ChartMode.daily ? _breakoutIndices : null;
+    final nearMissIndices = _chartMode == ChartMode.daily ? _nearMissIndices : null;
 
     return KLineChart(
       bars: _chartMode == ChartMode.daily ? _dailyBars : _weeklyBars,
@@ -564,7 +607,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       markedIndices: markedIndices,
       nearMissIndices: nearMissIndices,
       getDetectionResult: _chartMode == ChartMode.daily
-          ? (index) => breakoutService.getDetectionResult(_dailyBars, index)
+          ? (index) => _detectionResultsCache[index]
           : null,
       onScaling: (isScaling) {
         setState(() => _isChartScaling = isScaling);
