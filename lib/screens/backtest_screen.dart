@@ -133,7 +133,7 @@ class _BacktestScreenState extends State<BacktestScreen> {
       // 在后台线程运行回测（数据量大时耗时）
       await Future.delayed(const Duration(milliseconds: 100)); // UI更新
 
-      final result = backtestService.runBacktest(
+      final result = await backtestService.runBacktest(
         dailyBarsMap: provider.dailyBarsCache,
         stockDataMap: provider.stockDataMap,
         breakoutService: breakoutService,

@@ -60,11 +60,11 @@ class BacktestService extends ChangeNotifier {
   /// [dailyBarsMap] 股票代码 -> 日K数据列表（按时间升序）
   /// [stockDataMap] 股票代码 -> 股票监控数据
   /// [breakoutService] 用于复用突破检测逻辑
-  BacktestResult runBacktest({
+  Future<BacktestResult> runBacktest({
     required Map<String, List<KLine>> dailyBarsMap,
     required Map<String, StockMonitorData> stockDataMap,
     required BreakoutService breakoutService,
-  }) {
+  }) async {
     final signals = <SignalDetail>[];
     final allMaxGains = <double>[];
 
@@ -77,7 +77,7 @@ class BacktestService extends ChangeNotifier {
       if (stockData == null || dailyBars.isEmpty) continue;
 
       // 找到所有突破日
-      final breakoutIndices = breakoutService.findBreakoutDays(dailyBars);
+      final breakoutIndices = await breakoutService.findBreakoutDays(dailyBars, stockCode: code);
 
       // 对每个突破日，计算信号
       for (final breakoutIdx in breakoutIndices) {
