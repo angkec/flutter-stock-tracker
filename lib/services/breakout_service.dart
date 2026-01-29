@@ -452,7 +452,7 @@ class BreakoutService extends ChangeNotifier {
 
   /// 检测哪些K线是突破日（符合放量突破条件，且后续有有效回踩）
   /// 返回符合条件的K线索引列表
-  Set<int> findBreakoutDays(List<KLine> dailyBars) {
+  Future<Set<int>> findBreakoutDays(List<KLine> dailyBars, {String? stockCode}) async {
     final breakoutIndices = <int>{};
 
     // 需要至少6根K线（5根算均量 + 1根突破日）
@@ -515,7 +515,20 @@ class BreakoutService extends ChangeNotifier {
         }
       }
 
-      // 6. 验证后续是否有有效回踩（日K条件，不检查分钟量比）
+      // 6. 检测突破日分钟量比
+      if (_config.minBreakoutMinuteRatio > 0 &&
+          stockCode != null &&
+          _historicalKlineService != null) {
+        final ratio = await _historicalKlineService!.getDailyRatio(
+          stockCode,
+          bar.datetime,
+        );
+        if (ratio == null || ratio < _config.minBreakoutMinuteRatio) {
+          continue;
+        }
+      }
+
+      // 7. 验证后续是否有有效回踩（日K条件，不检查分钟量比）
       if (!_hasValidPullbackAfter(dailyBars, i, bar)) {
         continue;
       }
