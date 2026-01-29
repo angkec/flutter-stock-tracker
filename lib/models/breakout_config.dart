@@ -36,6 +36,9 @@ class BreakoutDetectionResult {
   /// 上引线检测
   final DetectionItem? upperShadowCheck;
 
+  /// 分钟量比检测
+  final DetectionItem? minuteRatioCheck;
+
   /// 回踩阶段检测结果（如果是突破日）
   final PullbackDetectionResult? pullbackResult;
 
@@ -45,6 +48,7 @@ class BreakoutDetectionResult {
     this.maBreakCheck,
     this.highBreakCheck,
     this.upperShadowCheck,
+    this.minuteRatioCheck,
     this.pullbackResult,
   });
 
@@ -54,7 +58,8 @@ class BreakoutDetectionResult {
       volumeCheck.passed &&
       (maBreakCheck?.passed ?? true) &&
       (highBreakCheck?.passed ?? true) &&
-      (upperShadowCheck?.passed ?? true);
+      (upperShadowCheck?.passed ?? true) &&
+      (minuteRatioCheck?.passed ?? true);
 
   /// 获取所有检测项
   List<DetectionItem> get allItems => [
@@ -63,6 +68,7 @@ class BreakoutDetectionResult {
         if (maBreakCheck != null) maBreakCheck!,
         if (highBreakCheck != null) highBreakCheck!,
         if (upperShadowCheck != null) upperShadowCheck!,
+        if (minuteRatioCheck != null) minuteRatioCheck!,
       ];
 }
 
