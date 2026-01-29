@@ -307,34 +307,33 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   Future<void> _preloadDetectionResults() async {
     if (_dailyBars.isEmpty) return;
 
+    final stockCode = _currentStock.code; // Capture at start to detect stock switches
     final breakoutService = context.read<BreakoutService>();
 
     // 计算突破日标记（异步）
     final breakouts = await breakoutService.findBreakoutDays(
       _dailyBars,
-      stockCode: _currentStock.code,
+      stockCode: stockCode,
     );
 
     // 计算近似命中（同步）
     final nearMisses = breakoutService.findNearMissBreakoutDays(_dailyBars);
     // 从近似命中中移除已经是突破日的索引
-    if (breakouts.isNotEmpty) {
-      nearMisses.removeWhere((key, _) => breakouts.contains(key));
-    }
+    nearMisses.removeWhere((key, _) => breakouts.contains(key));
 
-    // 计算每个索引的检测结果
-    final newCache = <int, BreakoutDetectionResult?>{};
+    // 计算每个索引的检测结果（并行执行）
     // 从索引5开始（需要至少5根K线计算均量）
+    final futures = <Future<MapEntry<int, BreakoutDetectionResult?>>>[];
     for (int i = 5; i < _dailyBars.length; i++) {
-      final result = await breakoutService.getDetectionResult(
-        _dailyBars,
-        i,
-        stockCode: _currentStock.code,
+      futures.add(
+        breakoutService.getDetectionResult(_dailyBars, i, stockCode: stockCode)
+            .then((result) => MapEntry(i, result))
       );
-      newCache[i] = result;
     }
+    final entries = await Future.wait(futures);
+    final newCache = Map.fromEntries(entries);
 
-    if (mounted) {
+    if (mounted && _currentStock.code == stockCode) { // Verify still same stock
       setState(() {
         _breakoutIndices = breakouts;
         _nearMissIndices = nearMisses;
