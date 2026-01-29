@@ -191,6 +191,63 @@ void main() {
       });
     });
 
+    group('getDailyRatio', () {
+      late HistoricalKlineService service;
+      late MockDataRepository mockRepo;
+
+      setUp(() {
+        mockRepo = MockDataRepository();
+        service = HistoricalKlineService(repository: mockRepo);
+      });
+
+      test('returns null for unknown stock', () async {
+        final ratio = await service.getDailyRatio('999999', DateTime(2025, 1, 25));
+        expect(ratio, isNull);
+      });
+
+      test('returns null for unknown date', () async {
+        final date = DateTime(2025, 1, 24, 9, 30);
+        mockRepo.setKlineData('000001', _generateBars(date, 5, 3));
+
+        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25));
+        expect(ratio, isNull);
+      });
+
+      test('returns null when down volume is zero', () async {
+        final date = DateTime(2025, 1, 25, 9, 30);
+        mockRepo.setKlineData('000001', _generateBars(date, 5, 0));
+
+        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25));
+        expect(ratio, isNull);
+      });
+
+      test('returns null when up volume is zero', () async {
+        final date = DateTime(2025, 1, 25, 9, 30);
+        mockRepo.setKlineData('000001', _generateBars(date, 0, 5));
+
+        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25));
+        expect(ratio, isNull);
+      });
+
+      test('calculates ratio correctly', () async {
+        final date = DateTime(2025, 1, 25, 9, 30);
+        // 5 up bars * 100 vol = 500 up, 2 down bars * 100 vol = 200 down
+        mockRepo.setKlineData('000001', _generateBars(date, 5, 2));
+
+        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25));
+        expect(ratio, 2.5); // 500 / 200
+      });
+
+      test('matches date by day only (ignores time)', () async {
+        final date = DateTime(2025, 1, 25, 9, 30);
+        mockRepo.setKlineData('000001', _generateBars(date, 4, 2));
+
+        // Query with different time on same day
+        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25, 15, 0));
+        expect(ratio, 2.0); // 400 / 200
+      });
+    });
+
     group('getMissingDaysForStocks', () {
       late HistoricalKlineService service;
       late MockDataRepository mockRepo;

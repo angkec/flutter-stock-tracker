@@ -128,6 +128,18 @@ class HistoricalKlineService extends ChangeNotifier {
     return result;
   }
 
+  /// 获取某只股票某日的分钟量比
+  /// 返回 null 表示数据不足或无法计算（涨停/跌停等）
+  Future<double?> getDailyRatio(String stockCode, DateTime date) async {
+    final volumes = await getDailyVolumes(stockCode);
+    final dateKey = formatDate(date);
+    final dayVolume = volumes[dateKey];
+    if (dayVolume == null || dayVolume.down == 0 || dayVolume.up == 0) {
+      return null;
+    }
+    return dayVolume.up / dayVolume.down;
+  }
+
   /// 获取缺失天数（基于 DataRepository.checkFreshness）
   ///
   /// 需要传入股票代码列表来检查数据新鲜度。
