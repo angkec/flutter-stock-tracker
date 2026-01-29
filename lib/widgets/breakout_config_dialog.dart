@@ -104,7 +104,7 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     super.dispose();
   }
 
-  void _save() {
+  Future<void> _save() async {
     final breakVolume = double.tryParse(_breakVolumeController.text) ?? 1.5;
     final maBreakDays = int.tryParse(_maBreakDaysController.text) ?? 20;
     final highBreakDays = int.tryParse(_highBreakDaysController.text) ?? 5;
@@ -146,8 +146,10 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     );
 
     context.read<BreakoutService>().updateConfig(newConfig);
-    context.read<MarketDataProvider>().recalculateBreakouts();
-    Navigator.of(context).pop();
+    await context.read<MarketDataProvider>().recalculateBreakouts();
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
   }
 
   void _reset() {

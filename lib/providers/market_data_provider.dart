@@ -532,12 +532,12 @@ class MarketDataProvider extends ChangeNotifier {
   /// 检测突破回踩
   Future<void> _detectBreakouts() async {
     if (_breakoutService == null || _allData.isEmpty || _dailyBarsCache.isEmpty) return;
-    _applyBreakoutDetection();
+    await _applyBreakoutDetection();
   }
 
   /// 重算突破回踩（使用缓存的日K数据，不重新下载）
   /// 返回 null 表示成功，否则返回缺失数据的描述
-  String? recalculateBreakouts() {
+  Future<String?> recalculateBreakouts() async {
     if (_breakoutService == null) {
       return '突破服务未初始化';
     }
@@ -547,20 +547,38 @@ class MarketDataProvider extends ChangeNotifier {
     if (_dailyBarsCache.isEmpty) {
       return '缺失日K数据，请先刷新';
     }
-    _applyBreakoutDetection();
+    await _applyBreakoutDetection();
     return null;
   }
 
   /// 应用突破回踩检测逻辑
-  void _applyBreakoutDetection() {
+  Future<void> _applyBreakoutDetection() async {
     if (_breakoutService == null) return;
 
     final updatedData = <StockMonitorData>[];
     for (final data in _allData) {
       final dailyBars = _dailyBarsCache[data.stock.code];
-      final isBreakout = dailyBars != null &&
-          dailyBars.isNotEmpty &&
-          _breakoutService!.isBreakoutPullback(dailyBars);
+
+      bool isBreakout = false;
+      if (dailyBars != null && dailyBars.length >= 6) {
+        isBreakout = await _breakoutService!.isBreakoutPullback(
+          dailyBars,
+          stockCode: data.stock.code,
+        );
+
+        // 检查今日分钟量比条件
+        if (isBreakout && _breakoutService!.config.minMinuteRatio > 0) {
+          isBreakout = data.ratio >= _breakoutService!.config.minMinuteRatio;
+        }
+
+        // 检查是否过滤暴涨
+        if (isBreakout && _breakoutService!.config.filterSurgeAfterPullback) {
+          final todayGain = data.changePercent / 100;
+          if (todayGain > _breakoutService!.config.surgeThreshold) {
+            isBreakout = false;
+          }
+        }
+      }
 
       updatedData.add(data.copyWith(isPullback: data.isPullback, isBreakout: isBreakout));
     }
