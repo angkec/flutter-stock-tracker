@@ -50,5 +50,9 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>需要访问相册以导入持仓截图</string>
+	<key>NSCameraUsageDescription</key>
+	<string>需要访问相机以拍摄持仓截图</string>
 </dict>
 </plist>
