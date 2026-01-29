@@ -537,7 +537,10 @@ class MarketDataProvider extends ChangeNotifier {
 
   /// 重算突破回踩（使用缓存的日K数据，不重新下载）
   /// 返回 null 表示成功，否则返回缺失数据的描述
-  Future<String?> recalculateBreakouts() async {
+  /// [onProgress] 进度回调，参数为 (当前进度, 总数)
+  Future<String?> recalculateBreakouts({
+    void Function(int current, int total)? onProgress,
+  }) async {
     if (_breakoutService == null) {
       return '突破服务未初始化';
     }
@@ -547,15 +550,21 @@ class MarketDataProvider extends ChangeNotifier {
     if (_dailyBarsCache.isEmpty) {
       return '缺失日K数据，请先刷新';
     }
-    await _applyBreakoutDetection();
+    await _applyBreakoutDetection(onProgress: onProgress);
     return null;
   }
 
   /// 应用突破回踩检测逻辑
-  Future<void> _applyBreakoutDetection() async {
+  /// [onProgress] 进度回调，参数为 (当前进度, 总数)
+  Future<void> _applyBreakoutDetection({
+    void Function(int current, int total)? onProgress,
+  }) async {
     if (_breakoutService == null) return;
 
+    final total = _allData.length;
     final updatedData = <StockMonitorData>[];
+    var current = 0;
+
     for (final data in _allData) {
       final dailyBars = _dailyBarsCache[data.stock.code];
 
@@ -581,6 +590,8 @@ class MarketDataProvider extends ChangeNotifier {
       }
 
       updatedData.add(data.copyWith(isPullback: data.isPullback, isBreakout: isBreakout));
+      current++;
+      onProgress?.call(current, total);
     }
 
     _allData = updatedData;

@@ -154,9 +154,48 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     );
 
     context.read<BreakoutService>().updateConfig(newConfig);
-    await context.read<MarketDataProvider>().recalculateBreakouts();
+
+    // 显示进度对话框
+    final progressNotifier = ValueNotifier<(int, int)>((0, 1));
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: ValueListenableBuilder<(int, int)>(
+            valueListenable: progressNotifier,
+            builder: (_, progress, __) {
+              final (current, total) = progress;
+              final percent = total > 0 ? current / total : 0.0;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('正在重算突破回踩...'),
+                  const SizedBox(height: 16),
+                  LinearProgressIndicator(value: percent),
+                  const SizedBox(height: 8),
+                  Text('$current / $total'),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    await context.read<MarketDataProvider>().recalculateBreakouts(
+      onProgress: (current, total) {
+        progressNotifier.value = (current, total);
+      },
+    );
+
+    progressNotifier.dispose();
+
     if (mounted) {
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(); // 关闭进度对话框
+      Navigator.of(context).pop(); // 关闭配置 BottomSheet
     }
   }
 
