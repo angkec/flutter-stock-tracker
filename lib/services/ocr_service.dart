@@ -4,8 +4,9 @@ import 'package:stock_rtwatcher/services/watchlist_service.dart';
 
 /// OCR服务 - 从截图识别股票代码
 class OcrService {
+  // 使用 latin 脚本即可识别数字（股票代码），无需加载中文模块
   static final _textRecognizer = TextRecognizer(
-    script: TextRecognitionScript.chinese,
+    script: TextRecognitionScript.latin,
   );
 
   /// 从图片文件识别文字并提取股票代码
