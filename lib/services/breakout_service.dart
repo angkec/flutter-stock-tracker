@@ -3,12 +3,20 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/models/breakout_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 
 /// 放量突破检测服务
 class BreakoutService extends ChangeNotifier {
   static const String _storageKey = 'breakout_config';
 
   BreakoutConfig _config = BreakoutConfig.defaults;
+
+  HistoricalKlineService? _historicalKlineService;
+
+  /// 设置历史K线服务（用于获取突破日分钟量比）
+  void setHistoricalKlineService(HistoricalKlineService service) {
+    _historicalKlineService = service;
+  }
 
   /// 当前配置
   BreakoutConfig get config => _config;
