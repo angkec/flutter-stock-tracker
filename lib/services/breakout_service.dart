@@ -63,7 +63,7 @@ class BreakoutService extends ChangeNotifier {
   /// 检测是否符合放量突破后回踩（纯日K结构检测，与 findBreakoutDays 逻辑一致）
   /// [dailyBars] 需要最近N天日K数据（按时间升序，最早的在前）
   /// 返回 true 表示符合条件
-  bool isBreakoutPullback(List<KLine> dailyBars) {
+  Future<bool> isBreakoutPullback(List<KLine> dailyBars, {String? stockCode}) async {
     // 需要至少 5 + maxPullbackDays + 1 根K线
     // 5 for avg volume + max pullback days + breakout day
     final minBars = 5 + _config.maxPullbackDays + 1;
@@ -143,7 +143,20 @@ class BreakoutService extends ChangeNotifier {
         }
       }
 
-      // 6. 验证回踩（复用 _hasValidPullbackAfter 逻辑，与 findBreakoutDays 一致）
+      // 6. 检测突破日分钟量比
+      if (_config.minBreakoutMinuteRatio > 0 &&
+          stockCode != null &&
+          _historicalKlineService != null) {
+        final ratio = await _historicalKlineService!.getDailyRatio(
+          stockCode,
+          breakoutBar.datetime,
+        );
+        if (ratio == null || ratio < _config.minBreakoutMinuteRatio) {
+          continue;
+        }
+      }
+
+      // 7. 验证回踩（复用 _hasValidPullbackAfter 逻辑，与 findBreakoutDays 一致）
       if (!_hasValidPullbackAfter(dailyBars, breakoutIdx, breakoutBar)) {
         continue;
       }
