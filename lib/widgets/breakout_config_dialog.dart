@@ -27,6 +27,7 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
   late TextEditingController _maBreakDaysController;
   late TextEditingController _highBreakDaysController;
   late TextEditingController _maxUpperShadowRatioController;
+  late TextEditingController _minBreakoutMinuteRatioController;
   late TextEditingController _minPullbackDaysController;
   late TextEditingController _maxPullbackDaysController;
   late TextEditingController _maxTotalDropController;
@@ -54,6 +55,9 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     );
     _maxUpperShadowRatioController = TextEditingController(
       text: config.maxUpperShadowRatio.toStringAsFixed(1),
+    );
+    _minBreakoutMinuteRatioController = TextEditingController(
+      text: config.minBreakoutMinuteRatio.toStringAsFixed(2),
     );
     _minPullbackDaysController = TextEditingController(
       text: config.minPullbackDays.toString(),
@@ -92,6 +96,7 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     _maBreakDaysController.dispose();
     _highBreakDaysController.dispose();
     _maxUpperShadowRatioController.dispose();
+    _minBreakoutMinuteRatioController.dispose();
     _minPullbackDaysController.dispose();
     _maxPullbackDaysController.dispose();
     _maxTotalDropController.dispose();
@@ -110,6 +115,8 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     final highBreakDays = int.tryParse(_highBreakDaysController.text) ?? 5;
     final maxUpperShadowRatio =
         double.tryParse(_maxUpperShadowRatioController.text) ?? 0;
+    final minBreakoutMinuteRatio =
+        double.tryParse(_minBreakoutMinuteRatioController.text) ?? 0;
     final minPullbackDays = int.tryParse(_minPullbackDaysController.text) ?? 1;
     final maxPullbackDays = int.tryParse(_maxPullbackDaysController.text) ?? 5;
     final maxTotalDrop =
@@ -132,6 +139,7 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
       maBreakDays: maBreakDays,
       highBreakDays: highBreakDays,
       maxUpperShadowRatio: maxUpperShadowRatio,
+      minBreakoutMinuteRatio: minBreakoutMinuteRatio,
       minPullbackDays: minPullbackDays,
       maxPullbackDays: maxPullbackDays,
       maxTotalDrop: maxTotalDrop,
@@ -160,6 +168,8 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
     _highBreakDaysController.text = defaults.highBreakDays.toString();
     _maxUpperShadowRatioController.text =
         defaults.maxUpperShadowRatio.toStringAsFixed(1);
+    _minBreakoutMinuteRatioController.text =
+        defaults.minBreakoutMinuteRatio.toStringAsFixed(2);
     _minPullbackDaysController.text = defaults.minPullbackDays.toString();
     _maxPullbackDaysController.text = defaults.maxPullbackDays.toString();
     _maxTotalDropController.text =
@@ -257,6 +267,13 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
                         controller: _maxUpperShadowRatioController,
                         label: '最大上引线比例',
                         hint: '上引线/实体，0=不检测',
+                        suffix: '',
+                      ),
+                      const SizedBox(height: 12),
+                      _buildTextField(
+                        controller: _minBreakoutMinuteRatioController,
+                        label: '最小分钟量比',
+                        hint: '突破日分钟涨跌量比，0=不检测',
                         suffix: '',
                       ),
                     ],
