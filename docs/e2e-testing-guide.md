@@ -1,6 +1,39 @@
-# E2E 测试指南（中文 Gherkin BDD）
+# E2E 测试指南
 
-## 快速开始
+## 两种测试模式
+
+| 模式 | 命令 | 特点 |
+|------|------|------|
+| Widget 测试 | `flutter test integration_test/...` | 快速，每个场景独立，无法共享状态 |
+| Driver 测试 | `flutter drive --target=test_driver/app.dart` | 较慢，状态持久，数据只需同步一次 |
+
+---
+
+## 方式一：Flutter Drive（推荐用于需要数据同步的测试）
+
+```bash
+# 在模拟器/设备上运行
+flutter drive --target=test_driver/app.dart
+
+# 指定设备
+flutter drive --target=test_driver/app.dart -d <device_id>
+```
+
+**优点：**
+- 应用状态在测试之间保持
+- 数据只需同步一次
+- 更接近真实用户操作
+
+**文件结构：**
+```
+test_driver/
+├── app.dart        # 应用入口（启用 Driver 扩展）
+└── app_test.dart   # 测试用例
+```
+
+---
+
+## 方式二：Widget 测试（快速验证 UI）
 
 ```bash
 # 运行所有 e2e 测试
