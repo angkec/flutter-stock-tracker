@@ -18,6 +18,13 @@ class WidgetTesterWorld extends World {
 }
 
 // ============================================================================
+// 全局状态 - 用于一次性操作
+// ============================================================================
+
+/// 标记数据是否已同步（整个测试套件只需同步一次）
+bool _dataSynced = false;
+
+// ============================================================================
 // Common Steps - 通用步骤
 // ============================================================================
 
@@ -65,6 +72,48 @@ StepDefinitionGeneric iAmOnWatchlistPageStep() {
       expect(find.text('自选'), findsWidgets);
     },
   );
+}
+
+/// 数据已同步（只执行一次，后续场景跳过）
+StepDefinitionGeneric dataSyncedStep() {
+  return given<WidgetTesterWorld>(
+    '数据已同步',
+    (context) async {
+      if (_dataSynced) {
+        // 已经同步过，跳过
+        return;
+      }
+
+      final tester = context.world.tester;
+
+      // 找到 RefreshStatusWidget 中的刷新图标并点击
+      final refreshIcon = find.byIcon(Icons.refresh);
+      if (refreshIcon.evaluate().isNotEmpty) {
+        await tester.tap(refreshIcon.first);
+        await tester.pump();
+      }
+
+      // 等待同步完成（最多等待 60 秒）
+      // 判断条件：CircularProgressIndicator 消失
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(seconds: 1));
+
+        // 检查加载指示器是否消失
+        final loading = find.byType(CircularProgressIndicator);
+        if (loading.evaluate().isEmpty) {
+          break;
+        }
+      }
+
+      await tester.pumpAndSettle();
+      _dataSynced = true;
+    },
+  );
+}
+
+/// 重置同步状态（用于需要重新同步的场景）
+void resetSyncState() {
+  _dataSynced = false;
 }
 
 // ============================================================================
@@ -359,6 +408,7 @@ List<StepDefinitionGeneric> getAllStepDefinitions() {
     watchlistIsClearedStep(),
     iRestartTheAppStep(),
     iAmOnWatchlistPageStep(),
+    dataSyncedStep(),
 
     // Navigation Steps
     iTapBottomNavTabStep(),
