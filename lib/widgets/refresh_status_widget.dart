@@ -6,11 +6,15 @@ import 'package:stock_rtwatcher/screens/data_management_screen.dart';
 class RefreshStatusWidget extends StatelessWidget {
   const RefreshStatusWidget({super.key});
 
+  /// 用于 Flutter Driver 测试的 Key
+  static const refreshButtonKey = Key('refresh_status_widget');
+
   @override
   Widget build(BuildContext context) {
     return Consumer<MarketDataProvider>(
       builder: (_, provider, __) {
         return GestureDetector(
+          key: refreshButtonKey,
           onTap: () {
             if (!provider.isLoading) {
               provider.refresh();
