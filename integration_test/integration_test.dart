@@ -1,15 +1,16 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
-// Step definitions
-import 'step/common_steps.dart';
-import 'step/navigation_steps.dart';
-import 'step/watchlist_steps.dart';
+// Import test files
+import 'features/navigation_test.dart' as navigation;
+import 'features/watchlist_test.dart' as watchlist;
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  // Note: bdd_widget_test generates test files from .feature files
-  // Run: flutter pub run build_runner build
-  // Generated files will be imported and called here
+  // Run all integration tests
+  // Note: The tests in features/ folder are manually written based on .feature files
+  // because bdd_widget_test couldn't properly generate code from Chinese Gherkin steps
+  navigation.main();
+  watchlist.main();
 }
