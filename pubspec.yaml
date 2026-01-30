@@ -49,6 +49,8 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.3
   sqflite_common_ffi: ^2.3.0
+  bdd_widget_test: ^1.6.1
+  build_runner: ^2.4.0
 
 flutter_launcher_icons:
   android: true
