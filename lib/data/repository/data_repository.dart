@@ -7,6 +7,7 @@ import '../models/data_freshness.dart';
 import '../models/kline_data_type.dart';
 import '../models/date_range.dart';
 import '../models/fetch_result.dart';
+import '../models/day_data_status.dart';
 import '../../models/kline.dart';
 import '../../models/quote.dart';
 
@@ -84,6 +85,31 @@ abstract class DataRepository {
   Future<void> cleanupOldData({
     required DateTime beforeDate,
   });
+
+  // ============ 缺失数据检测 ============
+
+  /// 查找缺失的分钟数据日期
+  ///
+  /// [stockCode] 股票代码
+  /// [dateRange] 检测的日期范围
+  ///
+  /// 利用缓存加速：已标记为 complete 的日期会跳过
+  Future<MissingDatesResult> findMissingMinuteDates({
+    required String stockCode,
+    required DateRange dateRange,
+  });
+
+  /// 批量查找多只股票的缺失日期
+  Future<Map<String, MissingDatesResult>> findMissingMinuteDatesBatch({
+    required List<String> stockCodes,
+    required DateRange dateRange,
+    ProgressCallback? onProgress,
+  });
+
+  /// 获取交易日列表（从日K数据推断）
+  ///
+  /// 某天只要有任意股票有日K数据，就认为是交易日
+  Future<List<DateTime>> getTradingDates(DateRange dateRange);
 
   // ============ 资源管理 ============
 
