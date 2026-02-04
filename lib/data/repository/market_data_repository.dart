@@ -6,7 +6,9 @@ import '../models/data_freshness.dart';
 import '../models/kline_data_type.dart';
 import '../models/date_range.dart';
 import '../models/fetch_result.dart';
+import '../models/day_data_status.dart';
 import '../storage/kline_metadata_manager.dart';
+import '../storage/date_check_storage.dart';
 import '../../models/kline.dart';
 import '../../models/quote.dart';
 import '../../services/tdx_client.dart';
@@ -16,6 +18,7 @@ import 'data_repository.dart';
 class MarketDataRepository implements DataRepository {
   final KLineMetadataManager _metadataManager;
   final TdxClient _tdxClient;
+  final DateCheckStorage _dateCheckStorage;
   final StreamController<DataStatus> _statusController = StreamController<DataStatus>.broadcast();
   final StreamController<DataUpdatedEvent> _dataUpdatedController = StreamController<DataUpdatedEvent>.broadcast();
 
@@ -26,11 +29,16 @@ class MarketDataRepository implements DataRepository {
   // 最大缓存大小
   static const int _maxCacheSize = 100;
 
+  // 完整分钟数据的最小K线数量（一个交易日约240根1分钟K线）
+  static const int _minCompleteBars = 220;
+
   MarketDataRepository({
     KLineMetadataManager? metadataManager,
     TdxClient? tdxClient,
+    DateCheckStorage? dateCheckStorage,
   })  : _metadataManager = metadataManager ?? KLineMetadataManager(),
-        _tdxClient = tdxClient ?? TdxClient() {
+        _tdxClient = tdxClient ?? TdxClient(),
+        _dateCheckStorage = dateCheckStorage ?? DateCheckStorage() {
     // 初始状态：就绪
     _statusController.add(const DataReady(0));
   }
@@ -508,6 +516,124 @@ class MarketDataRepository implements DataRepository {
       debugPrint('Failed to cleanup old data: $e');
       rethrow;
     }
+  }
+
+  // ============ 缺失数据检测 ============
+
+  @override
+  Future<MissingDatesResult> findMissingMinuteDates({
+    required String stockCode,
+    required DateRange dateRange,
+  }) async {
+    // 1. Get trading dates from daily K-line data
+    final tradingDates = await getTradingDates(dateRange);
+
+    if (tradingDates.isEmpty) {
+      return const MissingDatesResult(
+        missingDates: [],
+        incompleteDates: [],
+        completeDates: [],
+      );
+    }
+
+    // 2. Query cached status
+    final checkedStatus = await _dateCheckStorage.getCheckedStatus(
+      stockCode: stockCode,
+      dataType: KLineDataType.oneMinute,
+      dates: tradingDates,
+    );
+
+    // 3. Categorize dates
+    final missingDates = <DateTime>[];
+    final incompleteDates = <DateTime>[];
+    final completeDates = <DateTime>[];
+    final toCheckDates = <DateTime>[];
+
+    for (final date in tradingDates) {
+      final status = checkedStatus[date];
+
+      if (status == null) {
+        toCheckDates.add(date);
+      } else if (status == DayDataStatus.complete) {
+        completeDates.add(date);
+      } else {
+        // incomplete or missing - re-check
+        toCheckDates.add(date);
+      }
+    }
+
+    // 4. Check uncached dates
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+
+    for (final date in toCheckDates) {
+      final barCount = await _metadataManager.countBarsForDate(
+        stockCode: stockCode,
+        dataType: KLineDataType.oneMinute,
+        date: date,
+      );
+
+      final dateOnly = DateTime(date.year, date.month, date.day);
+      final isToday = dateOnly == todayDate;
+
+      DayDataStatus status;
+      if (barCount == 0) {
+        status = DayDataStatus.missing;
+        missingDates.add(dateOnly);
+      } else if (barCount >= _minCompleteBars) {
+        status = DayDataStatus.complete;
+        completeDates.add(dateOnly);
+      } else if (isToday) {
+        status = DayDataStatus.inProgress;
+        // Don't add to any list, don't cache
+      } else {
+        status = DayDataStatus.incomplete;
+        incompleteDates.add(dateOnly);
+      }
+
+      // 5. Save to cache (skip inProgress)
+      if (status != DayDataStatus.inProgress) {
+        await _dateCheckStorage.saveCheckStatus(
+          stockCode: stockCode,
+          dataType: KLineDataType.oneMinute,
+          date: dateOnly,
+          status: status,
+          barCount: barCount,
+        );
+      }
+    }
+
+    return MissingDatesResult(
+      missingDates: missingDates,
+      incompleteDates: incompleteDates,
+      completeDates: completeDates,
+    );
+  }
+
+  @override
+  Future<Map<String, MissingDatesResult>> findMissingMinuteDatesBatch({
+    required List<String> stockCodes,
+    required DateRange dateRange,
+    ProgressCallback? onProgress,
+  }) async {
+    final result = <String, MissingDatesResult>{};
+    var completed = 0;
+
+    for (final stockCode in stockCodes) {
+      result[stockCode] = await findMissingMinuteDates(
+        stockCode: stockCode,
+        dateRange: dateRange,
+      );
+      completed++;
+      onProgress?.call(completed, stockCodes.length);
+    }
+
+    return result;
+  }
+
+  @override
+  Future<List<DateTime>> getTradingDates(DateRange dateRange) async {
+    return await _metadataManager.getTradingDates(dateRange);
   }
 
   /// 释放资源
