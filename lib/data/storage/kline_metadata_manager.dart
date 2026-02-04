@@ -398,4 +398,33 @@ class KLineMetadataManager {
 
     return rows.map((row) => row['stock_code'] as String).toList();
   }
+
+  /// 获取交易日列表（从日K数据推断）
+  ///
+  /// 某天只要有任意股票有日K数据，就认为是交易日
+  Future<List<DateTime>> getTradingDates(DateRange range) async {
+    // Get all stock codes with daily data
+    final stockCodes = await getAllStockCodes(dataType: KLineDataType.daily);
+    if (stockCodes.isEmpty) return [];
+
+    final tradingDates = <DateTime>{};
+
+    // Load actual K-line data and extract dates
+    for (final stockCode in stockCodes) {
+      final klines = await loadKlineData(
+        stockCode: stockCode,
+        dataType: KLineDataType.daily,
+        dateRange: range,
+      );
+      for (final kline in klines) {
+        tradingDates.add(DateTime(
+          kline.datetime.year,
+          kline.datetime.month,
+          kline.datetime.day,
+        ));
+      }
+    }
+
+    return tradingDates.toList()..sort();
+  }
 }

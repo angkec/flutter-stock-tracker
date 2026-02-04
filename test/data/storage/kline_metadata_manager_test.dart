@@ -625,4 +625,97 @@ void main() {
       expect(stockCodes, isEmpty);
     });
   });
+
+  group('getTradingDates', () {
+    test('returns unique dates from daily kline data', () async {
+      // Save daily data for two different days
+      final jan15 = DateTime(2026, 1, 15);
+      final jan16 = DateTime(2026, 1, 16);
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [_createKLine(jan15, 10.0)],
+        dataType: KLineDataType.daily,
+      );
+      await manager.saveKlineData(
+        stockCode: '000002',
+        newBars: [_createKLine(jan15, 11.0), _createKLine(jan16, 11.5)],
+        dataType: KLineDataType.daily,
+      );
+
+      final tradingDates = await manager.getTradingDates(
+        DateRange(jan15, jan16),
+      );
+
+      expect(tradingDates, containsAll([jan15, jan16]));
+      expect(tradingDates.length, equals(2));
+    });
+
+    test('returns empty list when no daily data', () async {
+      final tradingDates = await manager.getTradingDates(
+        DateRange(DateTime(2026, 1, 1), DateTime(2026, 1, 31)),
+      );
+
+      expect(tradingDates, isEmpty);
+    });
+
+    test('returns dates within range only', () async {
+      final jan14 = DateTime(2026, 1, 14);
+      final jan15 = DateTime(2026, 1, 15);
+      final jan16 = DateTime(2026, 1, 16);
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          _createKLine(jan14, 10.0),
+          _createKLine(jan15, 10.5),
+          _createKLine(jan16, 11.0),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      final tradingDates = await manager.getTradingDates(
+        DateRange(jan15, jan15),
+      );
+
+      expect(tradingDates, equals([jan15]));
+    });
+
+    test('returns only actual trading dates, not calendar dates', () async {
+      // Save daily data with gaps (jan15, jan17 - skip jan16)
+      final jan15 = DateTime(2026, 1, 15);
+      final jan17 = DateTime(2026, 1, 17);
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          _createKLine(jan15, 10.0),
+          _createKLine(jan17, 11.0),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      final tradingDates = await manager.getTradingDates(
+        DateRange(jan15, jan17),
+      );
+
+      // Should only return jan15 and jan17, NOT jan16
+      expect(tradingDates.length, equals(2));
+      expect(tradingDates, contains(jan15));
+      expect(tradingDates, contains(jan17));
+      expect(tradingDates, isNot(contains(DateTime(2026, 1, 16))));
+    });
+  });
+}
+
+KLine _createKLine(DateTime datetime, double price) {
+  return KLine(
+    datetime: datetime,
+    open: price,
+    close: price + 0.05,
+    high: price + 0.1,
+    low: price - 0.05,
+    volume: 1000,
+    amount: 10000,
+  );
 }
