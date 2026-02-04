@@ -1,7 +1,7 @@
 // lib/data/storage/database_schema.dart
 
 class DatabaseSchema {
-  static const int version = 1;
+  static const int version = 2;
   static const String databaseName = 'market_data.db';
 
   // 股票基本信息表
@@ -57,5 +57,24 @@ class DatabaseSchema {
   static const String insertInitialVersion = '''
     INSERT INTO data_versions (version, description, created_at)
     VALUES (1, 'Initial version', ?)
+  ''';
+
+  // 日期检测状态表（新增）
+  static const String createDateCheckStatusTable = '''
+    CREATE TABLE date_check_status (
+      stock_code TEXT NOT NULL,
+      data_type TEXT NOT NULL,
+      date INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      bar_count INTEGER DEFAULT 0,
+      checked_at INTEGER NOT NULL,
+      PRIMARY KEY (stock_code, data_type, date)
+    )
+  ''';
+
+  static const String createDateCheckStatusIndex = '''
+    CREATE INDEX idx_date_check_pending
+    ON date_check_status(stock_code, data_type, status)
+    WHERE status != 'complete'
   ''';
 }

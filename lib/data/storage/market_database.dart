@@ -51,10 +51,12 @@ class MarketDatabase {
     await db.execute(DatabaseSchema.createStocksTable);
     await db.execute(DatabaseSchema.createKlineFilesTable);
     await db.execute(DatabaseSchema.createDataVersionsTable);
+    await db.execute(DatabaseSchema.createDateCheckStatusTable);  // 新增
 
     // 创建索引
     await db.execute(DatabaseSchema.createKlineFilesStockIndex);
     await db.execute(DatabaseSchema.createKlineFilesDateIndex);
+    await db.execute(DatabaseSchema.createDateCheckStatusIndex);  // 新增
 
     // 插入初始版本
     await db.rawInsert(
@@ -64,7 +66,11 @@ class MarketDatabase {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // 预留升级逻辑
+    if (oldVersion < 2) {
+      // Version 1 -> 2: Add date_check_status table
+      await db.execute(DatabaseSchema.createDateCheckStatusTable);
+      await db.execute(DatabaseSchema.createDateCheckStatusIndex);
+    }
   }
 
   Future<void> close() async {

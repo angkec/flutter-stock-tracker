@@ -73,4 +73,38 @@ void main() {
       await db.close();
     });
   });
+
+  group('Database schema version 2', () {
+    late MarketDatabase database;
+
+    setUp(() {
+      database = MarketDatabase();
+    });
+
+    test('should have date_check_status table after initialization', () async {
+      final db = await database.database;
+
+      // Query sqlite_master to check if table exists
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='date_check_status'"
+      );
+
+      expect(tables, isNotEmpty);
+      expect(tables.first['name'], equals('date_check_status'));
+    });
+
+    test('date_check_status table should have correct columns', () async {
+      final db = await database.database;
+
+      final columns = await db.rawQuery("PRAGMA table_info(date_check_status)");
+      final columnNames = columns.map((c) => c['name'] as String).toList();
+
+      expect(columnNames, contains('stock_code'));
+      expect(columnNames, contains('data_type'));
+      expect(columnNames, contains('date'));
+      expect(columnNames, contains('status'));
+      expect(columnNames, contains('bar_count'));
+      expect(columnNames, contains('checked_at'));
+    });
+  });
 }
