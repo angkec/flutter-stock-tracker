@@ -427,4 +427,31 @@ class KLineMetadataManager {
 
     return tradingDates.toList()..sort();
   }
+
+  /// 统计指定日期的K线数量
+  ///
+  /// [stockCode] 股票代码
+  /// [dataType] 数据类型
+  /// [date] 日期（只使用年月日部分）
+  Future<int> countBarsForDate({
+    required String stockCode,
+    required KLineDataType dataType,
+    required DateTime date,
+  }) async {
+    final dateOnly = DateTime(date.year, date.month, date.day);
+    final nextDay = dateOnly.add(const Duration(days: 1));
+
+    // Load the month's data
+    final klines = await _fileStorage.loadMonthlyKlineFile(
+      stockCode,
+      dataType,
+      date.year,
+      date.month,
+    );
+
+    // Count bars for the specific date
+    return klines.where((k) {
+      return !k.datetime.isBefore(dateOnly) && k.datetime.isBefore(nextDay);
+    }).length;
+  }
 }

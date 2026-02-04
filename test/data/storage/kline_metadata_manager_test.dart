@@ -706,6 +706,78 @@ void main() {
       expect(tradingDates, isNot(contains(DateTime(2026, 1, 16))));
     });
   });
+
+  group('countBarsForDate', () {
+    test('returns correct count for a date with data', () async {
+      final date = DateTime(2026, 1, 15);
+
+      // Create 50 minute bars for the day
+      final klines = <KLine>[];
+      for (var i = 0; i < 50; i++) {
+        klines.add(_createKLine(
+          DateTime(date.year, date.month, date.day, 9, 30 + i),
+          10.0 + i * 0.01,
+        ));
+      }
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: klines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      final count = await manager.countBarsForDate(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        date: date,
+      );
+
+      expect(count, equals(50));
+    });
+
+    test('returns 0 for a date with no data', () async {
+      final count = await manager.countBarsForDate(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        date: DateTime(2026, 1, 15),
+      );
+
+      expect(count, equals(0));
+    });
+
+    test('counts only bars for the specified date', () async {
+      final jan15 = DateTime(2026, 1, 15);
+      final jan16 = DateTime(2026, 1, 16);
+
+      // Create bars for two days
+      final klines = [
+        _createKLine(DateTime(jan15.year, jan15.month, jan15.day, 10, 0), 10.0),
+        _createKLine(DateTime(jan15.year, jan15.month, jan15.day, 10, 1), 10.1),
+        _createKLine(DateTime(jan16.year, jan16.month, jan16.day, 10, 0), 11.0),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: klines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      final countJan15 = await manager.countBarsForDate(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        date: jan15,
+      );
+
+      final countJan16 = await manager.countBarsForDate(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        date: jan16,
+      );
+
+      expect(countJan15, equals(2));
+      expect(countJan16, equals(1));
+    });
+  });
 }
 
 KLine _createKLine(DateTime datetime, double price) {
