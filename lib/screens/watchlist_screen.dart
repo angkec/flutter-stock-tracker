@@ -183,8 +183,8 @@ class WatchlistScreenState extends State<WatchlistScreen>
           TabBar(
             controller: _tabController,
             tabs: const [
-              Tab(text: '自选'),
-              Tab(text: '持仓'),
+              Tab(key: ValueKey<String>('watchlist_tab'), text: '自选'),
+              Tab(key: ValueKey<String>('holdings_tab'), text: '持仓'),
             ],
           ),
           Expanded(

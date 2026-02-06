@@ -82,21 +82,25 @@ class _MainScreenState extends State<MainScreen> {
               },
               destinations: const [
                 NavigationDestination(
+                  key: ValueKey<String>('nav_watchlist'),
                   icon: Icon(Icons.star_outline),
                   selectedIcon: Icon(Icons.star),
                   label: '自选',
                 ),
                 NavigationDestination(
+                  key: ValueKey<String>('nav_market'),
                   icon: Icon(Icons.show_chart_outlined),
                   selectedIcon: Icon(Icons.show_chart),
                   label: '全市场',
                 ),
                 NavigationDestination(
+                  key: ValueKey<String>('nav_industry'),
                   icon: Icon(Icons.category_outlined),
                   selectedIcon: Icon(Icons.category),
                   label: '行业',
                 ),
                 NavigationDestination(
+                  key: ValueKey<String>('nav_breakout'),
                   icon: Icon(Icons.trending_up_outlined),
                   selectedIcon: Icon(Icons.trending_up),
                   label: '回踩',

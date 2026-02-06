@@ -7,7 +7,7 @@ class RefreshStatusWidget extends StatelessWidget {
   const RefreshStatusWidget({super.key});
 
   /// 用于 Flutter Driver 测试的 Key
-  static const refreshButtonKey = Key('refresh_status_widget');
+  static const refreshButtonKey = ValueKey<String>('refresh_status_widget');
 
   @override
   Widget build(BuildContext context) {

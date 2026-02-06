@@ -278,6 +278,7 @@ class StatusBar extends StatelessWidget {
     } else {
       // 空闲：显示刷新按钮
       return SizedBox(
+        key: const ValueKey<String>('refresh_button'),
         width: 32,
         height: 32,
         child: InkWell(
