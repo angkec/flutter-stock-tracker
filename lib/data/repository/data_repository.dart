@@ -111,6 +111,12 @@ abstract class DataRepository {
   /// 某天只要有任意股票有日K数据，就认为是交易日
   Future<List<DateTime>> getTradingDates(DateRange dateRange);
 
+  /// 清除数据完整性检测缓存
+  ///
+  /// 清除后，下次调用 findMissingMinuteDates 会重新检测所有日期
+  /// [dataType] 可选，指定则只清除该数据类型的缓存
+  Future<int> clearFreshnessCache({KLineDataType? dataType});
+
   // ============ 资源管理 ============
 
   /// 释放资源

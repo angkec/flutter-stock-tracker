@@ -1,9 +1,7 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:stock_rtwatcher/config/debug_config.dart';
-import 'package:stock_rtwatcher/data/models/data_freshness.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
@@ -12,8 +10,22 @@ import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 
-class DataManagementScreen extends StatelessWidget {
+class DataManagementScreen extends StatefulWidget {
   const DataManagementScreen({super.key});
+
+  @override
+  State<DataManagementScreen> createState() => _DataManagementScreenState();
+}
+
+class _DataManagementScreenState extends State<DataManagementScreen> {
+  // 用于强制刷新 FutureBuilder
+  int _refreshKey = 0;
+
+  void _triggerRefresh() {
+    setState(() {
+      _refreshKey++;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +67,7 @@ class DataManagementScreen extends StatelessWidget {
               Consumer<DataRepository>(
                 builder: (context, repository, _) {
                   return FutureBuilder<({String subtitle, int missingDays})>(
+                    key: ValueKey(_refreshKey),
                     future: _getKlineStatus(repository, provider),
                     builder: (context, snapshot) {
                       final status = snapshot.data ?? (subtitle: '加载中...', missingDays: 0);
@@ -67,6 +80,7 @@ class DataManagementScreen extends StatelessWidget {
                         missingDays: status.missingDays,
                         isLoading: false, // Loading state handled by progress dialog
                         onFetch: () => _fetchHistoricalKline(context),
+                        onRecheck: () => _recheckDataFreshness(context, repository),
                         onClear: () => _confirmClear(context, '历史分钟K线', () async {
                           // Clear all minute K-line data by cleaning up with a future date
                           await repository.cleanupOldData(
@@ -75,6 +89,7 @@ class DataManagementScreen extends StatelessWidget {
                           if (context.mounted) {
                             context.read<IndustryTrendService>().clearCache();
                             context.read<IndustryRankService>().clearCache();
+                            _triggerRefresh();
                           }
                         }),
                       );
@@ -186,6 +201,7 @@ class DataManagementScreen extends StatelessWidget {
     required bool isLoading,
     required VoidCallback onFetch,
     required VoidCallback onClear,
+    required VoidCallback onRecheck,
   }) {
     return Card(
       child: Padding(
@@ -227,6 +243,14 @@ class DataManagementScreen extends StatelessWidget {
                   ),
                 if (missingDays > 0) const SizedBox(width: 8),
                 Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onRecheck,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('重新检测'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
                   child: OutlinedButton(
                     onPressed: onClear,
                     child: const Text('清空'),
@@ -254,41 +278,132 @@ class DataManagementScreen extends StatelessWidget {
     try {
       final allStockCodes = provider.allData.map((d) => d.stock.code).toList();
 
-      // 只抽样检查前 50 只股票，避免检查全部导致卡顿
-      const sampleSize = 50;
+      // 只抽样检查前 20 只股票，避免检查全部导致卡顿
+      const sampleSize = 20;
       final sampleCodes = allStockCodes.length > sampleSize
           ? allStockCodes.sublist(0, sampleSize)
           : allStockCodes;
-
-      final freshness = await repository.checkFreshness(
-        stockCodes: sampleCodes,
-        dataType: KLineDataType.oneMinute,
-      );
-
-      int freshCount = 0;
-      for (final entry in freshness.entries) {
-        if (entry.value is Fresh) {
-          freshCount++;
-        }
-      }
 
       final dateRange = DateRange(
         DateTime.now().subtract(const Duration(days: 30)),
         DateTime.now(),
       );
+
+      // 使用 findMissingMinuteDatesBatch 获取真实的完整性状态
+      final results = await repository.findMissingMinuteDatesBatch(
+        stockCodes: sampleCodes,
+        dateRange: dateRange,
+      );
+
+      int completeCount = 0;
+      int totalMissingDays = 0;
+      int totalIncompleteDays = 0;
+
+      for (final entry in results.entries) {
+        final result = entry.value;
+        if (result.missingDates.isEmpty && result.incompleteDates.isEmpty) {
+          // 数据完整
+          completeCount++;
+        }
+        totalMissingDays += result.missingDates.length;
+        totalIncompleteDays += result.incompleteDates.length;
+      }
+
       final dateRangeStr = '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}';
 
-      // 简单判断：如果抽样中大部分有数据，就认为数据完整
-      if (freshCount == 0) {
+      // 判断整体状态
+      if (completeCount == 0 && totalMissingDays == 0 && totalIncompleteDays == 0) {
+        // 没有交易日数据（可能日K也没有）
         return (subtitle: '$dateRangeStr，暂无数据', missingDays: 30);
-      } else if (freshCount >= sampleCodes.length * 0.8) {
-        return (subtitle: '$dateRangeStr，数据完整', missingDays: 0);
+      } else if (completeCount >= sampleCodes.length * 0.8) {
+        return (subtitle: '$dateRangeStr，数据完整 ($completeCount/${sampleCodes.length})', missingDays: 0);
+      } else if (totalMissingDays > 0 || totalIncompleteDays > 0) {
+        final issue = totalMissingDays > 0 ? '缺失$totalMissingDays天' : '不完整$totalIncompleteDays天';
+        return (subtitle: '$dateRangeStr，$issue', missingDays: totalMissingDays + totalIncompleteDays);
       } else {
-        return (subtitle: '$dateRangeStr，部分数据缺失', missingDays: 1);
+        return (subtitle: '$dateRangeStr，部分完整 ($completeCount/${sampleCodes.length})', missingDays: 1);
       }
     } catch (e) {
       debugPrint('[DataManagement] 获取K线状态失败: $e');
       return (subtitle: '状态未知', missingDays: 0);
+    }
+  }
+
+  /// 重新检测数据完整性（清除缓存后重新检查）
+  Future<void> _recheckDataFreshness(BuildContext context, DataRepository repository) async {
+    final marketProvider = context.read<MarketDataProvider>();
+
+    if (marketProvider.allData.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先刷新市场数据')),
+      );
+      return;
+    }
+
+    // 显示进度对话框
+    final progressNotifier = ValueNotifier<({int current, int total, String stage})>(
+      (current: 0, total: 1, stage: '清除缓存...'),
+    );
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ProgressDialog(progressNotifier: progressNotifier),
+    );
+
+    try {
+      // 1. 清除检测缓存
+      final clearedCount = await repository.clearFreshnessCache(
+        dataType: KLineDataType.oneMinute,
+      );
+      debugPrint('[DataManagement] 已清除 $clearedCount 条检测缓存');
+
+      // 2. 获取所有股票代码
+      var stocks = marketProvider.allData.map((d) => d.stock).toList();
+      stocks = DebugConfig.limitStocks(stocks);
+      final stockCodes = stocks.map((s) => s.code).toList();
+
+      final dateRange = DateRange(
+        DateTime.now().subtract(const Duration(days: 30)),
+        DateTime.now(),
+      );
+
+      progressNotifier.value = (
+        current: 0,
+        total: stockCodes.length,
+        stage: '重新检测数据完整性...',
+      );
+
+      // 3. 重新检测所有股票
+      await repository.findMissingMinuteDatesBatch(
+        stockCodes: stockCodes,
+        dateRange: dateRange,
+        onProgress: (current, total) {
+          progressNotifier.value = (
+            current: current,
+            total: total,
+            stage: '重新检测数据完整性...',
+          );
+        },
+      );
+
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已完成 ${stockCodes.length} 只股票的数据完整性检测')),
+        );
+        _triggerRefresh();
+      }
+    } catch (e) {
+      debugPrint('[DataManagement] 重新检测失败: $e');
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('检测失败: $e')),
+        );
+      }
+    } finally {
+      progressNotifier.dispose();
     }
   }
 
@@ -372,6 +487,7 @@ class DataManagementScreen extends StatelessWidget {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('历史数据已更新')),
         );
+        _triggerRefresh();
       }
       progressNotifier.dispose();
     }

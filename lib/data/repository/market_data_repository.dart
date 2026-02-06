@@ -119,44 +119,52 @@ class MarketDataRepository implements DataRepository {
     final result = <String, DataFreshness>{};
 
     for (final stockCode in stockCodes) {
-      try {
-        // 获取最新数据日期
-        final latestDate = await _metadataManager.getLatestDataDate(
-          stockCode: stockCode,
-          dataType: dataType,
+      // 1. Check for pending dates (excluding today)
+      final pendingDates = await _dateCheckStorage.getPendingDates(
+        stockCode: stockCode,
+        dataType: dataType,
+        excludeToday: true,
+      );
+
+      if (pendingDates.isNotEmpty) {
+        // Has incomplete historical dates -> Stale
+        result[stockCode] = Stale(
+          missingRange: DateRange(
+            pendingDates.first,
+            pendingDates.last,
+          ),
         );
+        continue;
+      }
 
-        if (latestDate == null) {
-          // 完全没有数据
-          result[stockCode] = const Missing();
-          continue;
-        }
+      // 2. Check latest checked date
+      final latestCheckedDate = await _dateCheckStorage.getLatestCheckedDate(
+        stockCode: stockCode,
+        dataType: dataType,
+      );
 
-        // 检查数据是否过时
-        final now = DateTime.now();
-        final age = now.difference(latestDate);
-
-        // 1分钟数据和日线数据：超过1天视为过时
-        // 注意：age > staleThreshold 意味着恰好24小时的数据仍视为新鲜
-        const staleThreshold = Duration(days: 1);
-
-        if (age > staleThreshold) {
-          // 数据过时，需要拉取从 latestDate+1 到现在的数据
-          final missingStart = latestDate.add(const Duration(days: 1));
-          result[stockCode] = Stale(
-            missingRange: DateRange(missingStart, now),
-          );
-        } else {
-          // 数据新鲜
-          result[stockCode] = const Fresh();
-        }
-      } catch (e, stackTrace) {
-        // 出错视为缺失
-        debugPrint('Failed to check freshness for $stockCode: $e');
-        if (kDebugMode) {
-          debugPrint('Stack trace: $stackTrace');
-        }
+      if (latestCheckedDate == null) {
+        // Never checked -> Missing
         result[stockCode] = const Missing();
+        continue;
+      }
+
+      // 3. Check if there might be new unchecked dates
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final daysSinceLastCheck = today.difference(latestCheckedDate).inDays;
+
+      if (daysSinceLastCheck > 1) {
+        // Might have new trading days not yet checked -> Stale
+        result[stockCode] = Stale(
+          missingRange: DateRange(
+            latestCheckedDate.add(const Duration(days: 1)),
+            now,
+          ),
+        );
+      } else {
+        // Data is complete -> Fresh
+        result[stockCode] = const Fresh();
       }
     }
 
@@ -239,11 +247,27 @@ class MarketDataRepository implements DataRepository {
     required KLineDataType dataType,
     ProgressCallback? onProgress,
   }) async {
+    return _fetchDataInternal(
+      stockCodes: stockCodes,
+      dateRange: dateRange,
+      dataType: dataType,
+      onProgress: onProgress,
+      skipPrecheck: false,
+    );
+  }
+
+  /// 内部拉取方法，支持跳过预检查
+  Future<FetchResult> _fetchDataInternal({
+    required List<String> stockCodes,
+    required DateRange dateRange,
+    required KLineDataType dataType,
+    ProgressCallback? onProgress,
+    required bool skipPrecheck,
+  }) async {
     final stopwatch = Stopwatch()..start();
-    final total = stockCodes.length;
 
     // 处理空列表
-    if (total == 0) {
+    if (stockCodes.isEmpty) {
       return FetchResult(
         totalStocks: 0,
         successCount: 0,
@@ -254,11 +278,58 @@ class MarketDataRepository implements DataRepository {
       );
     }
 
+    // ============ 预检查：过滤掉已完整的股票 ============
+    final stocksNeedingFetch = <String>[];
+    final skippedStocks = <String>[];
+
+    if (!skipPrecheck && dataType == KLineDataType.oneMinute) {
+      for (final stockCode in stockCodes) {
+        final missingInfo = await findMissingMinuteDates(
+          stockCode: stockCode,
+          dateRange: dateRange,
+        );
+
+        // datesToFetch = missingDates + incompleteDates
+        final datesToFetch = [
+          ...missingInfo.missingDates,
+          ...missingInfo.incompleteDates,
+        ];
+
+        if (datesToFetch.isNotEmpty) {
+          stocksNeedingFetch.add(stockCode);
+        } else {
+          skippedStocks.add(stockCode);
+        }
+      }
+
+      debugPrint('fetchMissingData: ${skippedStocks.length} stocks skipped (already complete), '
+                 '${stocksNeedingFetch.length} stocks need fetching');
+    } else {
+      // 跳过预检查或日线数据 - 拉取所有股票
+      stocksNeedingFetch.addAll(stockCodes);
+    }
+
+    // 如果所有股票都已完整，直接返回成功
+    if (stocksNeedingFetch.isEmpty) {
+      stopwatch.stop();
+      return FetchResult(
+        totalStocks: stockCodes.length,
+        successCount: stockCodes.length,
+        failureCount: 0,
+        errors: {},
+        totalRecords: 0,
+        duration: stopwatch.elapsed,
+      );
+    }
+    // ============ 预检查结束 ============
+
+    final total = stocksNeedingFetch.length;
+
     // 发出 DataFetching 状态
     _statusController.add(DataFetching(
       current: 0,
       total: total,
-      currentStock: stockCodes.first,
+      currentStock: stocksNeedingFetch.first,
     ));
 
     // 连接到 TDX 服务器
@@ -268,9 +339,9 @@ class MarketDataRepository implements DataRepository {
         debugPrint('fetchMissingData: 无法连接到 TDX 服务器');
         stopwatch.stop();
 
-        // 所有股票都视为失败
+        // 需要拉取的股票都视为失败
         final errors = <String, String>{};
-        for (final code in stockCodes) {
+        for (final code in stocksNeedingFetch) {
           errors[code] = '无法连接到 TDX 服务器';
         }
 
@@ -352,7 +423,7 @@ class MarketDataRepository implements DataRepository {
       while (nextIndex < total && activeCount < maxConcurrent) {
         final index = nextIndex++;
         activeCount++;
-        processStock(stockCodes[index]).whenComplete(() {
+        processStock(stocksNeedingFetch[index]).whenComplete(() {
           activeCount--;
           if (nextIndex < total) {
             startNext();
@@ -386,9 +457,12 @@ class MarketDataRepository implements DataRepository {
     // 发出 DataReady 状态
     _statusController.add(DataReady(currentVersion));
 
+    // 跳过的股票视为成功（已完整）
+    final totalSuccessCount = successCount + skippedStocks.length;
+
     return FetchResult(
-      totalStocks: total,
-      successCount: successCount,
+      totalStocks: stockCodes.length,
+      successCount: totalSuccessCount,
       failureCount: failureCount,
       errors: errors,
       totalRecords: totalRecords,
@@ -476,14 +550,13 @@ class MarketDataRepository implements DataRepository {
     required KLineDataType dataType,
     ProgressCallback? onProgress,
   }) async {
-    // refetchData 和 fetchMissingData 逻辑相同
-    // 区别在于 refetchData 强制重新拉取，覆盖现有数据
-    // 由于 saveKlineData 会覆盖同月数据，所以实现相同
-    return await fetchMissingData(
+    // refetchData 强制重新拉取，跳过预检查
+    return await _fetchDataInternal(
       stockCodes: stockCodes,
       dateRange: dateRange,
       dataType: dataType,
       onProgress: onProgress,
+      skipPrecheck: true,
     );
   }
 
@@ -634,6 +707,15 @@ class MarketDataRepository implements DataRepository {
   @override
   Future<List<DateTime>> getTradingDates(DateRange dateRange) async {
     return await _metadataManager.getTradingDates(dateRange);
+  }
+
+  @override
+  Future<int> clearFreshnessCache({KLineDataType? dataType}) async {
+    final count = await _dateCheckStorage.clearCheckStatus(
+      dataType: dataType,
+    );
+    debugPrint('clearFreshnessCache: cleared $count cached check records');
+    return count;
   }
 
   /// 释放资源

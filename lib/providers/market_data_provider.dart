@@ -455,19 +455,24 @@ class MarketDataProvider extends ChangeNotifier {
   }
 
   /// 检测高质量回踩（下载日K数据）
-  /// 增量更新：如果当天已拉取过且缓存不为空，跳过重新拉取
+  /// 增量更新：如果当天已拉取过且缓存完整，跳过重新拉取
   Future<void> _detectPullbacks() async {
     if (_pullbackService == null || _allData.isEmpty) return;
 
+    // 获取所有股票信息
+    final stocks = _allData.map((d) => d.stock).toList();
+
     // 检查是否需要重新拉取日K数据
     final today = DateTime.now().toString().substring(0, 10);
-    final needFetchDaily = _lastFetchDate != today || _dailyBarsCache.isEmpty;
+    final cacheIncomplete = _dailyBarsCache.length < stocks.length;
+    final needFetchDaily = _lastFetchDate != today || _dailyBarsCache.isEmpty || cacheIncomplete;
+
+    if (cacheIncomplete && _dailyBarsCache.isNotEmpty) {
+      debugPrint('[MarketDataProvider] 日K缓存不完整: ${_dailyBarsCache.length}/${stocks.length}，将重新拉取');
+    }
 
     if (needFetchDaily) {
-      // 获取所有股票信息
-      final stocks = _allData.map((d) => d.stock).toList();
-
-      // 批量获取日K数据（15根，用于回踩检测）
+      // 批量获取日K数据（60根，用于回踩检测）
       _dailyBarsCache.clear();
       var completed = 0;
       final total = stocks.length;

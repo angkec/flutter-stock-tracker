@@ -130,4 +130,36 @@ class DateCheckStorage {
     final dateMs = rows.first['date'] as int;
     return DateTime.fromMillisecondsSinceEpoch(dateMs);
   }
+
+  /// 清除检测缓存
+  ///
+  /// [stockCode] 可选，指定则只清除该股票的缓存
+  /// [dataType] 可选，指定则只清除该数据类型的缓存
+  /// 都不指定则清除所有缓存
+  Future<int> clearCheckStatus({
+    String? stockCode,
+    KLineDataType? dataType,
+  }) async {
+    final db = await _database.database;
+
+    String query = 'DELETE FROM date_check_status';
+    final conditions = <String>[];
+    final args = <dynamic>[];
+
+    if (stockCode != null) {
+      conditions.add('stock_code = ?');
+      args.add(stockCode);
+    }
+
+    if (dataType != null) {
+      conditions.add('data_type = ?');
+      args.add(dataType.name);
+    }
+
+    if (conditions.isNotEmpty) {
+      query += ' WHERE ${conditions.join(' AND ')}';
+    }
+
+    return await db.rawDelete(query, args);
+  }
 }

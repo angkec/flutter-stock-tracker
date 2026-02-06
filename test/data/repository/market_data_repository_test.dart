@@ -11,6 +11,7 @@ import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/data_freshness.dart';
+import 'package:stock_rtwatcher/data/models/day_data_status.dart';
 import 'package:stock_rtwatcher/data/models/data_updated_event.dart';
 import 'package:stock_rtwatcher/data/models/fetch_result.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
@@ -271,25 +272,52 @@ void main() {
     });
 
     test('should detect fresh data', () async {
-      // Save recent data (today)
-      final todayKlines = [
-        KLine(
-          datetime: DateTime.now(),
-          open: 10.0,
-          close: 10.5,
-          high: 10.8,
-          low: 9.9,
-          volume: 1000,
-          amount: 10000,
-        ),
-      ];
+      final today = DateTime.now();
+      final todayDate = DateTime(today.year, today.month, today.day);
 
+      // Define trading day via daily data
       await manager.saveKlineData(
         stockCode: '000001',
-        newBars: todayKlines,
+        newBars: [
+          KLine(
+            datetime: todayDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      // Save complete minute data (230 bars)
+      final minuteKlines = <KLine>[];
+      for (var i = 0; i < 230; i++) {
+        minuteKlines.add(KLine(
+          datetime: DateTime(todayDate.year, todayDate.month, todayDate.day, 9, 30).add(Duration(minutes: i)),
+          open: 10.0 + i * 0.01,
+          close: 10.5 + i * 0.01,
+          high: 10.8 + i * 0.01,
+          low: 9.9 + i * 0.01,
+          volume: 1000.0 + i,
+          amount: 10000 + i * 10,
+        ));
+      }
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: minuteKlines,
         dataType: KLineDataType.oneMinute,
       );
 
+      // Populate cache
+      await repository.findMissingMinuteDates(
+        stockCode: '000001',
+        dateRange: DateRange(todayDate, todayDate),
+      );
+
+      // Now check freshness
       final freshness = await repository.checkFreshness(
         stockCodes: ['000001'],
         dataType: KLineDataType.oneMinute,
@@ -300,22 +328,50 @@ void main() {
 
     test('should detect stale data', () async {
       // Save old data (7 days ago)
-      final oldKlines = [
-        KLine(
-          datetime: DateTime.now().subtract(const Duration(days: 7)),
-          open: 10.0,
-          close: 10.5,
-          high: 10.8,
-          low: 9.9,
-          volume: 1000,
-          amount: 10000,
-        ),
-      ];
+      final today = DateTime.now();
+      final todayDate = DateTime(today.year, today.month, today.day);
+      final oldDate = todayDate.subtract(const Duration(days: 7));
 
+      // Define trading day via daily data
       await manager.saveKlineData(
         stockCode: '000002',
-        newBars: oldKlines,
+        newBars: [
+          KLine(
+            datetime: oldDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      // Save incomplete minute data (only 50 bars - less than 220)
+      final minuteKlines = <KLine>[];
+      for (var i = 0; i < 50; i++) {
+        minuteKlines.add(KLine(
+          datetime: DateTime(oldDate.year, oldDate.month, oldDate.day, 9, 30).add(Duration(minutes: i)),
+          open: 10.0 + i * 0.01,
+          close: 10.5 + i * 0.01,
+          high: 10.8 + i * 0.01,
+          low: 9.9 + i * 0.01,
+          volume: 1000.0 + i,
+          amount: 10000 + i * 10,
+        ));
+      }
+      await manager.saveKlineData(
+        stockCode: '000002',
+        newBars: minuteKlines,
         dataType: KLineDataType.oneMinute,
+      );
+
+      // Populate cache
+      await repository.findMissingMinuteDates(
+        stockCode: '000002',
+        dateRange: DateRange(oldDate, oldDate),
       );
 
       final freshness = await repository.checkFreshness(
@@ -338,25 +394,51 @@ void main() {
     });
 
     test('should detect data exactly 24 hours old as fresh', () async {
-      // Save data just under 24 hours ago (23 hours 59 minutes)
-      // Note: We use slightly less than 24 hours because DateTime.now() is called
-      // twice (in test and repository), causing millisecond differences
-      final boundaryKlines = [
-        KLine(
-          datetime: DateTime.now().subtract(const Duration(hours: 23, minutes: 59)),
-          open: 10.0,
-          close: 10.5,
-          high: 10.8,
-          low: 9.9,
-          volume: 1000,
-          amount: 10000,
-        ),
-      ];
+      // Save data for yesterday (within 24 hours threshold)
+      final today = DateTime.now();
+      final todayDate = DateTime(today.year, today.month, today.day);
+      final yesterdayDate = todayDate.subtract(const Duration(days: 1));
 
+      // Define trading day via daily data
       await manager.saveKlineData(
         stockCode: '000003',
-        newBars: boundaryKlines,
+        newBars: [
+          KLine(
+            datetime: yesterdayDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      // Save complete minute data (230 bars)
+      final minuteKlines = <KLine>[];
+      for (var i = 0; i < 230; i++) {
+        minuteKlines.add(KLine(
+          datetime: DateTime(yesterdayDate.year, yesterdayDate.month, yesterdayDate.day, 9, 30).add(Duration(minutes: i)),
+          open: 10.0 + i * 0.01,
+          close: 10.5 + i * 0.01,
+          high: 10.8 + i * 0.01,
+          low: 9.9 + i * 0.01,
+          volume: 1000.0 + i,
+          amount: 10000 + i * 10,
+        ));
+      }
+      await manager.saveKlineData(
+        stockCode: '000003',
+        newBars: minuteKlines,
         dataType: KLineDataType.oneMinute,
+      );
+
+      // Populate cache
+      await repository.findMissingMinuteDates(
+        stockCode: '000003',
+        dateRange: DateRange(yesterdayDate, yesterdayDate),
       );
 
       final freshness = await repository.checkFreshness(
@@ -364,28 +446,56 @@ void main() {
         dataType: KLineDataType.oneMinute,
       );
 
-      // Just under 24 hours is Fresh (age > threshold, not >=)
+      // Data from yesterday with complete bars is Fresh (daysSinceLastCheck <= 1)
       expect(freshness['000003'], isA<Fresh>());
     });
 
     test('should detect data just over 24 hours old as stale', () async {
-      // Save data 25 hours ago
-      final justOverKlines = [
-        KLine(
-          datetime: DateTime.now().subtract(const Duration(hours: 25)),
-          open: 10.0,
-          close: 10.5,
-          high: 10.8,
-          low: 9.9,
-          volume: 1000,
-          amount: 10000,
-        ),
-      ];
+      // Save data 2 days ago (over 24 hours threshold)
+      final today = DateTime.now();
+      final todayDate = DateTime(today.year, today.month, today.day);
+      final twoDaysAgo = todayDate.subtract(const Duration(days: 2));
 
+      // Define trading day via daily data
       await manager.saveKlineData(
         stockCode: '000004',
-        newBars: justOverKlines,
+        newBars: [
+          KLine(
+            datetime: twoDaysAgo,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      // Save complete minute data (230 bars)
+      final minuteKlines = <KLine>[];
+      for (var i = 0; i < 230; i++) {
+        minuteKlines.add(KLine(
+          datetime: DateTime(twoDaysAgo.year, twoDaysAgo.month, twoDaysAgo.day, 9, 30).add(Duration(minutes: i)),
+          open: 10.0 + i * 0.01,
+          close: 10.5 + i * 0.01,
+          high: 10.8 + i * 0.01,
+          low: 9.9 + i * 0.01,
+          volume: 1000.0 + i,
+          amount: 10000 + i * 10,
+        ));
+      }
+      await manager.saveKlineData(
+        stockCode: '000004',
+        newBars: minuteKlines,
         dataType: KLineDataType.oneMinute,
+      );
+
+      // Populate cache
+      await repository.findMissingMinuteDates(
+        stockCode: '000004',
+        dateRange: DateRange(twoDaysAgo, twoDaysAgo),
       );
 
       final freshness = await repository.checkFreshness(
@@ -393,7 +503,7 @@ void main() {
         dataType: KLineDataType.oneMinute,
       );
 
-      // Over 24 hours is Stale
+      // Over 24 hours (daysSinceLastCheck > 1) is Stale
       expect(freshness['000004'], isA<Stale>());
     });
   });
@@ -701,9 +811,27 @@ void main() {
 
     test('should fetch missing data and save to storage', () async {
       // 准备测试数据
+      final testDate = DateTime(2024, 1, 15);
       final dateRange = DateRange(
-        DateTime(2024, 1, 15),
+        testDate,
         DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 定义交易日（通过日线数据）
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: testDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
       );
 
       // 生成 mock K线数据（5条1分钟数据）
@@ -745,10 +873,30 @@ void main() {
 
     test('should report progress during fetch', () async {
       // 准备测试数据
+      final testDate = DateTime(2024, 1, 15);
       final dateRange = DateRange(
-        DateTime(2024, 1, 15),
+        testDate,
         DateTime(2024, 1, 15, 9, 35),
       );
+
+      // 定义交易日（通过日线数据）
+      for (final code in ['000001', '000002', '600000']) {
+        await manager.saveKlineData(
+          stockCode: code,
+          newBars: [
+            KLine(
+              datetime: testDate,
+              open: 10.0,
+              close: 10.5,
+              high: 10.8,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
+        );
+      }
 
       // 生成 mock K线数据
       final mockKlines = generateTestKlines(
@@ -786,9 +934,27 @@ void main() {
 
     test('should emit DataUpdatedEvent after successful fetch', () async {
       // 准备测试数据
+      final testDate = DateTime(2024, 1, 15);
       final dateRange = DateRange(
-        DateTime(2024, 1, 15),
+        testDate,
         DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 定义交易日（通过日线数据）
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: testDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
       );
 
       final mockKlines = generateTestKlines(
@@ -826,9 +992,27 @@ void main() {
 
     test('should emit DataFetching status during fetch', () async {
       // 准备测试数据
+      final testDate = DateTime(2024, 1, 15);
       final dateRange = DateRange(
-        DateTime(2024, 1, 15),
+        testDate,
         DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 定义交易日（通过日线数据）
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: testDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
       );
 
       final mockKlines = generateTestKlines(
@@ -864,10 +1048,30 @@ void main() {
 
     test('should handle errors per-stock without aborting', () async {
       // 准备测试数据
+      final testDate = DateTime(2024, 1, 15);
       final dateRange = DateRange(
-        DateTime(2024, 1, 15),
+        testDate,
         DateTime(2024, 1, 15, 9, 35),
       );
+
+      // 定义交易日（通过日线数据）
+      for (final code in ['000001', '000002']) {
+        await manager.saveKlineData(
+          stockCode: code,
+          newBars: [
+            KLine(
+              datetime: testDate,
+              open: 10.0,
+              close: 10.5,
+              high: 10.8,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
+        );
+      }
 
       final mockKlines = generateTestKlines(
         startDate: DateTime(2024, 1, 15, 9, 30),
@@ -910,9 +1114,27 @@ void main() {
       // 设置连接失败
       mockTdxClient.shouldConnectSucceed = false;
 
+      final testDate = DateTime(2024, 1, 15);
       final dateRange = DateRange(
-        DateTime(2024, 1, 15),
+        testDate,
         DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 定义交易日（通过日线数据）
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: testDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
       );
 
       // 调用 fetchMissingData
@@ -929,9 +1151,27 @@ void main() {
     });
 
     test('should map data type to correct TDX category', () async {
+      final testDate = DateTime(2024, 1, 15);
       final dateRange = DateRange(
-        DateTime(2024, 1, 15),
+        testDate,
         DateTime(2024, 1, 16),
+      );
+
+      // 定义交易日（通过日线数据）
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: testDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
       );
 
       // 测试1分钟数据
@@ -981,9 +1221,27 @@ void main() {
 
     test('should invalidate cache for updated stocks', () async {
       // 先手动添加一些缓存数据
+      final testDate = DateTime(2024, 1, 15);
       final dateRange = DateRange(
-        DateTime(2024, 1, 15),
+        testDate,
         DateTime(2024, 1, 15, 9, 35),
+      );
+
+      // 定义交易日（通过日线数据）
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: testDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
       );
 
       // 首先保存一些旧数据
@@ -1086,6 +1344,198 @@ void main() {
       expect(result.successCount, equals(0));
       expect(result.failureCount, equals(0));
       expect(result.totalRecords, equals(0));
+    });
+
+    test('should skip stocks with complete data', () async {
+      // 1. Setup: Save complete data for a stock (≥220 bars)
+      final testDate = DateTime(2024, 1, 15);
+      final dateRange = DateRange(testDate, testDate.add(const Duration(hours: 23)));
+
+      // First, save daily data to define trading day
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: testDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      // Save complete minute data (230 bars - more than 220 threshold)
+      final completeKlines = <KLine>[];
+      for (var i = 0; i < 230; i++) {
+        completeKlines.add(KLine(
+          datetime: DateTime(testDate.year, testDate.month, testDate.day, 9, 30).add(Duration(minutes: i)),
+          open: 10.0 + i * 0.01,
+          close: 10.5 + i * 0.01,
+          high: 10.8 + i * 0.01,
+          low: 9.9 + i * 0.01,
+          volume: 1000.0 + i,
+          amount: 10000 + i * 10,
+        ));
+      }
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: completeKlines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 2. Call fetchMissingData
+      mockTdxClient.clearBarRequests();
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 3. Verify: stock was skipped (no TDX requests made)
+      expect(mockTdxClient.barRequests, isEmpty);
+      expect(result.totalStocks, equals(1));
+      expect(result.successCount, equals(1)); // Skipped counts as success
+      expect(result.failureCount, equals(0));
+      expect(result.totalRecords, equals(0)); // No new records fetched
+    });
+
+    test('should fetch stocks with missing data', () async {
+      // 1. Setup: Stock has no data at all
+      final testDate = DateTime(2024, 1, 16);
+      final dateRange = DateRange(testDate, testDate.add(const Duration(hours: 23)));
+
+      // Define trading day via daily data
+      await manager.saveKlineData(
+        stockCode: '000003',
+        newBars: [
+          KLine(
+            datetime: testDate,
+            open: 10.0,
+            close: 10.5,
+            high: 10.8,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      // Setup mock to return K-line data
+      final mockKlines = <KLine>[];
+      for (var i = 0; i < 5; i++) {
+        mockKlines.add(KLine(
+          datetime: DateTime(testDate.year, testDate.month, testDate.day, 9, 30).add(Duration(minutes: i)),
+          open: 10.0 + i * 0.1,
+          close: 10.0 + i * 0.1 + 0.05,
+          high: 10.0 + i * 0.1 + 0.1,
+          low: 10.0 + i * 0.1 - 0.05,
+          volume: 1000 + i * 10,
+          amount: 10000 + i * 100,
+        ));
+      }
+      mockTdxClient.barsToReturn = {
+        '0_000003_7': mockKlines,
+      };
+
+      // 2. Call fetchMissingData
+      mockTdxClient.clearBarRequests();
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000003'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 3. Verify: stock was fetched (TDX requests were made)
+      expect(mockTdxClient.barRequests, isNotEmpty);
+      expect(result.totalStocks, equals(1));
+      expect(result.successCount, equals(1));
+      expect(result.totalRecords, greaterThan(0));
+    });
+
+    test('should return correct counts for mixed stocks', () async {
+      // 1. Setup: One stock complete, one stock missing
+      final testDate = DateTime(2024, 1, 17);
+      final dateRange = DateRange(testDate, testDate.add(const Duration(hours: 23)));
+
+      // Define trading day for both stocks
+      for (final code in ['000004', '000005']) {
+        await manager.saveKlineData(
+          stockCode: code,
+          newBars: [
+            KLine(
+              datetime: testDate,
+              open: 10.0,
+              close: 10.5,
+              high: 10.8,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
+        );
+      }
+
+      // Save complete data for 000004 (230 bars)
+      final completeKlines = <KLine>[];
+      for (var i = 0; i < 230; i++) {
+        completeKlines.add(KLine(
+          datetime: DateTime(testDate.year, testDate.month, testDate.day, 9, 30).add(Duration(minutes: i)),
+          open: 10.0 + i * 0.01,
+          close: 10.5 + i * 0.01,
+          high: 10.8 + i * 0.01,
+          low: 9.9 + i * 0.01,
+          volume: 1000.0 + i,
+          amount: 10000 + i * 10,
+        ));
+      }
+      await manager.saveKlineData(
+        stockCode: '000004',
+        newBars: completeKlines,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 000005 has no minute data (missing)
+
+      // Setup mock for 000005
+      final mockKlines = <KLine>[];
+      for (var i = 0; i < 5; i++) {
+        mockKlines.add(KLine(
+          datetime: DateTime(testDate.year, testDate.month, testDate.day, 9, 30).add(Duration(minutes: i)),
+          open: 10.0 + i * 0.1,
+          close: 10.0 + i * 0.1 + 0.05,
+          high: 10.0 + i * 0.1 + 0.1,
+          low: 10.0 + i * 0.1 - 0.05,
+          volume: 1000 + i * 10,
+          amount: 10000 + i * 100,
+        ));
+      }
+      mockTdxClient.barsToReturn = {
+        '0_000005_7': mockKlines,
+      };
+
+      // 2. Call fetchMissingData with both stocks
+      mockTdxClient.clearBarRequests();
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000004', '000005'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // 3. Verify counts
+      expect(result.totalStocks, equals(2));
+      expect(result.successCount, equals(2)); // 1 skipped + 1 fetched
+      expect(result.failureCount, equals(0));
+
+      // Verify only 000005 was fetched (000004 was skipped)
+      final fetchedCodes = mockTdxClient.barRequests.map((r) => r.code).toSet();
+      expect(fetchedCodes.contains('000005'), isTrue);
+      expect(fetchedCodes.contains('000004'), isFalse);
     });
   });
 
