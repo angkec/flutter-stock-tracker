@@ -8,9 +8,11 @@ import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/data_management_screen.dart';
 import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
+import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/widgets/industry_buildup_list.dart';
 import 'package:stock_rtwatcher/widgets/industry_rank_list.dart';
 import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 import 'package:stock_rtwatcher/widgets/status_bar.dart';
@@ -41,7 +43,7 @@ class _IndustryScreenState extends State<IndustryScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -343,6 +345,7 @@ class _IndustryScreenState extends State<IndustryScreen>
     final marketProvider = context.watch<MarketDataProvider>();
     final trendService = context.watch<IndustryTrendService>();
     final rankService = context.watch<IndustryRankService>();
+    context.watch<IndustryBuildUpService>();
     context.watch<HistoricalKlineService>();
 
     _maybeRecheckTrend(marketProvider);
@@ -387,7 +390,9 @@ class _IndustryScreenState extends State<IndustryScreen>
               tooltip: '筛选',
             ),
           // 更新趋势按钮
-          if (marketProvider.allData.isNotEmpty && !trendService.isLoading)
+          if (_tabController.index != 2 &&
+              marketProvider.allData.isNotEmpty &&
+              !trendService.isLoading)
             IconButton(
               onPressed: _manualRefreshTrend,
               icon: const Icon(Icons.refresh, size: 20),
@@ -420,6 +425,7 @@ class _IndustryScreenState extends State<IndustryScreen>
                         : '行业统计',
                   ),
                   const Tab(text: '排名趋势'),
+                  const Tab(text: '建仓雷达'),
                 ],
               ),
             ),
@@ -447,6 +453,7 @@ class _IndustryScreenState extends State<IndustryScreen>
                       );
                     },
                   ),
+                  const IndustryBuildupList(fullHeight: true),
                 ],
               ),
             ),
