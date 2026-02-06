@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/models/industry_stats.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
@@ -83,13 +85,27 @@ class _IndustryScreenState extends State<IndustryScreen>
     }
   }
 
-  void _checkAndRefreshTrend() {
+  Future<void> _checkAndRefreshTrend() async {
     final trendService = context.read<IndustryTrendService>();
     final marketProvider = context.read<MarketDataProvider>();
+    final repository = context.read<DataRepository>();
 
     if (marketProvider.allData.isNotEmpty) {
       _hasMarketDataWhenChecked = true;
-      trendService.checkMissingDays();
+      final dateRange = DateRange(
+        DateTime.now().subtract(const Duration(days: 30)),
+        DateTime.now(),
+      );
+
+      try {
+        final tradingDays = await repository.getTradingDates(dateRange);
+        if (!mounted) return;
+        trendService.checkMissingDays(expectedTradingDays: tradingDays);
+      } catch (_) {
+        // Fall back to local estimation when repository lookup fails.
+        if (!mounted) return;
+        trendService.checkMissingDays();
+      }
     }
   }
 
@@ -112,9 +128,9 @@ class _IndustryScreenState extends State<IndustryScreen>
 
     if (marketProvider.allData.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('请先获取市场数据')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('请先获取市场数据')));
       }
       return;
     }
@@ -127,9 +143,9 @@ class _IndustryScreenState extends State<IndustryScreen>
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('趋势数据过时'),
-          content: Text(dataEmpty
-              ? '尚无历史趋势数据，是否拉取？'
-              : '缺失 $missingDays 天数据，是否重新拉取？'),
+          content: Text(
+            dataEmpty ? '尚无历史趋势数据，是否拉取？' : '缺失 $missingDays 天数据，是否重新拉取？',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -144,11 +160,9 @@ class _IndustryScreenState extends State<IndustryScreen>
       );
 
       if (shouldFetch == true && mounted) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => const DataManagementScreen(),
-          ),
-        );
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const DataManagementScreen()));
         return;
       }
     }
@@ -245,13 +259,19 @@ class _IndustryScreenState extends State<IndustryScreen>
 
     return stats.where((stat) {
       final todayRatio = todayTrend[stat.name]?.ratioAbovePercent;
-      if (!filterMatchesMinRatioPercent(todayRatio, _filter.minRatioAbovePercent)) {
+      if (!filterMatchesMinRatioPercent(
+        todayRatio,
+        _filter.minRatioAbovePercent,
+      )) {
         return false;
       }
 
       if (_filter.consecutiveRisingDays != null) {
         final trendData = _getTrendData(stat.name, trendService, todayTrend);
-        if (!filterMatchesConsecutiveRising(trendData, _filter.consecutiveRisingDays)) {
+        if (!filterMatchesConsecutiveRising(
+          trendData,
+          _filter.consecutiveRisingDays,
+        )) {
           return false;
         }
       }
@@ -285,7 +305,10 @@ class _IndustryScreenState extends State<IndustryScreen>
     return points;
   }
 
-  Widget _buildStaleDataBanner(BuildContext context, IndustryTrendService trendService) {
+  Widget _buildStaleDataBanner(
+    BuildContext context,
+    IndustryTrendService trendService,
+  ) {
     final missingDays = trendService.missingDays;
     if (missingDays == 0) return const SizedBox.shrink();
 
@@ -305,9 +328,7 @@ class _IndustryScreenState extends State<IndustryScreen>
           TextButton(
             onPressed: () {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const DataManagementScreen(),
-                ),
+                MaterialPageRoute(builder: (_) => const DataManagementScreen()),
               );
             },
             child: const Text('前往更新'),
@@ -322,7 +343,7 @@ class _IndustryScreenState extends State<IndustryScreen>
     final marketProvider = context.watch<MarketDataProvider>();
     final trendService = context.watch<IndustryTrendService>();
     final rankService = context.watch<IndustryRankService>();
-    final klineService = context.watch<HistoricalKlineService>();
+    context.watch<HistoricalKlineService>();
 
     _maybeRecheckTrend(marketProvider);
 
@@ -336,7 +357,11 @@ class _IndustryScreenState extends State<IndustryScreen>
     }
 
     final todayTrend = trendService.calculateTodayTrend(marketProvider.allData);
-    final allStats = _calculateStats(marketProvider.allData, trendService, todayTrend);
+    final allStats = _calculateStats(
+      marketProvider.allData,
+      trendService,
+      todayTrend,
+    );
     final filteredStats = _applyFilter(allStats, trendService, todayTrend);
 
     final hasActiveFilter = _filter.hasActiveFilters;
@@ -353,7 +378,9 @@ class _IndustryScreenState extends State<IndustryScreen>
               icon: Badge(
                 isLabelVisible: hasActiveFilter,
                 child: Icon(
-                  hasActiveFilter ? Icons.filter_alt : Icons.filter_alt_outlined,
+                  hasActiveFilter
+                      ? Icons.filter_alt
+                      : Icons.filter_alt_outlined,
                   size: 20,
                 ),
               ),
@@ -447,15 +474,9 @@ class _IndustryScreenState extends State<IndustryScreen>
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 16),
-            Text(
-              '暂无数据',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('暂无数据', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            Text(
-              '点击刷新按钮获取数据',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            Text('点击刷新按钮获取数据', style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
       );
@@ -497,7 +518,8 @@ class _IndustryScreenState extends State<IndustryScreen>
                   sortMode: IndustrySortMode.ratioPercent,
                   currentMode: _sortMode,
                   isAscending: _sortAscending,
-                  onTap: () => _onSortModeChanged(IndustrySortMode.ratioPercent),
+                  onTap: () =>
+                      _onSortModeChanged(IndustrySortMode.ratioPercent),
                 ),
               ),
               SizedBox(
@@ -571,7 +593,9 @@ class _IndustryScreenState extends State<IndustryScreen>
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: index.isOdd
-              ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
+              ? Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3)
               : null,
         ),
         child: Row(
@@ -830,7 +854,8 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
   @override
   void initState() {
     super.initState();
-    _consecutiveRisingEnabled = widget.currentFilter.consecutiveRisingDays != null;
+    _consecutiveRisingEnabled =
+        widget.currentFilter.consecutiveRisingDays != null;
     _consecutiveRisingDays = widget.currentFilter.consecutiveRisingDays ?? 3;
     _minRatioEnabled = widget.currentFilter.minRatioAbovePercent != null;
     _minRatioPercent = widget.currentFilter.minRatioAbovePercent ?? 50.0;
@@ -838,7 +863,9 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
 
   void _applyFilter() {
     final newFilter = IndustryFilter(
-      consecutiveRisingDays: _consecutiveRisingEnabled ? _consecutiveRisingDays : null,
+      consecutiveRisingDays: _consecutiveRisingEnabled
+          ? _consecutiveRisingDays
+          : null,
       minRatioAbovePercent: _minRatioEnabled ? _minRatioPercent : null,
     );
     widget.onFilterChanged(newFilter);
@@ -862,10 +889,7 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  '筛选条件',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
+                Text('筛选条件', style: Theme.of(context).textTheme.titleLarge),
                 IconButton(
                   onPressed: () => Navigator.of(context).pop(),
                   icon: const Icon(Icons.close),
@@ -972,33 +996,24 @@ class _FilterBottomSheetState extends State<_FilterBottomSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
+                  Text(title, style: Theme.of(context).textTheme.titleMedium),
                   Text(
                     subtitle,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
             ),
-            Switch(
-              value: enabled,
-              onChanged: onEnabledChanged,
-            ),
+            Switch(value: enabled, onChanged: onEnabledChanged),
           ],
         ),
         const SizedBox(height: 8),
         AnimatedOpacity(
           opacity: enabled ? 1.0 : 0.5,
           duration: const Duration(milliseconds: 200),
-          child: IgnorePointer(
-            ignoring: !enabled,
-            child: child,
-          ),
+          child: IgnorePointer(ignoring: !enabled, child: child),
         ),
       ],
     );

@@ -4,6 +4,7 @@ import 'package:stock_rtwatcher/data/models/data_freshness.dart';
 import 'package:stock_rtwatcher/data/models/data_status.dart';
 import 'package:stock_rtwatcher/data/models/data_updated_event.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/models/day_data_status.dart';
 import 'package:stock_rtwatcher/data/models/fetch_result.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
@@ -24,7 +25,8 @@ class MockDataRepository implements DataRepository {
   Stream<DataStatus> get statusStream => _statusController.stream;
 
   @override
-  Stream<DataUpdatedEvent> get dataUpdatedStream => _dataUpdatedController.stream;
+  Stream<DataUpdatedEvent> get dataUpdatedStream =>
+      _dataUpdatedController.stream;
 
   /// Set kline data for testing
   void setKlineData(String stockCode, List<KLine> klines) {
@@ -64,7 +66,9 @@ class MockDataRepository implements DataRepository {
   }
 
   @override
-  Future<Map<String, Quote>> getQuotes({required List<String> stockCodes}) async {
+  Future<Map<String, Quote>> getQuotes({
+    required List<String> stockCodes,
+  }) async {
     return {};
   }
 
@@ -109,6 +113,37 @@ class MockDataRepository implements DataRepository {
   Future<void> cleanupOldData({required DateTime beforeDate}) async {}
 
   @override
+  Future<MissingDatesResult> findMissingMinuteDates({
+    required String stockCode,
+    required DateRange dateRange,
+  }) async {
+    return const MissingDatesResult(
+      missingDates: [],
+      incompleteDates: [],
+      completeDates: [],
+    );
+  }
+
+  @override
+  Future<Map<String, MissingDatesResult>> findMissingMinuteDatesBatch({
+    required List<String> stockCodes,
+    required DateRange dateRange,
+    ProgressCallback? onProgress,
+  }) async {
+    return {};
+  }
+
+  @override
+  Future<List<DateTime>> getTradingDates(DateRange dateRange) async {
+    return [];
+  }
+
+  @override
+  Future<int> clearFreshnessCache({KLineDataType? dataType}) async {
+    return 0;
+  }
+
+  @override
   Future<void> dispose() async {
     await _statusController.close();
     await _dataUpdatedController.close();
@@ -116,21 +151,39 @@ class MockDataRepository implements DataRepository {
 }
 
 // Helper function to generate test KLine bars
-List<KLine> _generateBars(DateTime date, int upCount, int downCount, {double upVol = 100, double downVol = 100}) {
+List<KLine> _generateBars(
+  DateTime date,
+  int upCount,
+  int downCount, {
+  double upVol = 100,
+  double downVol = 100,
+}) {
   final bars = <KLine>[];
   for (var i = 0; i < upCount; i++) {
-    bars.add(KLine(
-      datetime: date.add(Duration(minutes: i)),
-      open: 10, close: 11, high: 11, low: 10,
-      volume: upVol, amount: 0,
-    ));
+    bars.add(
+      KLine(
+        datetime: date.add(Duration(minutes: i)),
+        open: 10,
+        close: 11,
+        high: 11,
+        low: 10,
+        volume: upVol,
+        amount: 0,
+      ),
+    );
   }
   for (var i = 0; i < downCount; i++) {
-    bars.add(KLine(
-      datetime: date.add(Duration(minutes: upCount + i)),
-      open: 11, close: 10, high: 11, low: 10,
-      volume: downVol, amount: 0,
-    ));
+    bars.add(
+      KLine(
+        datetime: date.add(Duration(minutes: upCount + i)),
+        open: 11,
+        close: 10,
+        high: 11,
+        low: 10,
+        volume: downVol,
+        amount: 0,
+      ),
+    );
   }
   return bars;
 }
@@ -201,7 +254,10 @@ void main() {
       });
 
       test('returns null for unknown stock', () async {
-        final ratio = await service.getDailyRatio('999999', DateTime(2025, 1, 25));
+        final ratio = await service.getDailyRatio(
+          '999999',
+          DateTime(2025, 1, 25),
+        );
         expect(ratio, isNull);
       });
 
@@ -209,7 +265,10 @@ void main() {
         final date = DateTime(2025, 1, 24, 9, 30);
         mockRepo.setKlineData('000001', _generateBars(date, 5, 3));
 
-        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25));
+        final ratio = await service.getDailyRatio(
+          '000001',
+          DateTime(2025, 1, 25),
+        );
         expect(ratio, isNull);
       });
 
@@ -217,7 +276,10 @@ void main() {
         final date = DateTime(2025, 1, 25, 9, 30);
         mockRepo.setKlineData('000001', _generateBars(date, 5, 0));
 
-        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25));
+        final ratio = await service.getDailyRatio(
+          '000001',
+          DateTime(2025, 1, 25),
+        );
         expect(ratio, isNull);
       });
 
@@ -225,7 +287,10 @@ void main() {
         final date = DateTime(2025, 1, 25, 9, 30);
         mockRepo.setKlineData('000001', _generateBars(date, 0, 5));
 
-        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25));
+        final ratio = await service.getDailyRatio(
+          '000001',
+          DateTime(2025, 1, 25),
+        );
         expect(ratio, isNull);
       });
 
@@ -234,7 +299,10 @@ void main() {
         // 5 up bars * 100 vol = 500 up, 2 down bars * 100 vol = 200 down
         mockRepo.setKlineData('000001', _generateBars(date, 5, 2));
 
-        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25));
+        final ratio = await service.getDailyRatio(
+          '000001',
+          DateTime(2025, 1, 25),
+        );
         expect(ratio, 2.5); // 500 / 200
       });
 
@@ -243,7 +311,10 @@ void main() {
         mockRepo.setKlineData('000001', _generateBars(date, 4, 2));
 
         // Query with different time on same day
-        final ratio = await service.getDailyRatio('000001', DateTime(2025, 1, 25, 15, 0));
+        final ratio = await service.getDailyRatio(
+          '000001',
+          DateTime(2025, 1, 25, 15, 0),
+        );
         expect(ratio, 2.0); // 400 / 200
       });
     });
@@ -304,11 +375,21 @@ void main() {
         final now = DateTime.now();
         mockRepo.setFreshnessResult('000001', const Missing()); // 30 days
         mockRepo.setFreshnessResult('000002', const Fresh()); // 0 days
-        mockRepo.setFreshnessResult('000003', Stale(
-          missingRange: DateRange(now.subtract(const Duration(days: 10)), now),
-        )); // 10 days
+        mockRepo.setFreshnessResult(
+          '000003',
+          Stale(
+            missingRange: DateRange(
+              now.subtract(const Duration(days: 10)),
+              now,
+            ),
+          ),
+        ); // 10 days
 
-        final missing = await service.getMissingDaysForStocks(['000001', '000002', '000003']);
+        final missing = await service.getMissingDaysForStocks([
+          '000001',
+          '000002',
+          '000003',
+        ]);
         expect(missing, 40); // 30 + 0 + 10
       });
     });

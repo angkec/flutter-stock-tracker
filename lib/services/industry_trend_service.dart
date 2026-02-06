@@ -9,8 +9,10 @@ import 'package:stock_rtwatcher/services/stock_service.dart';
 class _TrendComputeParams {
   /// 每股票每日涨跌量: stockCode -> dateKey -> [up, down]
   final Map<String, Map<String, List<double>>> stockVolumes;
+
   /// 股票行业映射: stockCode -> industry
   final Map<String, String> stockIndustries;
+
   /// 要计算的日期列表
   final List<String> dates;
 
@@ -22,7 +24,9 @@ class _TrendComputeParams {
 }
 
 /// Isolate 中计算行业趋势
-Map<String, List<Map<String, dynamic>>> _computeTrendInIsolate(_TrendComputeParams params) {
+Map<String, List<Map<String, dynamic>>> _computeTrendInIsolate(
+  _TrendComputeParams params,
+) {
   final result = <String, List<Map<String, dynamic>>>{};
 
   // 按行业分组股票
@@ -120,12 +124,16 @@ class IndustryTrendService extends ChangeNotifier {
 
     // 检查是否需要重算
     final currentVersion = dataVersion ?? 0;
-    if (!force && _calculatedFromVersion == currentVersion && _trendData.isNotEmpty) {
+    if (!force &&
+        _calculatedFromVersion == currentVersion &&
+        _trendData.isNotEmpty) {
       debugPrint('[IndustryTrend] 数据版本未变 (v$currentVersion)，跳过重算');
       return;
     }
 
-    debugPrint('[IndustryTrend] 开始重算趋势, ${stocks.length} 只股票, 数据版本 v$currentVersion');
+    debugPrint(
+      '[IndustryTrend] 开始重算趋势, ${stocks.length} 只股票, 数据版本 v$currentVersion',
+    );
 
     // 准备传给 isolate 的数据（在主线程完成，避免传输大量 K 线数据）
     final stockVolumes = <String, Map<String, List<double>>>{};
@@ -150,7 +158,9 @@ class IndustryTrendService extends ChangeNotifier {
     }
 
     final dates = allDates.toList()..sort();
-    debugPrint('[IndustryTrend] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期');
+    debugPrint(
+      '[IndustryTrend] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期',
+    );
 
     // 在 isolate 中计算
     final computeResult = await compute(
@@ -166,13 +176,18 @@ class IndustryTrendService extends ChangeNotifier {
     final newTrendData = <String, IndustryTrendData>{};
     for (final entry in computeResult.entries) {
       final industry = entry.key;
-      final points = entry.value.map((p) => DailyRatioPoint(
-        date: HistoricalKlineService.parseDate(p['date'] as String),
-        ratioAbovePercent: p['ratioAbovePercent'] as double,
-        totalStocks: p['totalStocks'] as int,
-        ratioAboveCount: p['ratioAboveCount'] as int,
-      )).toList()
-        ..sort((a, b) => a.date.compareTo(b.date));
+      final points =
+          entry.value
+              .map(
+                (p) => DailyRatioPoint(
+                  date: HistoricalKlineService.parseDate(p['date'] as String),
+                  ratioAbovePercent: p['ratioAbovePercent'] as double,
+                  totalStocks: p['totalStocks'] as int,
+                  ratioAboveCount: p['ratioAboveCount'] as int,
+                ),
+              )
+              .toList()
+            ..sort((a, b) => a.date.compareTo(b.date));
 
       newTrendData[industry] = IndustryTrendData(
         industry: industry,
@@ -193,7 +208,9 @@ class IndustryTrendService extends ChangeNotifier {
   /// 计算今日实时行业趋势
   /// 使用股票现有的 ratio 字段（当前会话的分钟涨跌量比）
   /// 返回按行业分组的今日数据点
-  Map<String, DailyRatioPoint> calculateTodayTrend(List<StockMonitorData> stocks) {
+  Map<String, DailyRatioPoint> calculateTodayTrend(
+    List<StockMonitorData> stocks,
+  ) {
     final today = DateTime.now();
     final todayDate = DateTime(today.year, today.month, today.day);
     final result = <String, DailyRatioPoint>{};
@@ -244,7 +261,9 @@ class IndustryTrendService extends ChangeNotifier {
         final json = jsonDecode(jsonStr) as Map<String, dynamic>;
         _deserializeCache(json);
         _cleanupOldData();
-        debugPrint('[IndustryTrend] 缓存加载完成, calculatedFromVersion=$_calculatedFromVersion, ${_trendData.length} 个行业');
+        debugPrint(
+          '[IndustryTrend] 缓存加载完成, calculatedFromVersion=$_calculatedFromVersion, ${_trendData.length} 个行业',
+        );
         notifyListeners();
       }
     } catch (e) {
@@ -253,24 +272,33 @@ class IndustryTrendService extends ChangeNotifier {
   }
 
   /// 检查缺失天数
-  /// 返回缺失天数（历史数据应通过 HistoricalKlineService 统一获取）
-  int checkMissingDays() {
-    // 计算缺失天数
-    final today = DateTime.now();
+  ///
+  /// 可传入 [expectedTradingDays] 使用外部真实交易日列表（推荐）；
+  /// 未提供时会回退到最近30个日历天内的工作日估算。
+  int checkMissingDays({List<DateTime>? expectedTradingDays}) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     final cachedDates = _getCachedDates();
-    final tradingDays = _estimateTradingDays(today, _maxCacheDays);
 
-    // 找出缺失的日期（不包括今天，今天实时计算）
-    final missingDates = <DateTime>[];
-    for (final date in tradingDays) {
-      if (!_isSameDay(date, today) && !cachedDates.contains(_dateKey(date))) {
-        missingDates.add(date);
+    final requiredDates =
+        (expectedTradingDays ??
+                _estimateTradingDaysInRecentCalendarWindow(
+                  today,
+                  _maxCacheDays,
+                ))
+            .map((d) => DateTime(d.year, d.month, d.day))
+            .where((d) => !_isSameDay(d, today))
+            .toSet();
+
+    var missing = 0;
+    for (final date in requiredDates) {
+      if (!cachedDates.contains(_dateKey(date))) {
+        missing++;
       }
     }
 
-    _missingDays = missingDates.length;
+    _missingDays = missing;
     notifyListeners();
-
     return _missingDays;
   }
 
@@ -295,23 +323,23 @@ class IndustryTrendService extends ChangeNotifier {
     return dates;
   }
 
-  /// 估算最近N个交易日
-  /// 简单估算：排除周末，实际可能需要更精确的交易日历
-  List<DateTime> _estimateTradingDays(DateTime from, int count) {
+  /// 估算最近N个日历天内的交易日（仅排除周末）
+  ///
+  /// 注意：法定节假日需通过 [checkMissingDays] 的 expectedTradingDays 参数传入真实交易日。
+  List<DateTime> _estimateTradingDaysInRecentCalendarWindow(
+    DateTime from,
+    int calendarDays,
+  ) {
     final days = <DateTime>[];
-    var current = from;
-    var checked = 0;
+    final normalizedFrom = DateTime(from.year, from.month, from.day);
 
-    while (days.length < count && checked < count * 2) {
-      current = current.subtract(const Duration(days: 1));
-      checked++;
-
-      // 跳过周末
-      if (current.weekday == DateTime.saturday || current.weekday == DateTime.sunday) {
+    for (var i = 1; i <= calendarDays; i++) {
+      final current = normalizedFrom.subtract(Duration(days: i));
+      if (current.weekday == DateTime.saturday ||
+          current.weekday == DateTime.sunday) {
         continue;
       }
-
-      days.add(DateTime(current.year, current.month, current.day));
+      days.add(current);
     }
 
     return days;
@@ -377,9 +405,13 @@ class IndustryTrendService extends ChangeNotifier {
     final result = <String, IndustryTrendData>{};
     for (final entry in data.entries) {
       try {
-        result[entry.key] = IndustryTrendData.fromJson(entry.value as Map<String, dynamic>);
+        result[entry.key] = IndustryTrendData.fromJson(
+          entry.value as Map<String, dynamic>,
+        );
       } catch (e) {
-        debugPrint('Failed to deserialize industry trend data for ${entry.key}: $e');
+        debugPrint(
+          'Failed to deserialize industry trend data for ${entry.key}: $e',
+        );
       }
     }
     _trendData = result;
