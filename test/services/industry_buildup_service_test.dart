@@ -124,7 +124,10 @@ class MockBuildUpRepository implements DataRepository {
   }
 
   @override
-  Future<void> cleanupOldData({required DateTime beforeDate}) async {}
+  Future<void> cleanupOldData({
+    required DateTime beforeDate,
+    KLineDataType? dataType,
+  }) async {}
 
   @override
   Future<MissingDatesResult> findMissingMinuteDates({

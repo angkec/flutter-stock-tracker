@@ -11,9 +11,7 @@ import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/data_freshness.dart';
-import 'package:stock_rtwatcher/data/models/day_data_status.dart';
 import 'package:stock_rtwatcher/data/models/data_updated_event.dart';
-import 'package:stock_rtwatcher/data/models/fetch_result.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -28,10 +26,12 @@ class MockTdxClient extends TdxClient {
   bool mockIsConnected = false;
 
   // K线数据支持
-  Map<String, List<KLine>>? barsToReturn; // key: "${market}_${code}_${category}"
+  Map<String, List<KLine>>?
+  barsToReturn; // key: "${market}_${code}_${category}"
   Exception? barsExceptionToThrow;
   Map<String, Exception>? barsExceptionsByStock; // 每只股票独立的异常
-  List<({int market, String code, int category, int start, int count})> barRequests = [];
+  List<({int market, String code, int category, int start, int count})>
+  barRequests = [];
 
   @override
   bool get isConnected => mockIsConnected;
@@ -69,7 +69,13 @@ class MockTdxClient extends TdxClient {
     required int count,
   }) async {
     // 记录请求
-    barRequests.add((market: market, code: code, category: category, start: start, count: count));
+    barRequests.add((
+      market: market,
+      code: code,
+      category: category,
+      start: start,
+      count: count,
+    ));
 
     // 检查全局异常
     if (barsExceptionToThrow != null) {
@@ -77,7 +83,8 @@ class MockTdxClient extends TdxClient {
     }
 
     // 检查针对特定股票的异常
-    if (barsExceptionsByStock != null && barsExceptionsByStock!.containsKey(code)) {
+    if (barsExceptionsByStock != null &&
+        barsExceptionsByStock!.containsKey(code)) {
       throw barsExceptionsByStock![code]!;
     }
 
@@ -229,8 +236,14 @@ void main() {
       );
 
       expect(result['000001'], hasLength(2));
-      expect(result['000001']![0].datetime, equals(DateTime(2024, 1, 15, 9, 30)));
-      expect(result['000001']![1].datetime, equals(DateTime(2024, 1, 15, 9, 31)));
+      expect(
+        result['000001']![0].datetime,
+        equals(DateTime(2024, 1, 15, 9, 30)),
+      );
+      expect(
+        result['000001']![1].datetime,
+        equals(DateTime(2024, 1, 15, 9, 31)),
+      );
     });
 
     test('should cache loaded klines in memory', () async {
@@ -295,15 +308,23 @@ void main() {
       // Save complete minute data (230 bars)
       final minuteKlines = <KLine>[];
       for (var i = 0; i < 230; i++) {
-        minuteKlines.add(KLine(
-          datetime: DateTime(todayDate.year, todayDate.month, todayDate.day, 9, 30).add(Duration(minutes: i)),
-          open: 10.0 + i * 0.01,
-          close: 10.5 + i * 0.01,
-          high: 10.8 + i * 0.01,
-          low: 9.9 + i * 0.01,
-          volume: 1000.0 + i,
-          amount: 10000 + i * 10,
-        ));
+        minuteKlines.add(
+          KLine(
+            datetime: DateTime(
+              todayDate.year,
+              todayDate.month,
+              todayDate.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.01,
+            close: 10.5 + i * 0.01,
+            high: 10.8 + i * 0.01,
+            low: 9.9 + i * 0.01,
+            volume: 1000.0 + i,
+            amount: 10000 + i * 10,
+          ),
+        );
       }
       await manager.saveKlineData(
         stockCode: '000001',
@@ -352,15 +373,23 @@ void main() {
       // Save incomplete minute data (only 50 bars - less than 220)
       final minuteKlines = <KLine>[];
       for (var i = 0; i < 50; i++) {
-        minuteKlines.add(KLine(
-          datetime: DateTime(oldDate.year, oldDate.month, oldDate.day, 9, 30).add(Duration(minutes: i)),
-          open: 10.0 + i * 0.01,
-          close: 10.5 + i * 0.01,
-          high: 10.8 + i * 0.01,
-          low: 9.9 + i * 0.01,
-          volume: 1000.0 + i,
-          amount: 10000 + i * 10,
-        ));
+        minuteKlines.add(
+          KLine(
+            datetime: DateTime(
+              oldDate.year,
+              oldDate.month,
+              oldDate.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.01,
+            close: 10.5 + i * 0.01,
+            high: 10.8 + i * 0.01,
+            low: 9.9 + i * 0.01,
+            volume: 1000.0 + i,
+            amount: 10000 + i * 10,
+          ),
+        );
       }
       await manager.saveKlineData(
         stockCode: '000002',
@@ -419,15 +448,23 @@ void main() {
       // Save complete minute data (230 bars)
       final minuteKlines = <KLine>[];
       for (var i = 0; i < 230; i++) {
-        minuteKlines.add(KLine(
-          datetime: DateTime(yesterdayDate.year, yesterdayDate.month, yesterdayDate.day, 9, 30).add(Duration(minutes: i)),
-          open: 10.0 + i * 0.01,
-          close: 10.5 + i * 0.01,
-          high: 10.8 + i * 0.01,
-          low: 9.9 + i * 0.01,
-          volume: 1000.0 + i,
-          amount: 10000 + i * 10,
-        ));
+        minuteKlines.add(
+          KLine(
+            datetime: DateTime(
+              yesterdayDate.year,
+              yesterdayDate.month,
+              yesterdayDate.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.01,
+            close: 10.5 + i * 0.01,
+            high: 10.8 + i * 0.01,
+            low: 9.9 + i * 0.01,
+            volume: 1000.0 + i,
+            amount: 10000 + i * 10,
+          ),
+        );
       }
       await manager.saveKlineData(
         stockCode: '000003',
@@ -476,15 +513,23 @@ void main() {
       // Save complete minute data (230 bars)
       final minuteKlines = <KLine>[];
       for (var i = 0; i < 230; i++) {
-        minuteKlines.add(KLine(
-          datetime: DateTime(twoDaysAgo.year, twoDaysAgo.month, twoDaysAgo.day, 9, 30).add(Duration(minutes: i)),
-          open: 10.0 + i * 0.01,
-          close: 10.5 + i * 0.01,
-          high: 10.8 + i * 0.01,
-          low: 9.9 + i * 0.01,
-          volume: 1000.0 + i,
-          amount: 10000 + i * 10,
-        ));
+        minuteKlines.add(
+          KLine(
+            datetime: DateTime(
+              twoDaysAgo.year,
+              twoDaysAgo.month,
+              twoDaysAgo.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.01,
+            close: 10.5 + i * 0.01,
+            high: 10.8 + i * 0.01,
+            low: 9.9 + i * 0.01,
+            volume: 1000.0 + i,
+            amount: 10000 + i * 10,
+          ),
+        );
       }
       await manager.saveKlineData(
         stockCode: '000004',
@@ -518,7 +563,9 @@ void main() {
 
     setUp(() async {
       // Create temporary test directory
-      testDir = await Directory.systemTemp.createTemp('market_data_repo_quotes_test_');
+      testDir = await Directory.systemTemp.createTemp(
+        'market_data_repo_quotes_test_',
+      );
 
       // Initialize file storage with test directory
       fileStorage = KLineFileStorage();
@@ -631,7 +678,14 @@ void main() {
 
       // 测试不同前缀的股票代码映射
       await repository.getQuotes(
-        stockCodes: ['000001', '002001', '300001', '600001', '601001', '688001'],
+        stockCodes: [
+          '000001',
+          '002001',
+          '300001',
+          '600001',
+          '601001',
+          '688001',
+        ],
       );
 
       final requests = mockTdxClient.lastRequestedStocks!;
@@ -664,9 +718,7 @@ void main() {
     test('should handle connection failure gracefully', () async {
       mockTdxClient.shouldConnectSucceed = false;
 
-      final result = await repository.getQuotes(
-        stockCodes: ['000001'],
-      );
+      final result = await repository.getQuotes(stockCodes: ['000001']);
 
       expect(result, isEmpty);
     });
@@ -725,7 +777,9 @@ void main() {
 
     setUp(() async {
       // 创建临时测试目录
-      testDir = await Directory.systemTemp.createTemp('market_data_repo_fetch_test_');
+      testDir = await Directory.systemTemp.createTemp(
+        'market_data_repo_fetch_test_',
+      );
 
       // 初始化文件存储
       fileStorage = KLineFileStorage();
@@ -789,15 +843,17 @@ void main() {
       var currentTime = startDate;
 
       for (var i = 0; i < count; i++) {
-        klines.add(KLine(
-          datetime: currentTime,
-          open: 10.0 + i * 0.1,
-          close: 10.0 + i * 0.1 + 0.05,
-          high: 10.0 + i * 0.1 + 0.1,
-          low: 10.0 + i * 0.1 - 0.05,
-          volume: 1000 + i * 10,
-          amount: 10000 + i * 100,
-        ));
+        klines.add(
+          KLine(
+            datetime: currentTime,
+            open: 10.0 + i * 0.1,
+            close: 10.0 + i * 0.1 + 0.05,
+            high: 10.0 + i * 0.1 + 0.1,
+            low: 10.0 + i * 0.1 - 0.05,
+            volume: 1000 + i * 10,
+            amount: 10000 + i * 100,
+          ),
+        );
 
         if (isMinuteData) {
           currentTime = currentTime.add(const Duration(minutes: 1));
@@ -812,10 +868,7 @@ void main() {
     test('should fetch missing data and save to storage', () async {
       // 准备测试数据
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(
-        testDate,
-        DateTime(2024, 1, 15, 9, 35),
-      );
+      final dateRange = DateRange(testDate, DateTime(2024, 1, 15, 9, 35));
 
       // 定义交易日（通过日线数据）
       await manager.saveKlineData(
@@ -842,9 +895,7 @@ void main() {
       );
 
       // 设置 mock 返回数据（深市股票，market=0，1分钟=category 7）
-      mockTdxClient.barsToReturn = {
-        '0_000001_7': mockKlines,
-      };
+      mockTdxClient.barsToReturn = {'0_000001_7': mockKlines};
 
       // 调用 fetchMissingData
       final result = await repository.fetchMissingData(
@@ -874,10 +925,7 @@ void main() {
     test('should report progress during fetch', () async {
       // 准备测试数据
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(
-        testDate,
-        DateTime(2024, 1, 15, 9, 35),
-      );
+      final dateRange = DateRange(testDate, DateTime(2024, 1, 15, 9, 35));
 
       // 定义交易日（通过日线数据）
       for (final code in ['000001', '000002', '600000']) {
@@ -935,10 +983,7 @@ void main() {
     test('should emit DataUpdatedEvent after successful fetch', () async {
       // 准备测试数据
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(
-        testDate,
-        DateTime(2024, 1, 15, 9, 35),
-      );
+      final dateRange = DateRange(testDate, DateTime(2024, 1, 15, 9, 35));
 
       // 定义交易日（通过日线数据）
       await manager.saveKlineData(
@@ -963,9 +1008,7 @@ void main() {
         isMinuteData: true,
       );
 
-      mockTdxClient.barsToReturn = {
-        '0_000001_7': mockKlines,
-      };
+      mockTdxClient.barsToReturn = {'0_000001_7': mockKlines};
 
       // 监听 dataUpdatedStream - 设置监听器在调用 fetchMissingData 之前
       final events = <DataUpdatedEvent>[];
@@ -993,10 +1036,7 @@ void main() {
     test('should emit DataFetching status during fetch', () async {
       // 准备测试数据
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(
-        testDate,
-        DateTime(2024, 1, 15, 9, 35),
-      );
+      final dateRange = DateRange(testDate, DateTime(2024, 1, 15, 9, 35));
 
       // 定义交易日（通过日线数据）
       await manager.saveKlineData(
@@ -1021,9 +1061,7 @@ void main() {
         isMinuteData: true,
       );
 
-      mockTdxClient.barsToReturn = {
-        '0_000001_7': mockKlines,
-      };
+      mockTdxClient.barsToReturn = {'0_000001_7': mockKlines};
 
       // 收集状态变化 - 设置监听器在调用 fetchMissingData 之前
       final statusChanges = <DataStatus>[];
@@ -1049,10 +1087,7 @@ void main() {
     test('should handle errors per-stock without aborting', () async {
       // 准备测试数据
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(
-        testDate,
-        DateTime(2024, 1, 15, 9, 35),
-      );
+      final dateRange = DateRange(testDate, DateTime(2024, 1, 15, 9, 35));
 
       // 定义交易日（通过日线数据）
       for (final code in ['000001', '000002']) {
@@ -1080,9 +1115,7 @@ void main() {
       );
 
       // 设置：000001 成功，000002 失败
-      mockTdxClient.barsToReturn = {
-        '0_000001_7': mockKlines,
-      };
+      mockTdxClient.barsToReturn = {'0_000001_7': mockKlines};
       mockTdxClient.barsExceptionsByStock = {
         '000002': Exception('Network error for 000002'),
       };
@@ -1115,10 +1148,7 @@ void main() {
       mockTdxClient.shouldConnectSucceed = false;
 
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(
-        testDate,
-        DateTime(2024, 1, 15, 9, 35),
-      );
+      final dateRange = DateRange(testDate, DateTime(2024, 1, 15, 9, 35));
 
       // 定义交易日（通过日线数据）
       await manager.saveKlineData(
@@ -1152,10 +1182,7 @@ void main() {
 
     test('should map data type to correct TDX category', () async {
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(
-        testDate,
-        DateTime(2024, 1, 16),
-      );
+      final dateRange = DateRange(testDate, DateTime(2024, 1, 16));
 
       // 定义交易日（通过日线数据）
       await manager.saveKlineData(
@@ -1182,7 +1209,7 @@ void main() {
       );
 
       mockTdxClient.barsToReturn = {
-        '0_000001_7': minuteKlines,  // category 7 = 1分钟
+        '0_000001_7': minuteKlines, // category 7 = 1分钟
       };
 
       await repository.fetchMissingData(
@@ -1206,7 +1233,7 @@ void main() {
       );
 
       mockTdxClient.barsToReturn = {
-        '0_000002_4': dailyKlines,  // category 4 = 日线
+        '0_000002_4': dailyKlines, // category 4 = 日线
       };
 
       await repository.fetchMissingData(
@@ -1222,10 +1249,7 @@ void main() {
     test('should invalidate cache for updated stocks', () async {
       // 先手动添加一些缓存数据
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(
-        testDate,
-        DateTime(2024, 1, 15, 9, 35),
-      );
+      final dateRange = DateRange(testDate, DateTime(2024, 1, 15, 9, 35));
 
       // 定义交易日（通过日线数据）
       await manager.saveKlineData(
@@ -1279,9 +1303,7 @@ void main() {
         isMinuteData: true,
       );
 
-      mockTdxClient.barsToReturn = {
-        '0_000001_7': newKlines,
-      };
+      mockTdxClient.barsToReturn = {'0_000001_7': newKlines};
 
       // 获取新数据
       await repository.fetchMissingData(
@@ -1313,9 +1335,7 @@ void main() {
         isMinuteData: true,
       );
 
-      mockTdxClient.barsToReturn = {
-        '0_000001_7': mockKlines,
-      };
+      mockTdxClient.barsToReturn = {'0_000001_7': mockKlines};
 
       final result = await repository.fetchMissingData(
         stockCodes: ['000001'],
@@ -1349,7 +1369,10 @@ void main() {
     test('should skip stocks with complete data', () async {
       // 1. Setup: Save complete data for a stock (≥220 bars)
       final testDate = DateTime(2024, 1, 15);
-      final dateRange = DateRange(testDate, testDate.add(const Duration(hours: 23)));
+      final dateRange = DateRange(
+        testDate,
+        testDate.add(const Duration(hours: 23)),
+      );
 
       // First, save daily data to define trading day
       await manager.saveKlineData(
@@ -1371,15 +1394,23 @@ void main() {
       // Save complete minute data (230 bars - more than 220 threshold)
       final completeKlines = <KLine>[];
       for (var i = 0; i < 230; i++) {
-        completeKlines.add(KLine(
-          datetime: DateTime(testDate.year, testDate.month, testDate.day, 9, 30).add(Duration(minutes: i)),
-          open: 10.0 + i * 0.01,
-          close: 10.5 + i * 0.01,
-          high: 10.8 + i * 0.01,
-          low: 9.9 + i * 0.01,
-          volume: 1000.0 + i,
-          amount: 10000 + i * 10,
-        ));
+        completeKlines.add(
+          KLine(
+            datetime: DateTime(
+              testDate.year,
+              testDate.month,
+              testDate.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.01,
+            close: 10.5 + i * 0.01,
+            high: 10.8 + i * 0.01,
+            low: 9.9 + i * 0.01,
+            volume: 1000.0 + i,
+            amount: 10000 + i * 10,
+          ),
+        );
       }
       await manager.saveKlineData(
         stockCode: '000001',
@@ -1406,7 +1437,10 @@ void main() {
     test('should fetch stocks with missing data', () async {
       // 1. Setup: Stock has no data at all
       final testDate = DateTime(2024, 1, 16);
-      final dateRange = DateRange(testDate, testDate.add(const Duration(hours: 23)));
+      final dateRange = DateRange(
+        testDate,
+        testDate.add(const Duration(hours: 23)),
+      );
 
       // Define trading day via daily data
       await manager.saveKlineData(
@@ -1428,19 +1462,25 @@ void main() {
       // Setup mock to return K-line data
       final mockKlines = <KLine>[];
       for (var i = 0; i < 5; i++) {
-        mockKlines.add(KLine(
-          datetime: DateTime(testDate.year, testDate.month, testDate.day, 9, 30).add(Duration(minutes: i)),
-          open: 10.0 + i * 0.1,
-          close: 10.0 + i * 0.1 + 0.05,
-          high: 10.0 + i * 0.1 + 0.1,
-          low: 10.0 + i * 0.1 - 0.05,
-          volume: 1000 + i * 10,
-          amount: 10000 + i * 100,
-        ));
+        mockKlines.add(
+          KLine(
+            datetime: DateTime(
+              testDate.year,
+              testDate.month,
+              testDate.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.1,
+            close: 10.0 + i * 0.1 + 0.05,
+            high: 10.0 + i * 0.1 + 0.1,
+            low: 10.0 + i * 0.1 - 0.05,
+            volume: 1000 + i * 10,
+            amount: 10000 + i * 100,
+          ),
+        );
       }
-      mockTdxClient.barsToReturn = {
-        '0_000003_7': mockKlines,
-      };
+      mockTdxClient.barsToReturn = {'0_000003_7': mockKlines};
 
       // 2. Call fetchMissingData
       mockTdxClient.clearBarRequests();
@@ -1457,10 +1497,144 @@ void main() {
       expect(result.totalRecords, greaterThan(0));
     });
 
+    test('should fetch minute data when trading dates are unavailable', () async {
+      // No daily data is saved on purpose (trading dates unavailable).
+      final testDate = DateTime(2024, 1, 18);
+      final dateRange = DateRange(
+        testDate,
+        testDate.add(const Duration(hours: 23)),
+      );
+
+      final mockKlines = <KLine>[];
+      for (var i = 0; i < 5; i++) {
+        mockKlines.add(
+          KLine(
+            datetime: DateTime(
+              testDate.year,
+              testDate.month,
+              testDate.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.1,
+            close: 10.0 + i * 0.1 + 0.05,
+            high: 10.0 + i * 0.1 + 0.1,
+            low: 10.0 + i * 0.1 - 0.05,
+            volume: 1000 + i * 10,
+            amount: 10000 + i * 100,
+          ),
+        );
+      }
+      mockTdxClient.barsToReturn = {'0_000006_7': mockKlines};
+
+      mockTdxClient.clearBarRequests();
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000006'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+
+      // Should not be skipped by precheck just because trading dates are unavailable.
+      expect(mockTdxClient.barRequests, isNotEmpty);
+      expect(result.totalStocks, equals(1));
+      expect(result.successCount, equals(1));
+      expect(result.totalRecords, greaterThan(0));
+    });
+
+    test(
+      'should fetch when cached complete status is stale after external minute data loss',
+      () async {
+        final testDate = DateTime(2024, 1, 19);
+        final dateRange = DateRange(
+          testDate,
+          testDate.add(const Duration(hours: 23)),
+        );
+
+        // Define trading day via daily data.
+        await manager.saveKlineData(
+          stockCode: '000007',
+          newBars: [
+            KLine(
+              datetime: testDate,
+              open: 10.0,
+              close: 10.5,
+              high: 10.8,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
+        );
+
+        // Save complete minute data first, then run detection to cache "complete".
+        final completeMinuteBars = <KLine>[];
+        for (var i = 0; i < 230; i++) {
+          completeMinuteBars.add(
+            KLine(
+              datetime: DateTime(
+                testDate.year,
+                testDate.month,
+                testDate.day,
+                9,
+                30,
+              ).add(Duration(minutes: i)),
+              open: 10.0 + i * 0.01,
+              close: 10.5 + i * 0.01,
+              high: 10.8 + i * 0.01,
+              low: 9.9 + i * 0.01,
+              volume: 1000 + i * 10,
+              amount: 10000 + i * 100,
+            ),
+          );
+        }
+        await manager.saveKlineData(
+          stockCode: '000007',
+          newBars: completeMinuteBars,
+          dataType: KLineDataType.oneMinute,
+        );
+
+        final cached = await repository.findMissingMinuteDates(
+          stockCode: '000007',
+          dateRange: dateRange,
+        );
+        expect(cached.isComplete, isTrue);
+
+        // Simulate external/minor-version data loss: delete minute data directly
+        // via metadata manager (bypassing repository cache invalidation path).
+        await manager.deleteOldData(
+          stockCode: '000007',
+          dataType: KLineDataType.oneMinute,
+          beforeDate: testDate.add(const Duration(days: 1)),
+        );
+
+        final mockKlines = generateTestKlines(
+          startDate: DateTime(2024, 1, 19, 9, 30),
+          count: 5,
+          isMinuteData: true,
+        );
+        mockTdxClient.barsToReturn = {'0_000007_7': mockKlines};
+
+        mockTdxClient.clearBarRequests();
+        final result = await repository.fetchMissingData(
+          stockCodes: ['000007'],
+          dateRange: dateRange,
+          dataType: KLineDataType.oneMinute,
+        );
+
+        // Must re-check and actually fetch instead of trusting stale "complete" cache.
+        expect(mockTdxClient.barRequests, isNotEmpty);
+        expect(result.totalRecords, greaterThan(0));
+      },
+    );
+
     test('should return correct counts for mixed stocks', () async {
       // 1. Setup: One stock complete, one stock missing
       final testDate = DateTime(2024, 1, 17);
-      final dateRange = DateRange(testDate, testDate.add(const Duration(hours: 23)));
+      final dateRange = DateRange(
+        testDate,
+        testDate.add(const Duration(hours: 23)),
+      );
 
       // Define trading day for both stocks
       for (final code in ['000004', '000005']) {
@@ -1484,15 +1658,23 @@ void main() {
       // Save complete data for 000004 (230 bars)
       final completeKlines = <KLine>[];
       for (var i = 0; i < 230; i++) {
-        completeKlines.add(KLine(
-          datetime: DateTime(testDate.year, testDate.month, testDate.day, 9, 30).add(Duration(minutes: i)),
-          open: 10.0 + i * 0.01,
-          close: 10.5 + i * 0.01,
-          high: 10.8 + i * 0.01,
-          low: 9.9 + i * 0.01,
-          volume: 1000.0 + i,
-          amount: 10000 + i * 10,
-        ));
+        completeKlines.add(
+          KLine(
+            datetime: DateTime(
+              testDate.year,
+              testDate.month,
+              testDate.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.01,
+            close: 10.5 + i * 0.01,
+            high: 10.8 + i * 0.01,
+            low: 9.9 + i * 0.01,
+            volume: 1000.0 + i,
+            amount: 10000 + i * 10,
+          ),
+        );
       }
       await manager.saveKlineData(
         stockCode: '000004',
@@ -1505,19 +1687,25 @@ void main() {
       // Setup mock for 000005
       final mockKlines = <KLine>[];
       for (var i = 0; i < 5; i++) {
-        mockKlines.add(KLine(
-          datetime: DateTime(testDate.year, testDate.month, testDate.day, 9, 30).add(Duration(minutes: i)),
-          open: 10.0 + i * 0.1,
-          close: 10.0 + i * 0.1 + 0.05,
-          high: 10.0 + i * 0.1 + 0.1,
-          low: 10.0 + i * 0.1 - 0.05,
-          volume: 1000 + i * 10,
-          amount: 10000 + i * 100,
-        ));
+        mockKlines.add(
+          KLine(
+            datetime: DateTime(
+              testDate.year,
+              testDate.month,
+              testDate.day,
+              9,
+              30,
+            ).add(Duration(minutes: i)),
+            open: 10.0 + i * 0.1,
+            close: 10.0 + i * 0.1 + 0.05,
+            high: 10.0 + i * 0.1 + 0.1,
+            low: 10.0 + i * 0.1 - 0.05,
+            volume: 1000 + i * 10,
+            amount: 10000 + i * 100,
+          ),
+        );
       }
-      mockTdxClient.barsToReturn = {
-        '0_000005_7': mockKlines,
-      };
+      mockTdxClient.barsToReturn = {'0_000005_7': mockKlines};
 
       // 2. Call fetchMissingData with both stocks
       mockTdxClient.clearBarRequests();
@@ -1549,7 +1737,9 @@ void main() {
 
     setUp(() async {
       // 创建临时测试目录
-      testDir = await Directory.systemTemp.createTemp('market_data_repo_refetch_test_');
+      testDir = await Directory.systemTemp.createTemp(
+        'market_data_repo_refetch_test_',
+      );
 
       // 初始化文件存储
       fileStorage = KLineFileStorage();
@@ -1688,7 +1878,9 @@ void main() {
 
     setUp(() async {
       // Create temporary test directory
-      testDir = await Directory.systemTemp.createTemp('market_data_repo_cleanup_test_');
+      testDir = await Directory.systemTemp.createTemp(
+        'market_data_repo_cleanup_test_',
+      );
 
       // Initialize file storage with test directory
       fileStorage = KLineFileStorage();
@@ -1774,17 +1966,12 @@ void main() {
       );
 
       // 2. Call cleanupOldData with beforeDate = Feb 1, 2024
-      await repository.cleanupOldData(
-        beforeDate: DateTime(2024, 2, 1),
-      );
+      await repository.cleanupOldData(beforeDate: DateTime(2024, 2, 1));
 
       // 3. Verify Jan data deleted (empty result)
       final janData = await repository.getKlines(
         stockCodes: ['000001'],
-        dateRange: DateRange(
-          DateTime(2024, 1, 1),
-          DateTime(2024, 1, 31),
-        ),
+        dateRange: DateRange(DateTime(2024, 1, 1), DateTime(2024, 1, 31)),
         dataType: KLineDataType.oneMinute,
       );
       expect(janData['000001'], isEmpty);
@@ -1792,10 +1979,7 @@ void main() {
       // 4. Verify Feb data still exists
       final febData = await repository.getKlines(
         stockCodes: ['000001'],
-        dateRange: DateRange(
-          DateTime(2024, 2, 1),
-          DateTime(2024, 2, 29),
-        ),
+        dateRange: DateRange(DateTime(2024, 2, 1), DateTime(2024, 2, 29)),
         dataType: KLineDataType.oneMinute,
       );
       expect(febData['000001'], isNotEmpty);
@@ -1823,10 +2007,7 @@ void main() {
       );
 
       // 2. Load data into cache via getKlines
-      final dateRange = DateRange(
-        DateTime(2024, 1, 1),
-        DateTime(2024, 1, 31),
-      );
+      final dateRange = DateRange(DateTime(2024, 1, 1), DateTime(2024, 1, 31));
 
       final cachedData = await repository.getKlines(
         stockCodes: ['000001'],
@@ -1836,9 +2017,7 @@ void main() {
       expect(cachedData['000001'], isNotEmpty);
 
       // 3. Call cleanupOldData
-      await repository.cleanupOldData(
-        beforeDate: DateTime(2024, 2, 1),
-      );
+      await repository.cleanupOldData(beforeDate: DateTime(2024, 2, 1));
 
       // 4. Verify subsequent getKlines doesn't return cached stale data
       final afterCleanup = await repository.getKlines(
@@ -1874,9 +2053,7 @@ void main() {
       final subscription = repository.statusStream.listen(statusChanges.add);
 
       // Call cleanup
-      await repository.cleanupOldData(
-        beforeDate: DateTime(2024, 2, 1),
-      );
+      await repository.cleanupOldData(beforeDate: DateTime(2024, 2, 1));
 
       // Let event loop process
       await Future.delayed(Duration.zero);
@@ -1918,15 +2095,10 @@ void main() {
       );
 
       // Cleanup
-      await repository.cleanupOldData(
-        beforeDate: DateTime(2024, 2, 1),
-      );
+      await repository.cleanupOldData(beforeDate: DateTime(2024, 2, 1));
 
       // Verify all stocks' data is cleaned
-      final dateRange = DateRange(
-        DateTime(2024, 1, 1),
-        DateTime(2024, 1, 31),
-      );
+      final dateRange = DateRange(DateTime(2024, 1, 1), DateTime(2024, 1, 31));
 
       for (final code in ['000001', '000002', '600000']) {
         final data = await repository.getKlines(
@@ -1934,7 +2106,11 @@ void main() {
           dateRange: dateRange,
           dataType: KLineDataType.oneMinute,
         );
-        expect(data[code], isEmpty, reason: 'Stock $code should have no Jan data');
+        expect(
+          data[code],
+          isEmpty,
+          reason: 'Stock $code should have no Jan data',
+        );
       }
     });
 
@@ -1964,15 +2140,10 @@ void main() {
       );
 
       // Cleanup
-      await repository.cleanupOldData(
-        beforeDate: DateTime(2024, 2, 1),
-      );
+      await repository.cleanupOldData(beforeDate: DateTime(2024, 2, 1));
 
       // Verify both data types are cleaned
-      final dateRange = DateRange(
-        DateTime(2024, 1, 1),
-        DateTime(2024, 1, 31),
-      );
+      final dateRange = DateRange(DateTime(2024, 1, 1), DateTime(2024, 1, 31));
 
       final oneMinuteData = await repository.getKlines(
         stockCodes: ['000001'],
@@ -1988,5 +2159,138 @@ void main() {
       );
       expect(dailyData['000001'], isEmpty);
     });
+
+    test('should cleanup only specified data type when provided', () async {
+      final jan2024Minute = [
+        KLine(
+          datetime: DateTime(2024, 1, 15, 9, 30),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+      final jan2024Daily = [
+        KLine(
+          datetime: DateTime(2024, 1, 15),
+          open: 10.0,
+          close: 10.5,
+          high: 10.8,
+          low: 9.9,
+          volume: 1000,
+          amount: 10000,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: jan2024Minute,
+        dataType: KLineDataType.oneMinute,
+      );
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: jan2024Daily,
+        dataType: KLineDataType.daily,
+      );
+
+      await repository.cleanupOldData(
+        beforeDate: DateTime(2024, 2, 1),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      final dateRange = DateRange(DateTime(2024, 1, 1), DateTime(2024, 1, 31));
+
+      final oneMinuteData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.oneMinute,
+      );
+      expect(oneMinuteData['000001'], isEmpty);
+
+      final dailyData = await repository.getKlines(
+        stockCodes: ['000001'],
+        dateRange: dateRange,
+        dataType: KLineDataType.daily,
+      );
+      expect(dailyData['000001'], isNotEmpty);
+    });
+
+    test(
+      'should invalidate minute freshness cache after minute cleanup',
+      () async {
+        final tradingDate = DateTime(2024, 1, 22);
+        final dateRange = DateRange(
+          tradingDate,
+          tradingDate.add(const Duration(hours: 23)),
+        );
+
+        await manager.saveKlineData(
+          stockCode: '000001',
+          newBars: [
+            KLine(
+              datetime: tradingDate,
+              open: 10.0,
+              close: 10.5,
+              high: 10.8,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
+        );
+
+        final minuteBars = <KLine>[];
+        for (var i = 0; i < 230; i++) {
+          minuteBars.add(
+            KLine(
+              datetime: DateTime(
+                tradingDate.year,
+                tradingDate.month,
+                tradingDate.day,
+                9,
+                30,
+              ).add(Duration(minutes: i)),
+              open: 10.0 + i * 0.01,
+              close: 10.5 + i * 0.01,
+              high: 10.8 + i * 0.01,
+              low: 9.9 + i * 0.01,
+              volume: 1000.0 + i,
+              amount: 10000 + i * 10,
+            ),
+          );
+        }
+        await manager.saveKlineData(
+          stockCode: '000001',
+          newBars: minuteBars,
+          dataType: KLineDataType.oneMinute,
+        );
+
+        final initial = await repository.findMissingMinuteDates(
+          stockCode: '000001',
+          dateRange: dateRange,
+        );
+        expect(initial.missingDates, isEmpty);
+        expect(initial.incompleteDates, isEmpty);
+
+        await repository.cleanupOldData(
+          beforeDate: tradingDate.add(const Duration(days: 1)),
+          dataType: KLineDataType.oneMinute,
+        );
+
+        final afterCleanup = await repository.findMissingMinuteDates(
+          stockCode: '000001',
+          dateRange: dateRange,
+        );
+        expect(
+          afterCleanup.missingDates,
+          contains(
+            DateTime(tradingDate.year, tradingDate.month, tradingDate.day),
+          ),
+        );
+      },
+    );
   });
 }

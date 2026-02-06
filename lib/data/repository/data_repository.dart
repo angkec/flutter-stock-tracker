@@ -48,9 +48,7 @@ abstract class DataRepository {
   });
 
   /// 获取实时行情
-  Future<Map<String, Quote>> getQuotes({
-    required List<String> stockCodes,
-  });
+  Future<Map<String, Quote>> getQuotes({required List<String> stockCodes});
 
   /// 获取当前数据版本
   Future<int> getCurrentVersion();
@@ -82,8 +80,10 @@ abstract class DataRepository {
   /// 清理旧数据
   ///
   /// [beforeDate] 清理此日期之前的数据
+  /// [dataType] 可选，指定时仅清理该数据类型；未指定时清理所有类型
   Future<void> cleanupOldData({
     required DateTime beforeDate,
+    KLineDataType? dataType,
   });
 
   // ============ 缺失数据检测 ============

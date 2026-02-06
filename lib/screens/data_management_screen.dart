@@ -46,21 +46,33 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 title: '日K数据',
                 subtitle: '${provider.dailyBarsCacheCount}只股票',
                 size: provider.dailyBarsCacheSize,
-                onClear: () => _confirmClear(context, '日K数据', () => provider.clearDailyBarsCache()),
+                onClear: () => _confirmClear(
+                  context,
+                  '日K数据',
+                  () => provider.clearDailyBarsCache(),
+                ),
               ),
               _buildCacheItem(
                 context,
                 title: '分时数据',
                 subtitle: '${provider.minuteDataCacheCount}只股票',
                 size: provider.minuteDataCacheSize,
-                onClear: () => _confirmClear(context, '分时数据', () => provider.clearMinuteDataCache()),
+                onClear: () => _confirmClear(
+                  context,
+                  '分时数据',
+                  () => provider.clearMinuteDataCache(),
+                ),
               ),
               _buildCacheItem(
                 context,
                 title: '行业数据',
                 subtitle: provider.industryDataLoaded ? '已加载' : '未加载',
                 size: provider.industryDataCacheSize,
-                onClear: () => _confirmClear(context, '行业数据', () => provider.clearIndustryDataCache()),
+                onClear: () => _confirmClear(
+                  context,
+                  '行业数据',
+                  () => provider.clearIndustryDataCache(),
+                ),
               ),
 
               // 历史分钟K线 (managed by DataRepository)
@@ -70,7 +82,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                     key: ValueKey(_refreshKey),
                     future: _getKlineStatus(repository, provider),
                     builder: (context, snapshot) {
-                      final status = snapshot.data ?? (subtitle: '加载中...', missingDays: 0);
+                      final status =
+                          snapshot.data ?? (subtitle: '加载中...', missingDays: 0);
 
                       return _buildKlineCacheItem(
                         context,
@@ -78,13 +91,18 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                         subtitle: status.subtitle,
                         size: '-', // Size is managed by DataRepository
                         missingDays: status.missingDays,
-                        isLoading: false, // Loading state handled by progress dialog
+                        isLoading:
+                            false, // Loading state handled by progress dialog
                         onFetch: () => _fetchHistoricalKline(context),
-                        onRecheck: () => _recheckDataFreshness(context, repository),
+                        onRecheck: () =>
+                            _recheckDataFreshness(context, repository),
                         onClear: () => _confirmClear(context, '历史分钟K线', () async {
                           // Clear all minute K-line data by cleaning up with a future date
                           await repository.cleanupOldData(
-                            beforeDate: DateTime.now().add(const Duration(days: 1)),
+                            beforeDate: DateTime.now().add(
+                              const Duration(days: 1),
+                            ),
+                            dataType: KLineDataType.oneMinute,
                           );
                           if (context.mounted) {
                             context.read<IndustryTrendService>().clearCache();
@@ -183,10 +201,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         children: [
           if (size != null) Text(size),
           const SizedBox(width: 8),
-          TextButton(
-            onPressed: onClear,
-            child: const Text('清空'),
-          ),
+          TextButton(onPressed: onClear, child: const Text('清空')),
         ],
       ),
     );
@@ -215,9 +230,15 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(title, style: Theme.of(context).textTheme.titleMedium),
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                       const SizedBox(height: 4),
-                      Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+                      Text(
+                        subtitle,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                     ],
                   ),
                 ),
@@ -309,19 +330,33 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         totalIncompleteDays += result.incompleteDates.length;
       }
 
-      final dateRangeStr = '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}';
+      final dateRangeStr =
+          '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}';
 
       // 判断整体状态
-      if (completeCount == 0 && totalMissingDays == 0 && totalIncompleteDays == 0) {
+      if (completeCount == 0 &&
+          totalMissingDays == 0 &&
+          totalIncompleteDays == 0) {
         // 没有交易日数据（可能日K也没有）
         return (subtitle: '$dateRangeStr，暂无数据', missingDays: 30);
       } else if (completeCount >= sampleCodes.length * 0.8) {
-        return (subtitle: '$dateRangeStr，数据完整 ($completeCount/${sampleCodes.length})', missingDays: 0);
+        return (
+          subtitle: '$dateRangeStr，数据完整 ($completeCount/${sampleCodes.length})',
+          missingDays: 0,
+        );
       } else if (totalMissingDays > 0 || totalIncompleteDays > 0) {
-        final issue = totalMissingDays > 0 ? '缺失$totalMissingDays天' : '不完整$totalIncompleteDays天';
-        return (subtitle: '$dateRangeStr，$issue', missingDays: totalMissingDays + totalIncompleteDays);
+        final issue = totalMissingDays > 0
+            ? '缺失$totalMissingDays天'
+            : '不完整$totalIncompleteDays天';
+        return (
+          subtitle: '$dateRangeStr，$issue',
+          missingDays: totalMissingDays + totalIncompleteDays,
+        );
       } else {
-        return (subtitle: '$dateRangeStr，部分完整 ($completeCount/${sampleCodes.length})', missingDays: 1);
+        return (
+          subtitle: '$dateRangeStr，部分完整 ($completeCount/${sampleCodes.length})',
+          missingDays: 1,
+        );
       }
     } catch (e) {
       debugPrint('[DataManagement] 获取K线状态失败: $e');
@@ -330,20 +365,26 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   }
 
   /// 重新检测数据完整性（清除缓存后重新检查）
-  Future<void> _recheckDataFreshness(BuildContext context, DataRepository repository) async {
+  Future<void> _recheckDataFreshness(
+    BuildContext context,
+    DataRepository repository,
+  ) async {
     final marketProvider = context.read<MarketDataProvider>();
 
     if (marketProvider.allData.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先刷新市场数据')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先刷新市场数据')));
       return;
     }
 
     // 显示进度对话框
-    final progressNotifier = ValueNotifier<({int current, int total, String stage})>(
-      (current: 0, total: 1, stage: '清除缓存...'),
-    );
+    final progressNotifier =
+        ValueNotifier<({int current, int total, String stage})>((
+          current: 0,
+          total: 1,
+          stage: '清除缓存...',
+        ));
 
     showDialog(
       context: context,
@@ -398,9 +439,9 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       debugPrint('[DataManagement] 重新检测失败: $e');
       if (context.mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('检测失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('检测失败: $e')));
       }
     } finally {
       progressNotifier.dispose();
@@ -415,16 +456,19 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     final rankService = context.read<IndustryRankService>();
 
     if (marketProvider.allData.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先刷新市场数据')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先刷新市场数据')));
       return;
     }
 
     // 显示进度对话框
-    final progressNotifier = ValueNotifier<({int current, int total, String stage})>(
-      (current: 0, total: 1, stage: '准备中...'),
-    );
+    final progressNotifier =
+        ValueNotifier<({int current, int total, String stage})>((
+          current: 0,
+          total: 1,
+          stage: '准备中...',
+        ));
 
     showDialog(
       context: context,
@@ -435,6 +479,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     // 阻止锁屏
     await WakelockPlus.enable();
 
+    String? completionMessage;
     try {
       var stocks = marketProvider.allData.map((d) => d.stock).toList();
 
@@ -448,7 +493,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       );
 
       debugPrint('[DataManagement] 开始拉取历史数据, ${stockCodes.length} 只股票');
-      await repository.fetchMissingData(
+      final fetchResult = await repository.fetchMissingData(
         stockCodes: stockCodes,
         dateRange: dateRange,
         dataType: KLineDataType.oneMinute,
@@ -462,6 +507,43 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       );
       debugPrint('[DataManagement] K线数据已保存');
 
+      // 0 条新增时，强制复检是否仍有缺失，防止“看起来成功但实际没拉到数据”。
+      if (fetchResult.totalRecords == 0) {
+        progressNotifier.value = (
+          current: 0,
+          total: stockCodes.length,
+          stage: '1/3 复检缺失状态',
+        );
+
+        final verifyResults = await repository.findMissingMinuteDatesBatch(
+          stockCodes: stockCodes,
+          dateRange: dateRange,
+          onProgress: (current, total) {
+            progressNotifier.value = (
+              current: current,
+              total: total,
+              stage: '1/3 复检缺失状态',
+            );
+          },
+        );
+
+        final stillMissingStocks = verifyResults.values.where((result) {
+          return result.missingDates.isNotEmpty ||
+              result.incompleteDates.isNotEmpty;
+        }).length;
+
+        if (stillMissingStocks > 0) {
+          throw Exception('拉取后仍有 $stillMissingStocks 只股票分钟K线缺失');
+        }
+      }
+
+      if (fetchResult.failureCount > 0) {
+        completionMessage =
+            '历史数据已更新（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
+      } else {
+        completionMessage = '历史数据已更新';
+      }
+
       // Get current data version for cache validation
       final dataVersion = await repository.getCurrentVersion();
 
@@ -469,14 +551,26 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       if (context.mounted) {
         debugPrint('[DataManagement] 开始计算行业趋势');
         progressNotifier.value = (current: 0, total: 1, stage: '2/3 计算行业趋势...');
-        await trendService.recalculateFromKlineData(klineService, marketProvider.allData, dataVersion: dataVersion);
+        await trendService.recalculateFromKlineData(
+          klineService,
+          marketProvider.allData,
+          dataVersion: dataVersion,
+        );
         debugPrint('[DataManagement] 行业趋势计算完成');
 
         debugPrint('[DataManagement] 开始计算行业排名');
         progressNotifier.value = (current: 0, total: 1, stage: '3/3 计算行业排名...');
-        await rankService.recalculateFromKlineData(klineService, marketProvider.allData, dataVersion: dataVersion);
+        await rankService.recalculateFromKlineData(
+          klineService,
+          marketProvider.allData,
+          dataVersion: dataVersion,
+        );
         debugPrint('[DataManagement] 行业排名计算完成');
       }
+    } catch (e, stackTrace) {
+      debugPrint('[DataManagement] 拉取历史数据失败: $e');
+      debugPrint('$stackTrace');
+      completionMessage = '历史数据拉取失败: $e';
     } finally {
       // 恢复锁屏
       await WakelockPlus.disable();
@@ -484,8 +578,10 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       // 关闭进度对话框
       if (context.mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('历史数据已更新')),
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(
+          SnackBar(content: Text(completionMessage ?? '历史数据未变化')),
         );
         _triggerRefresh();
       }
@@ -541,7 +637,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 }
 
 class _ProgressDialog extends StatelessWidget {
-  final ValueNotifier<({int current, int total, String stage})> progressNotifier;
+  final ValueNotifier<({int current, int total, String stage})>
+  progressNotifier;
 
   const _ProgressDialog({required this.progressNotifier});
 
@@ -560,7 +657,11 @@ class _ProgressDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               LinearProgressIndicator(
-                value: isProcessing ? null : (progress.total > 0 ? progress.current / progress.total : null),
+                value: isProcessing
+                    ? null
+                    : (progress.total > 0
+                          ? progress.current / progress.total
+                          : null),
               ),
               const SizedBox(height: 16),
               Text(progress.stage),

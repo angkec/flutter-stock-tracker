@@ -16,7 +16,7 @@ import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 class MockDataRepository implements DataRepository {
   final Map<String, List<KLine>> _klineData = {};
   final Map<String, DataFreshness> _freshnessResults = {};
-  int _version = 0;
+  final int _version = 0;
 
   final _statusController = StreamController<DataStatus>.broadcast();
   final _dataUpdatedController = StreamController<DataUpdatedEvent>.broadcast();
@@ -110,7 +110,10 @@ class MockDataRepository implements DataRepository {
   }
 
   @override
-  Future<void> cleanupOldData({required DateTime beforeDate}) async {}
+  Future<void> cleanupOldData({
+    required DateTime beforeDate,
+    KLineDataType? dataType,
+  }) async {}
 
   @override
   Future<MissingDatesResult> findMissingMinuteDates({
