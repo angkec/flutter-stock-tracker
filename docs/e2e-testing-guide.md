@@ -12,11 +12,14 @@
 ## 方式一：Flutter Drive（推荐用于需要数据同步的测试）
 
 ```bash
-# 在模拟器/设备上运行
-flutter drive --target=test_driver/app.dart
+# 运行 BDD 测试（推荐）
+flutter drive --target=test_driver/app.dart --driver=test_driver/bdd_test.dart
+
+# 运行普通测试
+flutter drive --target=test_driver/app.dart --driver=test_driver/app_test.dart
 
 # 指定设备
-flutter drive --target=test_driver/app.dart -d <device_id>
+flutter drive --target=test_driver/app.dart --driver=test_driver/bdd_test.dart -d <device_id>
 ```
 
 **优点：**
@@ -28,7 +31,8 @@ flutter drive --target=test_driver/app.dart -d <device_id>
 ```
 test_driver/
 ├── app.dart        # 应用入口（启用 Driver 扩展）
-└── app_test.dart   # 测试用例
+├── bdd_test.dart   # BDD 测试（中文 Gherkin，推荐）
+└── app_test.dart   # 普通测试用例
 ```
 
 ---
