@@ -1,7 +1,7 @@
 // lib/data/storage/database_schema.dart
 
 class DatabaseSchema {
-  static const int version = 2;
+  static const int version = 3;
   static const String databaseName = 'market_data.db';
 
   // 股票基本信息表
@@ -76,5 +76,33 @@ class DatabaseSchema {
     CREATE INDEX idx_date_check_pending
     ON date_check_status(stock_code, data_type, status)
     WHERE status != 'complete'
+  ''';
+
+  // 行业建仓雷达日结果表
+  static const String createIndustryBuildupDailyTable = '''
+    CREATE TABLE industry_buildup_daily (
+      date INTEGER NOT NULL,
+      industry TEXT NOT NULL,
+      z_rel REAL NOT NULL,
+      breadth REAL NOT NULL,
+      q REAL NOT NULL,
+      x_i REAL NOT NULL,
+      x_m REAL NOT NULL,
+      passed_count INTEGER NOT NULL,
+      member_count INTEGER NOT NULL,
+      rank INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (date, industry)
+    )
+  ''';
+
+  static const String createIndustryBuildupDateRankIndex = '''
+    CREATE INDEX idx_buildup_date_rank
+    ON industry_buildup_daily(date, rank)
+  ''';
+
+  static const String createIndustryBuildupIndustryDateIndex = '''
+    CREATE INDEX idx_buildup_industry_date
+    ON industry_buildup_daily(industry, date)
   ''';
 }

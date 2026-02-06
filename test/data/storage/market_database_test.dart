@@ -41,13 +41,15 @@ void main() {
 
       // 验证表存在
       final tables = await database.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table'"
+        "SELECT name FROM sqlite_master WHERE type='table'",
       );
 
       final tableNames = tables.map((t) => t['name'] as String).toList();
       expect(tableNames, contains('stocks'));
       expect(tableNames, contains('kline_files'));
       expect(tableNames, contains('data_versions'));
+      expect(tableNames, contains('date_check_status'));
+      expect(tableNames, contains('industry_buildup_daily'));
 
       await db.close();
     });
@@ -86,7 +88,7 @@ void main() {
 
       // Query sqlite_master to check if table exists
       final tables = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='date_check_status'"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='date_check_status'",
       );
 
       expect(tables, isNotEmpty);
@@ -105,6 +107,49 @@ void main() {
       expect(columnNames, contains('status'));
       expect(columnNames, contains('bar_count'));
       expect(columnNames, contains('checked_at'));
+    });
+  });
+
+  group('Database schema version 3', () {
+    late MarketDatabase database;
+
+    setUp(() {
+      database = MarketDatabase();
+    });
+
+    test(
+      'should have industry_buildup_daily table after initialization',
+      () async {
+        final db = await database.database;
+
+        final tables = await db.rawQuery(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='industry_buildup_daily'",
+        );
+
+        expect(tables, isNotEmpty);
+        expect(tables.first['name'], equals('industry_buildup_daily'));
+      },
+    );
+
+    test('industry_buildup_daily table should have correct columns', () async {
+      final db = await database.database;
+
+      final columns = await db.rawQuery(
+        "PRAGMA table_info(industry_buildup_daily)",
+      );
+      final columnNames = columns.map((c) => c['name'] as String).toList();
+
+      expect(columnNames, contains('date'));
+      expect(columnNames, contains('industry'));
+      expect(columnNames, contains('z_rel'));
+      expect(columnNames, contains('breadth'));
+      expect(columnNames, contains('q'));
+      expect(columnNames, contains('x_i'));
+      expect(columnNames, contains('x_m'));
+      expect(columnNames, contains('passed_count'));
+      expect(columnNames, contains('member_count'));
+      expect(columnNames, contains('rank'));
+      expect(columnNames, contains('updated_at'));
     });
   });
 }

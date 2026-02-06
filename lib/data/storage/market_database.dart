@@ -51,18 +51,20 @@ class MarketDatabase {
     await db.execute(DatabaseSchema.createStocksTable);
     await db.execute(DatabaseSchema.createKlineFilesTable);
     await db.execute(DatabaseSchema.createDataVersionsTable);
-    await db.execute(DatabaseSchema.createDateCheckStatusTable);  // 新增
+    await db.execute(DatabaseSchema.createDateCheckStatusTable); // 新增
+    await db.execute(DatabaseSchema.createIndustryBuildupDailyTable);
 
     // 创建索引
     await db.execute(DatabaseSchema.createKlineFilesStockIndex);
     await db.execute(DatabaseSchema.createKlineFilesDateIndex);
-    await db.execute(DatabaseSchema.createDateCheckStatusIndex);  // 新增
+    await db.execute(DatabaseSchema.createDateCheckStatusIndex); // 新增
+    await db.execute(DatabaseSchema.createIndustryBuildupDateRankIndex);
+    await db.execute(DatabaseSchema.createIndustryBuildupIndustryDateIndex);
 
     // 插入初始版本
-    await db.rawInsert(
-      DatabaseSchema.insertInitialVersion,
-      [DateTime.now().millisecondsSinceEpoch],
-    );
+    await db.rawInsert(DatabaseSchema.insertInitialVersion, [
+      DateTime.now().millisecondsSinceEpoch,
+    ]);
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -70,6 +72,12 @@ class MarketDatabase {
       // Version 1 -> 2: Add date_check_status table
       await db.execute(DatabaseSchema.createDateCheckStatusTable);
       await db.execute(DatabaseSchema.createDateCheckStatusIndex);
+    }
+    if (oldVersion < 3) {
+      // Version 2 -> 3: Add industry buildup daily table
+      await db.execute(DatabaseSchema.createIndustryBuildupDailyTable);
+      await db.execute(DatabaseSchema.createIndustryBuildupDateRankIndex);
+      await db.execute(DatabaseSchema.createIndustryBuildupIndustryDateIndex);
     }
   }
 
