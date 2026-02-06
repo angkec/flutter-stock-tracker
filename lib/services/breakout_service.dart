@@ -117,7 +117,7 @@ class BreakoutService extends ChangeNotifier {
         }
       }
 
-      // 4. 如果 highBreakDays > 0，检查收盘价 > 前N日最高价
+      // 4. 如果 highBreakDays > 0，检查是否突破前N日最高价
       if (_config.highBreakDays > 0) {
         if (breakoutIdx < _config.highBreakDays) {
           continue;
@@ -126,7 +126,11 @@ class BreakoutService extends ChangeNotifier {
         final highBars = dailyBars.sublist(highStart, breakoutIdx);
         final maxHigh =
             highBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
-        if (breakoutBar.close <= maxHigh) {
+        // 根据配置选择用最高价还是收盘价来比较
+        final breakPrice = _config.breakReferencePoint == BreakReferencePoint.high
+            ? breakoutBar.high
+            : breakoutBar.close;
+        if (breakPrice <= maxHigh) {
           continue;
         }
       }
@@ -515,7 +519,7 @@ class BreakoutService extends ChangeNotifier {
         }
       }
 
-      // 4. 如果 highBreakDays > 0，检查收盘价 > 前N日最高价
+      // 4. 如果 highBreakDays > 0，检查是否突破前N日最高价
       if (_config.highBreakDays > 0) {
         if (i < _config.highBreakDays) {
           continue;
@@ -523,7 +527,11 @@ class BreakoutService extends ChangeNotifier {
         final highStart = i - _config.highBreakDays;
         final highBars = dailyBars.sublist(highStart, i);
         final maxHigh = highBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
-        if (bar.close <= maxHigh) {
+        // 根据配置选择用最高价还是收盘价来比较
+        final breakPrice = _config.breakReferencePoint == BreakReferencePoint.high
+            ? bar.high
+            : bar.close;
+        if (breakPrice <= maxHigh) {
           continue;
         }
       }
@@ -610,7 +618,11 @@ class BreakoutService extends ChangeNotifier {
         final highStart = i - _config.highBreakDays;
         final highBars = dailyBars.sublist(highStart, i);
         final maxHigh = highBars.map((b) => b.high).reduce((a, b) => a > b ? a : b);
-        if (bar.close <= maxHigh) {
+        // 根据配置选择用最高价还是收盘价来比较
+        final breakPrice = _config.breakReferencePoint == BreakReferencePoint.high
+            ? bar.high
+            : bar.close;
+        if (breakPrice <= maxHigh) {
           failedCount++;
         }
       }

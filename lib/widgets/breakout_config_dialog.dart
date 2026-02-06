@@ -38,6 +38,7 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
   late TextEditingController _minMinuteRatioController;
   late TextEditingController _surgeThresholdController;
   late DropReferencePoint _dropReferencePoint;
+  late BreakReferencePoint _breakReferencePoint;
   late bool _filterSurgeAfterPullback;
 
   @override
@@ -87,6 +88,7 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
       text: (config.surgeThreshold * 100).toStringAsFixed(1),
     );
     _dropReferencePoint = config.dropReferencePoint;
+    _breakReferencePoint = config.breakReferencePoint;
     _filterSurgeAfterPullback = config.filterSurgeAfterPullback;
   }
 
@@ -138,6 +140,7 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
       breakVolumeMultiplier: breakVolume,
       maBreakDays: maBreakDays,
       highBreakDays: highBreakDays,
+      breakReferencePoint: _breakReferencePoint,
       maxUpperShadowRatio: maxUpperShadowRatio,
       minBreakoutMinuteRatio: minBreakoutMinuteRatio,
       minPullbackDays: minPullbackDays,
@@ -226,6 +229,7 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
         (defaults.surgeThreshold * 100).toStringAsFixed(1);
     setState(() {
       _dropReferencePoint = defaults.dropReferencePoint;
+      _breakReferencePoint = defaults.breakReferencePoint;
       _filterSurgeAfterPullback = defaults.filterSurgeAfterPullback;
     });
   }
@@ -300,6 +304,29 @@ class _BreakoutConfigSheetState extends State<BreakoutConfigSheet> {
                         label: '突破前N日高点',
                         hint: '0=不检测',
                         suffix: '天',
+                      ),
+                      const SizedBox(height: 12),
+                      _buildSegmentedField(
+                        label: '突破参考点',
+                        hint: '判断是否突破前N日高点时使用',
+                        child: SegmentedButton<BreakReferencePoint>(
+                          segments: const [
+                            ButtonSegment(
+                              value: BreakReferencePoint.high,
+                              label: Text('最高价'),
+                            ),
+                            ButtonSegment(
+                              value: BreakReferencePoint.close,
+                              label: Text('收盘价'),
+                            ),
+                          ],
+                          selected: {_breakReferencePoint},
+                          onSelectionChanged: (selected) {
+                            setState(() {
+                              _breakReferencePoint = selected.first;
+                            });
+                          },
+                        ),
                       ),
                       const SizedBox(height: 12),
                       _buildTextField(

@@ -23,6 +23,10 @@ class _BacktestScreenState extends State<BacktestScreen> {
   BacktestResult? _result;
   String? _errorMessage;
 
+  // 进度状态
+  int _progress = 0;
+  int _total = 0;
+
   // 临时编辑的回测配置
   late List<int> _observationDays;
   late double _targetGain;
@@ -127,6 +131,8 @@ class _BacktestScreenState extends State<BacktestScreen> {
       _isRunning = true;
       _errorMessage = null;
       _result = null;
+      _progress = 0;
+      _total = provider.dailyBarsCacheCount;
     });
 
     try {
@@ -137,6 +143,12 @@ class _BacktestScreenState extends State<BacktestScreen> {
         dailyBarsMap: provider.dailyBarsCache,
         stockDataMap: provider.stockDataMap,
         breakoutService: breakoutService,
+        onProgress: (current, total) {
+          setState(() {
+            _progress = current;
+            _total = total;
+          });
+        },
       );
 
       setState(() {
@@ -229,13 +241,27 @@ class _BacktestScreenState extends State<BacktestScreen> {
 
   /// 构建加载视图
   Widget _buildLoadingView(BuildContext context) {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          CircularProgressIndicator(),
-          SizedBox(height: 16),
-          Text('正在运行回测...'),
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          const Text('正在运行回测...'),
+          const SizedBox(height: 16),
+          if (_total > 0) ...[
+            SizedBox(
+              width: 200,
+              child: LinearProgressIndicator(
+                value: _progress / _total,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$_progress / $_total',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
         ],
       ),
     );

@@ -6,6 +6,14 @@ enum DropReferencePoint {
   breakoutHigh,
 }
 
+/// 突破参考点枚举（用于判断是否突破前N日高点）
+enum BreakReferencePoint {
+  /// 以突破日最高价为参考（默认）
+  high,
+  /// 以突破日收盘价为参考
+  close,
+}
+
 /// 单项检测结果
 class DetectionItem {
   final String name;
@@ -128,8 +136,11 @@ class BreakoutConfig {
   /// 突破N日均线（收盘价 > N日均线，0=不检测）
   final int maBreakDays;
 
-  /// 突破前N日高点（收盘价 > 前N日最高价，0=不检测）
+  /// 突破前N日高点（0=不检测）
   final int highBreakDays;
+
+  /// 突破参考点（判断是否突破前N日高点时使用）
+  final BreakReferencePoint breakReferencePoint;
 
   /// 最大上引线比例（上引线长度 / 实体长度，0=不检测）
   final double maxUpperShadowRatio;
@@ -175,6 +186,7 @@ class BreakoutConfig {
     this.breakVolumeMultiplier = 1.5,
     this.maBreakDays = 0,
     this.highBreakDays = 10,
+    this.breakReferencePoint = BreakReferencePoint.high,
     this.maxUpperShadowRatio = 0.2,
     this.minBreakoutMinuteRatio = 0,
     this.minPullbackDays = 1,
@@ -197,6 +209,7 @@ class BreakoutConfig {
     double? breakVolumeMultiplier,
     int? maBreakDays,
     int? highBreakDays,
+    BreakReferencePoint? breakReferencePoint,
     double? maxUpperShadowRatio,
     double? minBreakoutMinuteRatio,
     int? minPullbackDays,
@@ -215,6 +228,7 @@ class BreakoutConfig {
       breakVolumeMultiplier: breakVolumeMultiplier ?? this.breakVolumeMultiplier,
       maBreakDays: maBreakDays ?? this.maBreakDays,
       highBreakDays: highBreakDays ?? this.highBreakDays,
+      breakReferencePoint: breakReferencePoint ?? this.breakReferencePoint,
       maxUpperShadowRatio: maxUpperShadowRatio ?? this.maxUpperShadowRatio,
       minBreakoutMinuteRatio: minBreakoutMinuteRatio ?? this.minBreakoutMinuteRatio,
       minPullbackDays: minPullbackDays ?? this.minPullbackDays,
@@ -235,6 +249,7 @@ class BreakoutConfig {
     'breakVolumeMultiplier': breakVolumeMultiplier,
     'maBreakDays': maBreakDays,
     'highBreakDays': highBreakDays,
+    'breakReferencePoint': breakReferencePoint.index,
     'maxUpperShadowRatio': maxUpperShadowRatio,
     'minBreakoutMinuteRatio': minBreakoutMinuteRatio,
     'minPullbackDays': minPullbackDays,
@@ -254,6 +269,8 @@ class BreakoutConfig {
     breakVolumeMultiplier: (json['breakVolumeMultiplier'] as num?)?.toDouble() ?? 1.5,
     maBreakDays: (json['maBreakDays'] as int?) ?? 0,
     highBreakDays: (json['highBreakDays'] as int?) ?? 10,
+    breakReferencePoint: BreakReferencePoint.values[
+        (json['breakReferencePoint'] as int?) ?? 0],
     maxUpperShadowRatio: (json['maxUpperShadowRatio'] as num?)?.toDouble() ?? 0.2,
     minBreakoutMinuteRatio: (json['minBreakoutMinuteRatio'] as num?)?.toDouble() ?? 0,
     minPullbackDays: (json['minPullbackDays'] as int?) ?? 1,

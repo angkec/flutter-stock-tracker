@@ -60,52 +60,50 @@ class BacktestService extends ChangeNotifier {
   /// [dailyBarsMap] 股票代码 -> 日K数据列表（按时间升序）
   /// [stockDataMap] 股票代码 -> 股票监控数据
   /// [breakoutService] 用于复用突破检测逻辑
+  /// [onProgress] 进度回调，参数为 (当前完成数, 总数)
+  /// [concurrency] 并发数，默认 10
   Future<BacktestResult> runBacktest({
     required Map<String, List<KLine>> dailyBarsMap,
     required Map<String, StockMonitorData> stockDataMap,
     required BreakoutService breakoutService,
+    void Function(int current, int total)? onProgress,
+    int concurrency = 10,
   }) async {
     final signals = <SignalDetail>[];
     final allMaxGains = <double>[];
+    final total = dailyBarsMap.length;
+    var completed = 0;
 
-    // 遍历所有股票
-    for (final entry in dailyBarsMap.entries) {
-      final code = entry.key;
-      final dailyBars = entry.value;
-      final stockData = stockDataMap[code];
+    // 将股票列表分批并发处理
+    final entries = dailyBarsMap.entries.toList();
 
-      if (stockData == null || dailyBars.isEmpty) continue;
+    for (var i = 0; i < entries.length; i += concurrency) {
+      final batch = entries.skip(i).take(concurrency).toList();
 
-      // 找到所有突破日
-      final breakoutIndices = await breakoutService.findBreakoutDays(dailyBars, stockCode: code);
-
-      // 对每个突破日，计算信号
-      for (final breakoutIdx in breakoutIndices) {
-        // 过滤无效数据（日期异常或价格异常的股票）
-        final breakoutBar = dailyBars[breakoutIdx];
-        if (breakoutBar.datetime.year < 2020) {
-          // 日期在2020年之前的数据视为无效（可能是退市股或数据异常）
-          continue;
-        }
-        if (breakoutBar.close <= 0 || breakoutBar.close > 10000) {
-          // 价格异常（<=0 或 >10000元）
-          continue;
-        }
-
-        final signalDetail = _processSignal(
-          code: code,
-          stockName: stockData.stock.name,
-          dailyBars: dailyBars,
-          breakoutIdx: breakoutIdx,
+      // 并发处理这一批股票
+      final batchResults = await Future.wait(
+        batch.map((entry) => _processStock(
+          code: entry.key,
+          dailyBars: entry.value,
+          stockData: stockDataMap[entry.key],
           breakoutService: breakoutService,
-        );
+        )),
+      );
 
-        if (signalDetail != null) {
-          signals.add(signalDetail);
-          // 收集所有周期的最高涨幅
-          allMaxGains.addAll(signalDetail.maxGainByPeriod.values);
+      // 收集结果
+      for (final result in batchResults) {
+        if (result != null) {
+          signals.addAll(result.signals);
+          allMaxGains.addAll(result.maxGains);
         }
       }
+
+      // 更新进度
+      completed += batch.length;
+      onProgress?.call(completed, total);
+
+      // 让出 CPU 给 UI 线程更新
+      await Future.delayed(Duration.zero);
     }
 
     // 计算各周期统计
@@ -117,6 +115,49 @@ class BacktestService extends ChangeNotifier {
       signals: signals,
       allMaxGains: allMaxGains,
     );
+  }
+
+  /// 处理单只股票的回测
+  Future<({List<SignalDetail> signals, List<double> maxGains})?> _processStock({
+    required String code,
+    required List<KLine> dailyBars,
+    required StockMonitorData? stockData,
+    required BreakoutService breakoutService,
+  }) async {
+    if (stockData == null || dailyBars.isEmpty) return null;
+
+    final signals = <SignalDetail>[];
+    final maxGains = <double>[];
+
+    // 找到所有突破日
+    final breakoutIndices = await breakoutService.findBreakoutDays(dailyBars, stockCode: code);
+
+    // 对每个突破日，计算信号
+    for (final breakoutIdx in breakoutIndices) {
+      // 过滤无效数据（日期异常或价格异常的股票）
+      final breakoutBar = dailyBars[breakoutIdx];
+      if (breakoutBar.datetime.year < 2020) {
+        continue;
+      }
+      if (breakoutBar.close <= 0 || breakoutBar.close > 10000) {
+        continue;
+      }
+
+      final signalDetail = _processSignal(
+        code: code,
+        stockName: stockData.stock.name,
+        dailyBars: dailyBars,
+        breakoutIdx: breakoutIdx,
+        breakoutService: breakoutService,
+      );
+
+      if (signalDetail != null) {
+        signals.add(signalDetail);
+        maxGains.addAll(signalDetail.maxGainByPeriod.values);
+      }
+    }
+
+    return (signals: signals, maxGains: maxGains);
   }
 
   /// 处理单个信号
