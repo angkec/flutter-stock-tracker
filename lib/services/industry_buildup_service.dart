@@ -8,9 +8,11 @@ import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/industry_buildup_storage.dart';
+import 'package:stock_rtwatcher/models/adaptive_weekly_config.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/services/adaptive_topk_calibrator.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 
 class IndustryBuildUpService extends ChangeNotifier {
@@ -32,6 +34,7 @@ class IndustryBuildUpService extends ChangeNotifier {
   static const double _persistZ = 1.0;
   static const int _persistNeed = 3;
   static const double _eps = 1e-9;
+  static const int _adaptiveLookbackTradingDays = 5;
 
   final DataRepository _repository;
   final IndustryService _industryService;
@@ -54,6 +57,8 @@ class IndustryBuildUpService extends ChangeNotifier {
   bool _hasPreviousDate = false;
   bool _hasNextDate = false;
   IndustryBuildupTagConfig _tagConfig = IndustryBuildupTagConfig.defaults;
+  AdaptiveTopKParams _adaptiveTopKParams = const AdaptiveTopKParams();
+  AdaptiveWeeklyConfig? _latestWeeklyAdaptiveConfig;
 
   IndustryBuildUpService({
     required DataRepository repository,
@@ -79,6 +84,9 @@ class IndustryBuildUpService extends ChangeNotifier {
   bool get hasPreviousDate => _hasPreviousDate;
   bool get hasNextDate => _hasNextDate;
   IndustryBuildupTagConfig get tagConfig => _tagConfig;
+  AdaptiveTopKParams get adaptiveTopKParams => _adaptiveTopKParams;
+  AdaptiveWeeklyConfig? get latestWeeklyAdaptiveConfig =>
+      _latestWeeklyAdaptiveConfig;
   List<IndustryBuildupBoardItem> get latestBoard =>
       List.unmodifiable(_latestBoard);
   bool hasIndustryHistory(String industry) =>
@@ -101,6 +109,17 @@ class IndustryBuildUpService extends ChangeNotifier {
     _tagConfig = IndustryBuildupTagConfig.defaults;
     notifyListeners();
     _saveTagConfig();
+  }
+
+  Future<void> updateAdaptiveTopKParams(AdaptiveTopKParams params) async {
+    _adaptiveTopKParams = params;
+    final currentDate = _latestResultDate;
+    if (currentDate != null) {
+      _latestWeeklyAdaptiveConfig = await _buildWeeklyAdaptiveConfigForDate(
+        currentDate,
+      );
+    }
+    notifyListeners();
   }
 
   Future<void> loadIndustryHistory(
@@ -521,6 +540,7 @@ class IndustryBuildUpService extends ChangeNotifier {
     if (latestDate == null) {
       _latestResultDate = null;
       _latestBoard = [];
+      _latestWeeklyAdaptiveConfig = null;
       _hasPreviousDate = false;
       _hasNextDate = false;
       notifyListeners();
@@ -572,7 +592,64 @@ class IndustryBuildUpService extends ChangeNotifier {
         await _storage.getPreviousDate(_latestResultDate!) != null;
     _hasNextDate = await _storage.getNextDate(_latestResultDate!) != null;
     _latestBoard = boardItems;
+    _latestWeeklyAdaptiveConfig = await _buildWeeklyAdaptiveConfigForDate(
+      _latestResultDate!,
+    );
     notifyListeners();
+  }
+
+  Future<AdaptiveWeeklyConfig> _buildWeeklyAdaptiveConfigForDate(
+    DateTime date,
+  ) async {
+    final weeklyRecords = await _loadRecentTradingDayRecords(
+      date,
+      tradingDays: _adaptiveLookbackTradingDays,
+    );
+
+    final inputs = weeklyRecords
+        .map(
+          (record) => AdaptiveIndustryDayRecord(
+            industry: record.industry,
+            day: record.dateOnly,
+            z: record.zRel,
+            q: record.q,
+            breadth: record.breadth,
+          ),
+        )
+        .toList(growable: false);
+
+    return buildWeeklyConfig(
+      inputs,
+      params: _adaptiveTopKParams,
+      referenceDay: date,
+    );
+  }
+
+  Future<List<IndustryBuildupDailyRecord>> _loadRecentTradingDayRecords(
+    DateTime endDate, {
+    required int tradingDays,
+  }) async {
+    final normalizedEndDate = DateTime(
+      endDate.year,
+      endDate.month,
+      endDate.day,
+    );
+    final dates = <DateTime>[normalizedEndDate];
+    var cursor = normalizedEndDate;
+    while (dates.length < tradingDays) {
+      final previous = await _storage.getPreviousDate(cursor);
+      if (previous == null) break;
+      final normalized = DateTime(previous.year, previous.month, previous.day);
+      dates.add(normalized);
+      cursor = normalized;
+    }
+
+    final records = <IndustryBuildupDailyRecord>[];
+    for (final day in dates) {
+      final dayRecords = await _storage.getBoardForDate(day, limit: 500);
+      records.addAll(dayRecords);
+    }
+    return records;
   }
 
   void _setProgress(String stage, int current, int total) {

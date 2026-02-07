@@ -11,6 +11,7 @@ import 'package:stock_rtwatcher/data/models/day_data_status.dart';
 import 'package:stock_rtwatcher/data/models/fetch_result.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
+import 'package:stock_rtwatcher/models/adaptive_weekly_config.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
@@ -127,6 +128,7 @@ class _FakeIndustryBuildUpService extends IndustryBuildUpService {
   bool _fakeHasPreviousDate = false;
   bool _fakeHasNextDate = false;
   IndustryBuildupTagConfig _fakeTagConfig = IndustryBuildupTagConfig.defaults;
+  AdaptiveWeeklyConfig? _fakeWeeklyConfig;
   int previousTapCount = 0;
   int nextTapCount = 0;
 
@@ -164,6 +166,9 @@ class _FakeIndustryBuildUpService extends IndustryBuildUpService {
   @override
   IndustryBuildupTagConfig get tagConfig => _fakeTagConfig;
 
+  @override
+  AdaptiveWeeklyConfig? get latestWeeklyAdaptiveConfig => _fakeWeeklyConfig;
+
   void setUiState({
     bool? isCalculating,
     String? stageLabel,
@@ -174,6 +179,7 @@ class _FakeIndustryBuildUpService extends IndustryBuildUpService {
     List<IndustryBuildupBoardItem>? board,
     bool? hasPreviousDate,
     bool? hasNextDate,
+    AdaptiveWeeklyConfig? weeklyConfig,
   }) {
     if (isCalculating != null) {
       _fakeIsCalculating = isCalculating;
@@ -198,6 +204,7 @@ class _FakeIndustryBuildUpService extends IndustryBuildUpService {
     if (hasNextDate != null) {
       _fakeHasNextDate = hasNextDate;
     }
+    _fakeWeeklyConfig = weeklyConfig ?? _fakeWeeklyConfig;
     notifyListeners();
   }
 
@@ -373,6 +380,89 @@ void main() {
     await tester.tap(find.byTooltip('下一日'));
     await tester.pump();
     expect(service.nextTapCount, 0);
+  });
+
+  testWidgets('状态栏展示本周候选状态与阈值', (tester) async {
+    final service = _FakeIndustryBuildUpService();
+    service.setUiState(
+      board: [_boardItem(industry: '半导体', zRel: 1.7, breadth: 0.45, q: 0.70)],
+      isCalculating: false,
+      errorMessage: null,
+      latestResultDate: DateTime(2026, 2, 6),
+      weeklyConfig: const AdaptiveWeeklyConfig(
+        week: '2026-W06',
+        k: 3,
+        floors: AdaptiveFloors(z: 0.8, q: 0.5, breadth: 0.2),
+        thresholds: AdaptiveThresholds(z: 1.27, q: 0.56, breadth: 0.27),
+        candidates: [],
+        status: AdaptiveWeeklyStatus.weak,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<IndustryBuildUpService>.value(
+        value: service,
+        child: const MaterialApp(
+          home: Scaffold(body: IndustryBuildupList(fullHeight: true)),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('本周候选 观察'), findsOneWidget);
+    expect(find.textContaining('Top-3'), findsOneWidget);
+    expect(find.textContaining('Z≥1.27'), findsOneWidget);
+    expect(find.textContaining('Q≥0.56'), findsOneWidget);
+    expect(find.textContaining('广度≥0.27'), findsOneWidget);
+  });
+
+  testWidgets('展示本周候选榜 candidates 明细', (tester) async {
+    final service = _FakeIndustryBuildUpService();
+    service.setUiState(
+      board: [_boardItem(industry: '半导体', zRel: 1.7, breadth: 0.45, q: 0.70)],
+      isCalculating: false,
+      errorMessage: null,
+      latestResultDate: DateTime(2026, 2, 6),
+      weeklyConfig: AdaptiveWeeklyConfig(
+        week: '2026-W06',
+        k: 3,
+        floors: const AdaptiveFloors(z: 0.8, q: 0.5, breadth: 0.2),
+        thresholds: const AdaptiveThresholds(z: 1.27, q: 0.56, breadth: 0.27),
+        candidates: [
+          AdaptiveCandidate(
+            industry: '半导体',
+            day: DateTime(2026, 2, 6),
+            z: 1.62,
+            q: 0.71,
+            breadth: 0.41,
+            score: 1.06,
+          ),
+          AdaptiveCandidate(
+            industry: '军工',
+            day: DateTime(2026, 2, 5),
+            z: 1.44,
+            q: 0.64,
+            breadth: 0.33,
+            score: 0.89,
+          ),
+        ],
+        status: AdaptiveWeeklyStatus.strong,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<IndustryBuildUpService>.value(
+        value: service,
+        child: const MaterialApp(
+          home: Scaffold(body: IndustryBuildupList(fullHeight: true)),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('本周候选榜 2026-W06'), findsOneWidget);
+    expect(find.textContaining('1. 半导体'), findsOneWidget);
+    expect(find.textContaining('2. 军工'), findsOneWidget);
+    expect(find.textContaining('score 1.06'), findsOneWidget);
+    expect(find.textContaining('score 0.89'), findsOneWidget);
   });
 
   testWidgets('指标配置可调整Z广度Q阈值并影响标签', (tester) async {

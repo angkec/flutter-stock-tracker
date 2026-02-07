@@ -274,6 +274,14 @@ void main() {
         expect(board, isNotEmpty);
         expect(board.first.record.rank, 1);
         expect(service.latestResultDate, isNotNull);
+        final weeklyConfig = service.latestWeeklyAdaptiveConfig;
+        expect(weeklyConfig, isNotNull);
+        expect(weeklyConfig!.mode, 'adaptive_topk');
+        expect(weeklyConfig.week, '2026-W06');
+        expect(weeklyConfig.candidates, isNotEmpty);
+        expect(weeklyConfig.thresholds.z, greaterThanOrEqualTo(0.8));
+        expect(weeklyConfig.thresholds.q, greaterThanOrEqualTo(0.5));
+        expect(weeklyConfig.thresholds.breadth, greaterThanOrEqualTo(0.2));
 
         final persisted = await storage.getLatestBoard(limit: 10);
         expect(persisted, isNotEmpty);

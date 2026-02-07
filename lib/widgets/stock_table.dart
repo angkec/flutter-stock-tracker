@@ -53,6 +53,10 @@ class StockTable extends StatefulWidget {
   /// 今日实时行业趋势数据，key 为行业名称
   final Map<String, DailyRatioPoint>? todayTrendData;
 
+  /// 可选量比覆盖值（key 为股票代码）
+  /// 用于按指定日期展示/排序量比（例如行业详情按历史日排序）
+  final Map<String, double>? ratioOverrides;
+
   /// 是否显示行业列
   final bool showIndustry;
 
@@ -74,6 +78,7 @@ class StockTable extends StatefulWidget {
     this.onIndustryTap,
     this.industryTrendData,
     this.todayTrendData,
+    this.ratioOverrides,
     this.showIndustry = true,
     this.showHeader = true,
     this.prioritizeBreakout = true,
@@ -132,6 +137,10 @@ class _StockTableState extends State<StockTable> {
   SortColumn? _sortColumn;
   bool _ascending = false;
 
+  double _ratioFor(StockMonitorData data) {
+    return widget.ratioOverrides?[data.stock.code] ?? data.ratio;
+  }
+
   void _onHeaderTap(SortColumn column) {
     setState(() {
       if (_sortColumn == column) {
@@ -157,7 +166,7 @@ class _StockTableState extends State<StockTable> {
         case SortColumn.change:
           result = a.changePercent.compareTo(b.changePercent);
         case SortColumn.ratio:
-          result = a.ratio.compareTo(b.ratio);
+          result = _ratioFor(a).compareTo(_ratioFor(b));
         case SortColumn.industry:
           result = (a.industry ?? '').compareTo(b.industry ?? '');
       }
@@ -237,7 +246,8 @@ class _StockTableState extends State<StockTable> {
   }
 
   Widget _buildRow(BuildContext context, StockMonitorData data, int index, List<StockMonitorData> displayStocks) {
-    final ratioColor = data.ratio >= 1 ? upColor : downColor;
+    final ratio = _ratioFor(data);
+    final ratioColor = ratio >= 1 ? upColor : downColor;
     final changeColor = data.changePercent >= 0 ? upColor : downColor;
     final isHighlighted = widget.highlightCodes.contains(data.stock.code);
 
@@ -364,7 +374,7 @@ class _StockTableState extends State<StockTable> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
-                formatRatio(data.ratio),
+                formatRatio(ratio),
                 style: TextStyle(
                   color: ratioColor,
                   fontWeight: FontWeight.w500,

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/models/adaptive_weekly_config.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_stage.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
@@ -17,6 +18,7 @@ class IndustryBuildupList extends StatelessWidget {
     final service = context.watch<IndustryBuildUpService>();
     final board = service.latestBoard;
     final tagConfig = service.tagConfig;
+    final adaptiveConfig = service.latestWeeklyAdaptiveConfig;
 
     if (board.isEmpty) {
       return _EmptyState(service: service);
@@ -27,6 +29,8 @@ class IndustryBuildupList extends StatelessWidget {
     return Column(
       children: [
         _StatusBar(service: service),
+        if (adaptiveConfig != null && adaptiveConfig.candidates.isNotEmpty)
+          _WeeklyCandidatesBoard(config: adaptiveConfig),
         Container(
           height: 30,
           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -175,6 +179,60 @@ class IndustryBuildupList extends StatelessWidget {
   }
 }
 
+class _WeeklyCandidatesBoard extends StatelessWidget {
+  final AdaptiveWeeklyConfig config;
+
+  const _WeeklyCandidatesBoard({required this.config});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final candidates = config.candidates.take(config.k).toList(growable: false);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.35,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '本周候选榜 ${config.week}（${_adaptiveStatusLabel(config.status)}）',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: _adaptiveStatusColor(context, config.status),
+            ),
+          ),
+          const SizedBox(height: 4),
+          for (var i = 0; i < candidates.length; i++)
+            Text(
+              '${i + 1}. ${candidates[i].industry}  ${_formatMonthDay(candidates[i].day)}  '
+              'score ${candidates[i].score.toStringAsFixed(2)}  '
+              'Z ${candidates[i].z.toStringAsFixed(2)}  '
+              'Q ${candidates[i].q.toStringAsFixed(2)}  '
+              '广度 ${(candidates[i].breadth * 100).toStringAsFixed(0)}%',
+              style: TextStyle(
+                fontSize: 10,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatMonthDay(DateTime date) {
+  final normalized = DateTime(date.year, date.month, date.day);
+  return '${normalized.month.toString().padLeft(2, '0')}-'
+      '${normalized.day.toString().padLeft(2, '0')}';
+}
+
 class _EmptyState extends StatelessWidget {
   final IndustryBuildUpService service;
 
@@ -238,6 +296,7 @@ class _StatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final latestDate = service.latestResultDate;
+    final adaptiveConfig = service.latestWeeklyAdaptiveConfig;
     final dateText = latestDate == null
         ? '结果基于数据日期 --'
         : '结果基于数据日期 ${latestDate.month.toString().padLeft(2, '0')}-${latestDate.day.toString().padLeft(2, '0')}';
@@ -257,8 +316,21 @@ class _StatusBar extends StatelessWidget {
       statusColor = Theme.of(context).colorScheme.primary;
     }
 
+    String? adaptiveText;
+    Color? adaptiveColor;
+    if (adaptiveConfig != null) {
+      final thresholds = adaptiveConfig.thresholds;
+      adaptiveText =
+          '本周候选 ${_adaptiveStatusLabel(adaptiveConfig.status)}  '
+          'Top-${adaptiveConfig.k}  '
+          'Z≥${thresholds.z.toStringAsFixed(2)}  '
+          'Q≥${thresholds.q.toStringAsFixed(2)}  '
+          '广度≥${thresholds.breadth.toStringAsFixed(2)}';
+      adaptiveColor = _adaptiveStatusColor(context, adaptiveConfig.status);
+    }
+
     return Container(
-      height: 40,
+      height: 56,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
@@ -300,6 +372,12 @@ class _StatusBar extends StatelessWidget {
                     style: TextStyle(fontSize: 10, color: statusColor),
                     overflow: TextOverflow.ellipsis,
                   ),
+                if (adaptiveText != null)
+                  Text(
+                    adaptiveText,
+                    style: TextStyle(fontSize: 10, color: adaptiveColor),
+                    overflow: TextOverflow.ellipsis,
+                  ),
               ],
             ),
           ),
@@ -311,6 +389,29 @@ class _StatusBar extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+String _adaptiveStatusLabel(AdaptiveWeeklyStatus status) {
+  switch (status) {
+    case AdaptiveWeeklyStatus.strong:
+      return '强';
+    case AdaptiveWeeklyStatus.weak:
+      return '观察';
+    case AdaptiveWeeklyStatus.none:
+      return '无高亮';
+  }
+}
+
+Color _adaptiveStatusColor(BuildContext context, AdaptiveWeeklyStatus status) {
+  final scheme = Theme.of(context).colorScheme;
+  switch (status) {
+    case AdaptiveWeeklyStatus.strong:
+      return scheme.primary;
+    case AdaptiveWeeklyStatus.weak:
+      return Colors.orange;
+    case AdaptiveWeeklyStatus.none:
+      return scheme.onSurfaceVariant;
   }
 }
 

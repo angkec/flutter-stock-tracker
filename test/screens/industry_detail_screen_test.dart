@@ -121,6 +121,28 @@ class _DummyRepository implements DataRepository {
   );
 }
 
+class _FakeRatioSortRepository extends _DummyRepository {
+  final Map<String, List<KLine>> _barsByCode;
+
+  _FakeRatioSortRepository(this._barsByCode);
+
+  @override
+  Future<Map<String, List<KLine>>> getKlines({
+    required List<String> stockCodes,
+    required DateRange dateRange,
+    required KLineDataType dataType,
+  }) async {
+    final result = <String, List<KLine>>{};
+    for (final code in stockCodes) {
+      final bars = _barsByCode[code] ?? const <KLine>[];
+      result[code] = bars
+          .where((bar) => dateRange.contains(bar.datetime))
+          .toList();
+    }
+    return result;
+  }
+}
+
 class _FakeMarketDataProvider extends MarketDataProvider {
   final List<StockMonitorData> _testData;
 
@@ -220,6 +242,7 @@ IndustryBuildupDailyRecord _record(DateTime date, {required int rank}) {
 
 void main() {
   testWidgets('行业详情页显示建仓雷达历史并触发加载', (tester) async {
+    final repository = _DummyRepository();
     final marketProvider = _FakeMarketDataProvider(
       data: [
         StockMonitorData(
@@ -250,6 +273,7 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
+          Provider<DataRepository>.value(value: repository),
           ChangeNotifierProvider<MarketDataProvider>.value(
             value: marketProvider,
           ),
@@ -272,5 +296,138 @@ void main() {
     expect(find.text('2026-02-06'), findsOneWidget);
     expect(find.text('2026-02-05'), findsOneWidget);
     expect(find.text('2026-02-04'), findsOneWidget);
+    expect(find.textContaining('排序: 最新'), findsOneWidget);
   });
+
+  testWidgets('成分股列表可按指定日期量比排序', (tester) async {
+    final targetDate = DateTime(2026, 2, 5);
+    final repository = _FakeRatioSortRepository({
+      '600001': _buildBarsForRatio(targetDate, ratio: 0.6),
+      '600002': _buildBarsForRatio(targetDate, ratio: 2.0),
+    });
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600001', name: '测试A', market: 1),
+          ratio: 1.8,
+          changePercent: 2.5,
+          industry: '半导体',
+        ),
+        StockMonitorData(
+          stock: Stock(code: '600002', name: '测试B', market: 1),
+          ratio: 1.2,
+          changePercent: -1.0,
+          industry: '半导体',
+        ),
+      ],
+    );
+    final trendService = _FakeTrendService();
+    final buildUpService = _FakeIndustryBuildUpService(
+      historyByIndustry: {
+        '半导体': [
+          _record(DateTime(2026, 2, 6), rank: 1),
+          _record(DateTime(2026, 2, 5), rank: 2),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildUpService,
+          ),
+        ],
+        child: const MaterialApp(home: IndustryDetailScreen(industry: '半导体')),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      _topYOfText(tester, '600001'),
+      lessThan(_topYOfText(tester, '600002')),
+    );
+
+    await tester.ensureVisible(find.text('排序: 最新'));
+    await tester.tap(find.text('排序: 最新'));
+    await tester.pumpAndSettle();
+    expect(find.text('02-05'), findsWidgets);
+    await tester.tap(find.text('02-05').first);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('排序: 02-05'), findsOneWidget);
+    expect(
+      _topYOfText(tester, '600002'),
+      lessThan(_topYOfText(tester, '600001')),
+    );
+    expect(_topYOfText(tester, '2.00'), lessThan(_topYOfText(tester, '0.60')));
+  });
+}
+
+List<KLine> _buildBarsForRatio(DateTime day, {required double ratio}) {
+  final bars = <KLine>[];
+  const downVolumePerBar = 1000.0;
+  final upVolumePerBar = downVolumePerBar * ratio;
+  var price = 10.0;
+
+  for (var i = 0; i < 5; i++) {
+    final open = price;
+    final close = open * 0.995;
+    bars.add(
+      KLine(
+        datetime: DateTime(
+          day.year,
+          day.month,
+          day.day,
+          9,
+          30,
+        ).add(Duration(minutes: i)),
+        open: open,
+        close: close,
+        high: open,
+        low: close,
+        volume: downVolumePerBar,
+        amount: downVolumePerBar * open,
+      ),
+    );
+    price = close;
+  }
+
+  for (var i = 5; i < 10; i++) {
+    final open = price;
+    final close = open * 1.005;
+    bars.add(
+      KLine(
+        datetime: DateTime(
+          day.year,
+          day.month,
+          day.day,
+          9,
+          30,
+        ).add(Duration(minutes: i)),
+        open: open,
+        close: close,
+        high: close,
+        low: open,
+        volume: upVolumePerBar,
+        amount: upVolumePerBar * open,
+      ),
+    );
+    price = close;
+  }
+  return bars;
+}
+
+double _topYOfText(WidgetTester tester, String text) {
+  final finder = find.text(text);
+  expect(finder, findsOneWidget);
+  return tester.getTopLeft(finder).dy;
 }
