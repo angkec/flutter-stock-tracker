@@ -54,6 +54,44 @@ class IndustryBuildUpStorage {
     return getBoardForDate(latestDate, limit: limit);
   }
 
+  Future<DateTime?> getPreviousDate(DateTime currentDate) async {
+    final db = await _database.database;
+    final currentKey = DateTime(
+      currentDate.year,
+      currentDate.month,
+      currentDate.day,
+    ).millisecondsSinceEpoch;
+    final rows = await db.query(
+      'industry_buildup_daily',
+      columns: ['date'],
+      where: 'date < ?',
+      whereArgs: [currentKey],
+      orderBy: 'date DESC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return DateTime.fromMillisecondsSinceEpoch(rows.first['date'] as int);
+  }
+
+  Future<DateTime?> getNextDate(DateTime currentDate) async {
+    final db = await _database.database;
+    final currentKey = DateTime(
+      currentDate.year,
+      currentDate.month,
+      currentDate.day,
+    ).millisecondsSinceEpoch;
+    final rows = await db.query(
+      'industry_buildup_daily',
+      columns: ['date'],
+      where: 'date > ?',
+      whereArgs: [currentKey],
+      orderBy: 'date ASC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return DateTime.fromMillisecondsSinceEpoch(rows.first['date'] as int);
+  }
+
   Future<List<IndustryBuildupDailyRecord>> getBoardForDate(
     DateTime date, {
     int limit = 50,

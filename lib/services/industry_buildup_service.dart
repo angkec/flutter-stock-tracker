@@ -1,16 +1,21 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/industry_buildup_storage.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
+import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 
 class IndustryBuildUpService extends ChangeNotifier {
+  static const String _tagConfigStorageKey = 'industry_buildup_tag_config';
+
   static const double _tau = 0.001;
   static const int _zWindow = 20;
   static const int _expectedMinutes = 240;
@@ -43,6 +48,9 @@ class IndustryBuildUpService extends ChangeNotifier {
   DateTime? _lastComputedAt;
   int _calculatedFromVersion = -1;
   List<IndustryBuildupBoardItem> _latestBoard = [];
+  bool _hasPreviousDate = false;
+  bool _hasNextDate = false;
+  IndustryBuildupTagConfig _tagConfig = IndustryBuildupTagConfig.defaults;
 
   IndustryBuildUpService({
     required DataRepository repository,
@@ -65,10 +73,26 @@ class IndustryBuildUpService extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   DateTime? get latestResultDate => _latestResultDate;
   DateTime? get lastComputedAt => _lastComputedAt;
+  bool get hasPreviousDate => _hasPreviousDate;
+  bool get hasNextDate => _hasNextDate;
+  IndustryBuildupTagConfig get tagConfig => _tagConfig;
   List<IndustryBuildupBoardItem> get latestBoard =>
       List.unmodifiable(_latestBoard);
 
+  void updateTagConfig(IndustryBuildupTagConfig config) {
+    _tagConfig = config;
+    notifyListeners();
+    _saveTagConfig();
+  }
+
+  void resetTagConfig() {
+    _tagConfig = IndustryBuildupTagConfig.defaults;
+    notifyListeners();
+    _saveTagConfig();
+  }
+
   Future<void> load() async {
+    await _loadTagConfig();
     await _reloadLatestBoard();
   }
 
@@ -89,11 +113,29 @@ class IndustryBuildUpService extends ChangeNotifier {
         return;
       }
 
+      final industryStocks = _buildIndustryStocks();
+      final stockCodes = industryStocks.values.expand((e) => e).toSet().toList()
+        ..sort();
+      if (stockCodes.isEmpty) {
+        _errorMessage = '无行业股票映射';
+        _setProgress('准备数据', 1, 1);
+        return;
+      }
+
       final probeRange = DateRange(
         DateTime.now().subtract(const Duration(days: 60)),
         DateTime.now(),
       );
-      final tradingDates = await _repository.getTradingDates(probeRange);
+      var tradingDates = await _repository.getTradingDates(probeRange);
+      if (tradingDates.isEmpty) {
+        tradingDates = await _deriveTradingDatesFromMinuteBars(
+          stockCodes: stockCodes,
+          dateRange: probeRange,
+          onProgress: (current, total) {
+            _setProgress('扫描交易日', current, total);
+          },
+        );
+      }
       if (tradingDates.isEmpty) {
         _errorMessage = '无交易日数据';
         _setProgress('准备数据', 1, 1);
@@ -106,6 +148,8 @@ class IndustryBuildUpService extends ChangeNotifier {
               .toSet()
               .toList()
             ..sort();
+      final latestTradingDate = sortedTradingDates.last;
+      final latestTradingDateKey = _dateKey(latestTradingDate);
       final start = sortedTradingDates.first;
       final end = sortedTradingDates.last.add(const Duration(days: 1));
       final dateRange = DateRange(
@@ -113,14 +157,6 @@ class IndustryBuildUpService extends ChangeNotifier {
         end.subtract(const Duration(milliseconds: 1)),
       );
 
-      final industryStocks = _buildIndustryStocks();
-      final stockCodes = industryStocks.values.expand((e) => e).toSet().toList()
-        ..sort();
-      if (stockCodes.isEmpty) {
-        _errorMessage = '无行业股票映射';
-        _setProgress('准备数据', 1, 1);
-        return;
-      }
       _setProgress('准备数据', 1, 1);
 
       final stockFeatures = <String, Map<int, _StockDayFeature>>{};
@@ -154,6 +190,14 @@ class IndustryBuildUpService extends ChangeNotifier {
             marketFeatures.add(feature);
           }
         }
+        if (marketFeatures.isEmpty && dateKey == latestTradingDateKey) {
+          for (final code in stockCodes) {
+            final feature = stockFeatures[code]?[dateKey];
+            if (feature != null && feature.minuteCount > 0) {
+              marketFeatures.add(feature);
+            }
+          }
+        }
         final xM = marketFeatures.isEmpty
             ? 0.0
             : marketFeatures.map((f) => f.xHat).reduce((a, b) => a + b) /
@@ -170,6 +214,14 @@ class IndustryBuildUpService extends ChangeNotifier {
             final feature = stockFeatures[code]?[dateKey];
             if (feature != null && feature.passed) {
               features.add(feature);
+            }
+          }
+          if (features.isEmpty && dateKey == latestTradingDateKey) {
+            for (final code in memberCodes) {
+              final feature = stockFeatures[code]?[dateKey];
+              if (feature != null && feature.minuteCount > 0) {
+                features.add(feature);
+              }
             }
           }
 
@@ -297,6 +349,22 @@ class IndustryBuildUpService extends ChangeNotifier {
         }
       }
 
+      final hasLatestTradingDayResult = finalRecords.any(
+        (record) => _dateKey(record.date) == latestTradingDateKey,
+      );
+      if (!hasLatestTradingDayResult) {
+        _errorMessage =
+            '最近交易日(${_formatDate(latestTradingDate)})无可用分钟线，未生成建仓雷达结果';
+        _setProgress('无结果', 1, 1);
+        return;
+      }
+
+      if (finalRecords.isEmpty) {
+        _errorMessage = '重算完成，但可用分钟线数据不足，未生成建仓雷达结果';
+        _setProgress('无结果', 1, 1);
+        return;
+      }
+
       _setProgress('写入结果', 0, max(1, finalRecords.length));
       await _storage.upsertDailyResults(finalRecords);
       _setProgress(
@@ -411,14 +479,48 @@ class IndustryBuildUpService extends ChangeNotifier {
 
   Future<void> _reloadLatestBoard() async {
     final latestDate = await _storage.getLatestDate();
-    _latestResultDate = latestDate;
     if (latestDate == null) {
+      _latestResultDate = null;
       _latestBoard = [];
+      _hasPreviousDate = false;
+      _hasNextDate = false;
       notifyListeners();
       return;
     }
 
-    final records = await _storage.getLatestBoard(limit: 50);
+    await _loadBoardForDate(latestDate);
+  }
+
+  Future<void> showPreviousDateBoard() async {
+    final currentDate = _latestResultDate;
+    if (_isCalculating || currentDate == null) return;
+    final previousDate = await _storage.getPreviousDate(currentDate);
+    if (previousDate == null) {
+      if (_hasPreviousDate) {
+        _hasPreviousDate = false;
+        notifyListeners();
+      }
+      return;
+    }
+    await _loadBoardForDate(previousDate);
+  }
+
+  Future<void> showNextDateBoard() async {
+    final currentDate = _latestResultDate;
+    if (_isCalculating || currentDate == null) return;
+    final nextDate = await _storage.getNextDate(currentDate);
+    if (nextDate == null) {
+      if (_hasNextDate) {
+        _hasNextDate = false;
+        notifyListeners();
+      }
+      return;
+    }
+    await _loadBoardForDate(nextDate);
+  }
+
+  Future<void> _loadBoardForDate(DateTime date) async {
+    final records = await _storage.getBoardForDate(date, limit: 50);
     final boardItems = <IndustryBuildupBoardItem>[];
     for (final record in records) {
       final trend = await _storage.getIndustryTrend(record.industry, days: 20);
@@ -426,6 +528,10 @@ class IndustryBuildUpService extends ChangeNotifier {
         IndustryBuildupBoardItem(record: record, zRelTrend: trend),
       );
     }
+    _latestResultDate = DateTime(date.year, date.month, date.day);
+    _hasPreviousDate =
+        await _storage.getPreviousDate(_latestResultDate!) != null;
+    _hasNextDate = await _storage.getNextDate(_latestResultDate!) != null;
     _latestBoard = boardItems;
     notifyListeners();
   }
@@ -451,11 +557,68 @@ class IndustryBuildUpService extends ChangeNotifier {
     return (e2x - 1) / (e2x + 1);
   }
 
+  Future<List<DateTime>> _deriveTradingDatesFromMinuteBars({
+    required List<String> stockCodes,
+    required DateRange dateRange,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    final dates = <DateTime>{};
+    for (var i = 0; i < stockCodes.length; i++) {
+      final code = stockCodes[i];
+      final bars =
+          (await _repository.getKlines(
+            stockCodes: [code],
+            dateRange: dateRange,
+            dataType: KLineDataType.oneMinute,
+          ))[code] ??
+          const <KLine>[];
+      for (final bar in bars) {
+        dates.add(
+          DateTime(bar.datetime.year, bar.datetime.month, bar.datetime.day),
+        );
+      }
+      onProgress?.call(i + 1, stockCodes.length);
+    }
+    final result = dates.toList()..sort();
+    return result;
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.year.toString().padLeft(4, '0')}-'
+        '${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+  }
+
   @override
   void dispose() {
     _dataUpdatedSubscription?.cancel();
     _dataUpdatedSubscription = null;
     super.dispose();
+  }
+
+  Future<void> _loadTagConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_tagConfigStorageKey);
+      if (raw == null) return;
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      _tagConfig = IndustryBuildupTagConfig.fromJson(json);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[IndustryBuildUp] load tag config failed: $e');
+    }
+  }
+
+  Future<void> _saveTagConfig() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _tagConfigStorageKey,
+        jsonEncode(_tagConfig.toJson()),
+      );
+    } catch (e) {
+      debugPrint('[IndustryBuildUp] save tag config failed: $e');
+    }
   }
 }
 

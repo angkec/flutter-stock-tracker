@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:stock_rtwatcher/data/models/data_freshness.dart';
 import 'package:stock_rtwatcher/data/models/data_status.dart';
@@ -14,6 +15,7 @@ import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/database_schema.dart';
 import 'package:stock_rtwatcher/data/storage/industry_buildup_storage.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
+import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
@@ -160,7 +162,11 @@ class MockBuildUpRepository implements DataRepository {
   }
 }
 
-List<KLine> _buildBarsForDay(DateTime date, {required double trend}) {
+List<KLine> _buildBarsForDay(
+  DateTime date, {
+  required double trend,
+  double amount = 100000,
+}) {
   final bars = <KLine>[];
   var lastClose = 10.0;
   for (var i = 0; i < 240; i++) {
@@ -180,7 +186,7 @@ List<KLine> _buildBarsForDay(DateTime date, {required double trend}) {
         high: open > close ? open : close,
         low: open < close ? open : close,
         volume: 1000,
-        amount: 100000,
+        amount: amount,
       ),
     );
     lastClose = close;
@@ -189,7 +195,10 @@ List<KLine> _buildBarsForDay(DateTime date, {required double trend}) {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   setUpAll(() {
+    SharedPreferences.setMockInitialValues({});
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   });
@@ -286,6 +295,146 @@ void main() {
       expect(snapshots.any((s) => s.startsWith('行业聚合')), isTrue);
       expect(snapshots.any((s) => s.startsWith('写入结果')), isTrue);
       expect(service.isCalculating, isFalse);
+    });
+
+    test(
+      'recalculate reports no-result reason when no minute bars match filters',
+      () async {
+        repository = MockBuildUpRepository();
+        industryService = IndustryService();
+        industryService.setTestData({'000001': '半导体', '000002': '半导体'});
+        storage = IndustryBuildUpStorage();
+        service = IndustryBuildUpService(
+          repository: repository,
+          industryService: industryService,
+          storage: storage,
+        );
+        repository.tradingDates = [DateTime(2026, 2, 6)];
+
+        await service.recalculate(force: true);
+
+        expect(service.latestBoard, isEmpty);
+        expect(service.errorMessage, isNotNull);
+      },
+    );
+
+    test(
+      'recalculate keeps latest trading day as result date on sparse weekend data',
+      () async {
+        repository = MockBuildUpRepository();
+        industryService = IndustryService();
+        industryService.setTestData({'000001': '半导体', '000002': '半导体'});
+        storage = IndustryBuildUpStorage();
+        service = IndustryBuildUpService(
+          repository: repository,
+          industryService: industryService,
+          storage: storage,
+        );
+
+        final d1 = DateTime(2026, 2, 2);
+        final d2 = DateTime(2026, 2, 3);
+        final d3 = DateTime(2026, 2, 4);
+        final d4 = DateTime(2026, 2, 5);
+        final d5 = DateTime(2026, 2, 6);
+        repository.tradingDates = [d1, d2, d3, d4, d5];
+
+        // 仅最后交易日有分钟线，且成交额不足严格过滤阈值，验证目标日回退逻辑。
+        repository.setStockBars(
+          '000001',
+          _buildBarsForDay(d5, trend: 0.0005, amount: 1000),
+        );
+        repository.setStockBars(
+          '000002',
+          _buildBarsForDay(d5, trend: 0.0003, amount: 1000),
+        );
+
+        await service.recalculate(force: true);
+
+        expect(service.latestBoard, isNotEmpty);
+        expect(service.latestResultDate, DateTime(d5.year, d5.month, d5.day));
+        expect(service.errorMessage, isNull);
+      },
+    );
+
+    test(
+      'recalculate falls back to minute bars when trading dates are unavailable',
+      () async {
+        repository = MockBuildUpRepository();
+        industryService = IndustryService();
+        industryService.setTestData({'000001': '半导体', '000002': '半导体'});
+        storage = IndustryBuildUpStorage();
+        service = IndustryBuildUpService(
+          repository: repository,
+          industryService: industryService,
+          storage: storage,
+        );
+
+        // 模拟周末：日K交易日基线为空，但分钟线仍有最后交易日数据。
+        repository.tradingDates = [];
+        final d = DateTime(2026, 2, 6);
+        repository.setStockBars('000001', _buildBarsForDay(d, trend: 0.0006));
+        repository.setStockBars('000002', _buildBarsForDay(d, trend: 0.0004));
+
+        await service.recalculate(force: true);
+
+        expect(service.latestBoard, isNotEmpty);
+        expect(service.latestResultDate, DateTime(d.year, d.month, d.day));
+        expect(service.errorMessage, isNull);
+      },
+    );
+
+    test('can browse previous/next buildup result dates', () async {
+      final day1 = DateTime(2026, 2, 4);
+      final day2 = DateTime(2026, 2, 5);
+      final day3 = DateTime(2026, 2, 6);
+
+      await service.recalculate(force: true);
+
+      expect(service.latestResultDate, day3);
+      expect(service.hasPreviousDate, isTrue);
+      expect(service.hasNextDate, isFalse);
+      expect(service.latestBoard, isNotEmpty);
+      expect(service.latestBoard.first.record.dateOnly, day3);
+
+      await service.showPreviousDateBoard();
+      expect(service.latestResultDate, day2);
+      expect(service.hasPreviousDate, isTrue);
+      expect(service.hasNextDate, isTrue);
+      expect(service.latestBoard, isNotEmpty);
+      expect(service.latestBoard.first.record.dateOnly, day2);
+
+      await service.showPreviousDateBoard();
+      expect(service.latestResultDate, day1);
+      expect(service.hasPreviousDate, isFalse);
+      expect(service.hasNextDate, isTrue);
+      expect(service.latestBoard, isNotEmpty);
+      expect(service.latestBoard.first.record.dateOnly, day1);
+
+      await service.showNextDateBoard();
+      expect(service.latestResultDate, day2);
+      expect(service.hasPreviousDate, isTrue);
+      expect(service.hasNextDate, isTrue);
+      expect(service.latestBoard.first.record.dateOnly, day2);
+    });
+
+    test('tag config can update and reset', () async {
+      expect(service.tagConfig.allocationMinZ, 1.5);
+
+      service.updateTagConfig(
+        service.tagConfig.copyWith(allocationMinZ: 2.2, allocationMinQ: 0.7),
+      );
+      expect(service.tagConfig.allocationMinZ, 2.2);
+      expect(service.tagConfig.allocationMinQ, 0.7);
+
+      service.resetTagConfig();
+      expect(
+        service.tagConfig.allocationMinZ,
+        IndustryBuildupTagConfig.defaults.allocationMinZ,
+      );
+      expect(
+        service.tagConfig.allocationMinQ,
+        IndustryBuildupTagConfig.defaults.allocationMinQ,
+      );
     });
 
     test(
