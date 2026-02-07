@@ -82,8 +82,8 @@ class KLineMetadataManager {
   KLineMetadataManager({
     MarketDatabase? database,
     KLineFileStorage? fileStorage,
-  })  : _db = database ?? MarketDatabase(),
-        _fileStorage = fileStorage ?? KLineFileStorage();
+  }) : _db = database ?? MarketDatabase(),
+       _fileStorage = fileStorage ?? KLineFileStorage();
 
   /// Save K-line data with metadata update in a transaction
   ///
@@ -134,13 +134,27 @@ class KLineMetadataManager {
     }
 
     // Prepare metadata before transaction (avoid I/O inside transaction)
-    final metadataMap = <String, ({DateTime startDate, DateTime endDate, int recordCount, int fileSize, String filePath})>{};
+    final metadataMap =
+        <
+          String,
+          ({
+            DateTime startDate,
+            DateTime endDate,
+            int recordCount,
+            int fileSize,
+            String filePath,
+          })
+        >{};
     for (final yearMonth in monthsUpdated) {
       final year = int.parse(yearMonth.substring(0, 4));
       final month = int.parse(yearMonth.substring(4, 6));
 
-      final monthBars =
-          await _fileStorage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      final monthBars = await _fileStorage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
 
       if (monthBars.isEmpty) continue;
 
@@ -149,7 +163,12 @@ class KLineMetadataManager {
       final endDate = monthBars.last.datetime;
 
       try {
-        final filePath = await _fileStorage.getFilePathAsync(stockCode, dataType, year, month);
+        final filePath = await _fileStorage.getFilePathAsync(
+          stockCode,
+          dataType,
+          year,
+          month,
+        );
         final file = File(filePath);
         final fileSize = await file.length();
 
@@ -175,23 +194,19 @@ class KLineMetadataManager {
         final metadata = entry.value;
 
         // Insert or update metadata
-        await txn.insert(
-          'kline_files',
-          {
-            'stock_code': stockCode,
-            'data_type': dataType.name,
-            'year_month': yearMonth,
-            'file_path': metadata.filePath,
-            'start_date': metadata.startDate.millisecondsSinceEpoch,
-            'end_date': metadata.endDate.millisecondsSinceEpoch,
-            'record_count': metadata.recordCount,
-            'checksum': null,
-            'created_at': now,
-            'updated_at': now,
-            'file_size': metadata.fileSize,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert('kline_files', {
+          'stock_code': stockCode,
+          'data_type': dataType.name,
+          'year_month': yearMonth,
+          'file_path': metadata.filePath,
+          'start_date': metadata.startDate.millisecondsSinceEpoch,
+          'end_date': metadata.endDate.millisecondsSinceEpoch,
+          'record_count': metadata.recordCount,
+          'checksum': null,
+          'created_at': now,
+          'updated_at': now,
+          'file_size': metadata.fileSize,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
       // Increment data version within the transaction
@@ -286,8 +301,12 @@ class KLineMetadataManager {
       final year = int.parse(meta.yearMonth.substring(0, 4));
       final month = int.parse(meta.yearMonth.substring(4, 6));
 
-      final monthKlines =
-          await _fileStorage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      final monthKlines = await _fileStorage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
 
       // Filter by date range
       for (final kline in monthKlines) {
@@ -359,7 +378,8 @@ class KLineMetadataManager {
 
         await txn.insert('data_versions', {
           'version': newVersion,
-          'description': 'Deleted old K-line data for $stockCode before $beforeDate',
+          'description':
+              'Deleted old K-line data for $stockCode before $beforeDate',
           'created_at': now,
         });
       }
@@ -417,11 +437,13 @@ class KLineMetadataManager {
         dateRange: range,
       );
       for (final kline in klines) {
-        tradingDates.add(DateTime(
-          kline.datetime.year,
-          kline.datetime.month,
-          kline.datetime.day,
-        ));
+        tradingDates.add(
+          DateTime(
+            kline.datetime.year,
+            kline.datetime.month,
+            kline.datetime.day,
+          ),
+        );
       }
     }
 
@@ -453,5 +475,50 @@ class KLineMetadataManager {
     return klines.where((k) {
       return !k.datetime.isBefore(dateOnly) && k.datetime.isBefore(nextDay);
     }).length;
+  }
+
+  /// 批量统计日期范围内每天的K线数量
+  ///
+  /// 仅返回有数据的日期，缺失日期不在结果中（调用方可按需补 0）
+  Future<Map<DateTime, int>> countBarsByDateInRange({
+    required String stockCode,
+    required KLineDataType dataType,
+    required DateRange dateRange,
+  }) async {
+    final normalizedRange = DateRange(
+      DateTime(
+        dateRange.start.year,
+        dateRange.start.month,
+        dateRange.start.day,
+      ),
+      DateTime(
+        dateRange.end.year,
+        dateRange.end.month,
+        dateRange.end.day,
+        23,
+        59,
+        59,
+        999,
+        999,
+      ),
+    );
+
+    final klines = await loadKlineData(
+      stockCode: stockCode,
+      dataType: dataType,
+      dateRange: normalizedRange,
+    );
+
+    final result = <DateTime, int>{};
+    for (final kline in klines) {
+      final dateOnly = DateTime(
+        kline.datetime.year,
+        kline.datetime.month,
+        kline.datetime.day,
+      );
+      result.update(dateOnly, (count) => count + 1, ifAbsent: () => 1);
+    }
+
+    return result;
   }
 }

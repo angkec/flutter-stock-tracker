@@ -32,6 +32,7 @@ class _IndustryScreenState extends State<IndustryScreen>
 
   bool _hasCheckedTrend = false;
   bool _hasMarketDataWhenChecked = false;
+  bool _isRecalculatingIndustry = false;
 
   // 排序状态
   IndustrySortMode _sortMode = IndustrySortMode.ratioPercent;
@@ -170,6 +171,79 @@ class _IndustryScreenState extends State<IndustryScreen>
     }
 
     trendService.refresh();
+  }
+
+  Future<void> _recalculateIndustryDataAndRank() async {
+    if (_isRecalculatingIndustry) return;
+
+    final marketProvider = context.read<MarketDataProvider>();
+    final trendService = context.read<IndustryTrendService>();
+    final rankService = context.read<IndustryRankService>();
+    final repository = context.read<DataRepository>();
+    final klineService = context.read<HistoricalKlineService>();
+
+    if (marketProvider.allData.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('请先获取市场数据')));
+      }
+      return;
+    }
+
+    setState(() {
+      _isRecalculatingIndustry = true;
+    });
+
+    final progressNotifier =
+        ValueNotifier<({int current, int total, String stage})>((
+          current: 0,
+          total: 1,
+          stage: '准备中...',
+        ));
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) =>
+          _RecalculateProgressDialog(progressNotifier: progressNotifier),
+    );
+
+    var completionMessage = '行业数据与排名已重算';
+    try {
+      final dataVersion = await repository.getCurrentVersion();
+
+      progressNotifier.value = (current: 0, total: 1, stage: '1/2 计算行业趋势...');
+      await trendService.recalculateFromKlineData(
+        klineService,
+        marketProvider.allData,
+        dataVersion: dataVersion,
+        force: true,
+      );
+
+      progressNotifier.value = (current: 0, total: 1, stage: '2/2 计算行业排名...');
+      await rankService.recalculateFromKlineData(
+        klineService,
+        marketProvider.allData,
+        dataVersion: dataVersion,
+        force: true,
+      );
+    } catch (e, stackTrace) {
+      debugPrint('[IndustryScreen] 重算行业数据失败: $e');
+      debugPrint('$stackTrace');
+      completionMessage = '重算失败: $e';
+    } finally {
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(completionMessage)));
+        setState(() {
+          _isRecalculatingIndustry = false;
+        });
+      }
+      progressNotifier.dispose();
+    }
   }
 
   List<IndustryStats> _calculateStats(
@@ -388,6 +462,25 @@ class _IndustryScreenState extends State<IndustryScreen>
                 ),
               ),
               tooltip: '筛选',
+            ),
+          if (_tabController.index != 2 &&
+              marketProvider.allData.isNotEmpty &&
+              !_isRecalculatingIndustry)
+            IconButton(
+              onPressed: _recalculateIndustryDataAndRank,
+              icon: const Icon(Icons.auto_graph, size: 20),
+              tooltip: '重算行业数据',
+            ),
+          if (_tabController.index != 2 &&
+              marketProvider.allData.isNotEmpty &&
+              _isRecalculatingIndustry)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
             ),
           // 更新趋势按钮
           if (_tabController.index != 2 &&
@@ -720,6 +813,33 @@ class _IndustryScreenState extends State<IndustryScreen>
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _RecalculateProgressDialog extends StatelessWidget {
+  final ValueNotifier<({int current, int total, String stage})>
+  progressNotifier;
+
+  const _RecalculateProgressDialog({required this.progressNotifier});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('重算行业数据'),
+      content: ValueListenableBuilder<({int current, int total, String stage})>(
+        valueListenable: progressNotifier,
+        builder: (context, progress, _) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const LinearProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(progress.stage),
+            ],
+          );
+        },
       ),
     );
   }

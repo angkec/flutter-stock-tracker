@@ -19,6 +19,7 @@ class MarketDataRepository implements DataRepository {
   final KLineMetadataManager _metadataManager;
   final TdxClient _tdxClient;
   final DateCheckStorage _dateCheckStorage;
+  final DateTime Function() _nowProvider;
   final StreamController<DataStatus> _statusController =
       StreamController<DataStatus>.broadcast();
   final StreamController<DataUpdatedEvent> _dataUpdatedController =
@@ -33,14 +34,17 @@ class MarketDataRepository implements DataRepository {
 
   // 完整分钟数据的最小K线数量（一个交易日约240根1分钟K线）
   static const int _minCompleteBars = 220;
+  static const double _minTradingDateCoverageRatio = 0.3;
 
   MarketDataRepository({
     KLineMetadataManager? metadataManager,
     TdxClient? tdxClient,
     DateCheckStorage? dateCheckStorage,
+    DateTime Function()? nowProvider,
   }) : _metadataManager = metadataManager ?? KLineMetadataManager(),
        _tdxClient = tdxClient ?? TdxClient(),
-       _dateCheckStorage = dateCheckStorage ?? DateCheckStorage() {
+       _dateCheckStorage = dateCheckStorage ?? DateCheckStorage(),
+       _nowProvider = nowProvider ?? DateTime.now {
     // 初始状态：就绪
     _statusController.add(const DataReady(0));
   }
@@ -127,11 +131,15 @@ class MarketDataRepository implements DataRepository {
     final result = <String, DataFreshness>{};
 
     for (final stockCode in stockCodes) {
+      final now = _nowProvider();
+      final today = DateTime(now.year, now.month, now.day);
+
       // 1. Check for pending dates (excluding today)
       final pendingDates = await _dateCheckStorage.getPendingDates(
         stockCode: stockCode,
         dataType: dataType,
         excludeToday: true,
+        today: today,
       );
 
       if (pendingDates.isNotEmpty) {
@@ -154,21 +162,72 @@ class MarketDataRepository implements DataRepository {
         continue;
       }
 
-      // 3. Check if there might be new unchecked dates
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final daysSinceLastCheck = today.difference(latestCheckedDate).inDays;
+      // 3. Prefer trading-day-aware freshness (exclude today in-progress).
+      final latestCheckedDay = DateTime(
+        latestCheckedDate.year,
+        latestCheckedDate.month,
+        latestCheckedDate.day,
+      );
 
+      final uncheckedStart = latestCheckedDay.add(const Duration(days: 1));
+      final uncheckedEndDay = today.subtract(const Duration(days: 1));
+      final uncheckedEnd = DateTime(
+        uncheckedEndDay.year,
+        uncheckedEndDay.month,
+        uncheckedEndDay.day,
+        23,
+        59,
+        59,
+        999,
+        999,
+      );
+
+      if (uncheckedStart.isAfter(uncheckedEnd)) {
+        result[stockCode] = const Fresh();
+        continue;
+      }
+
+      if (_isWeekendOnlyRange(uncheckedStart, uncheckedEndDay)) {
+        result[stockCode] = const Fresh();
+        continue;
+      }
+
+      final uncheckedRange = DateRange(uncheckedStart, uncheckedEnd);
+      final uncheckedTradingDates = await getTradingDates(uncheckedRange);
+
+      if (uncheckedTradingDates.isEmpty) {
+        final hasReliableTradingContext = await _hasReliableTradingContext(
+          uncheckedStartDay: uncheckedStart,
+          uncheckedEndDay: uncheckedEndDay,
+          today: today,
+        );
+        if (hasReliableTradingContext) {
+          result[stockCode] = const Fresh();
+          continue;
+        }
+      }
+
+      if (_hasReliableTradingDateCoverage(uncheckedTradingDates, uncheckedRange)) {
+        if (uncheckedTradingDates.isNotEmpty) {
+          result[stockCode] = Stale(
+            missingRange: DateRange(
+              uncheckedTradingDates.first,
+              uncheckedTradingDates.last,
+            ),
+          );
+        } else {
+          result[stockCode] = const Fresh();
+        }
+        continue;
+      }
+
+      // 4. Fallback: if trading-date coverage is unreliable, keep conservative behavior.
+      final daysSinceLastCheck = today.difference(latestCheckedDay).inDays;
       if (daysSinceLastCheck > 1) {
-        // Might have new trading days not yet checked -> Stale
         result[stockCode] = Stale(
-          missingRange: DateRange(
-            latestCheckedDate.add(const Duration(days: 1)),
-            now,
-          ),
+          missingRange: DateRange(uncheckedStart, now),
         );
       } else {
-        // Data is complete -> Fresh
         result[stockCode] = const Fresh();
       }
     }
@@ -293,17 +352,19 @@ class MarketDataRepository implements DataRepository {
 
     if (!skipPrecheck && dataType == KLineDataType.oneMinute) {
       final tradingDates = await getTradingDates(dateRange);
-      if (tradingDates.isEmpty) {
-        // 无法确定交易日时，不能预检查短路，否则会误判为“无需拉取”。
+      if (!_hasReliableTradingDateCoverage(tradingDates, dateRange)) {
+        // 交易日样本为空或过稀时，不能预检查短路，否则会误判为“无需拉取”。
         stocksNeedingFetch.addAll(stockCodes);
         debugPrint(
-          'fetchMissingData: trading dates unavailable, skip precheck and fetch all ${stockCodes.length} stocks',
+          'fetchMissingData: trading dates unavailable/sparse, '
+          'skip precheck and fetch all ${stockCodes.length} stocks',
         );
       } else {
         for (final stockCode in stockCodes) {
-          final missingInfo = await findMissingMinuteDates(
+          final missingInfo = await _findMissingMinuteDatesInternal(
             stockCode: stockCode,
             dateRange: dateRange,
+            verifyCachedComplete: true,
           );
 
           // datesToFetch = missingDates + incompleteDates
@@ -413,6 +474,15 @@ class MarketDataRepository implements DataRepository {
 
           // 清除缓存
           _invalidateCache(stockCode, dataType);
+
+          // 分钟数据拉取成功后，立即刷新该范围的完整性缓存，
+          // 避免旧的 missing/incomplete 缓存导致 checkFreshness 误报 stale。
+          if (dataType == KLineDataType.oneMinute) {
+            await findMissingMinuteDates(
+              stockCode: stockCode,
+              dateRange: dateRange,
+            );
+          }
 
           totalRecords += klines.length;
           updatedStockCodes.add(stockCode);
@@ -633,10 +703,100 @@ class MarketDataRepository implements DataRepository {
 
   // ============ 缺失数据检测 ============
 
+  bool _hasReliableTradingDateCoverage(
+    List<DateTime> tradingDates,
+    DateRange dateRange,
+  ) {
+    if (tradingDates.isEmpty) return false;
+
+    final startDate = DateTime(
+      dateRange.start.year,
+      dateRange.start.month,
+      dateRange.start.day,
+    );
+    final endDate = DateTime(
+      dateRange.end.year,
+      dateRange.end.month,
+      dateRange.end.day,
+    );
+    final calendarDays = endDate.difference(startDate).inDays + 1;
+
+    // 短窗口下（<=5天）只要有交易日即可认为可靠，避免过度放宽为“全量拉取”。
+    if (calendarDays <= 5) return true;
+
+    final minExpectedTradingDates =
+        (calendarDays * _minTradingDateCoverageRatio).ceil();
+    return tradingDates.length >= minExpectedTradingDates;
+  }
+
+  bool _isWeekendOnlyRange(DateTime startDay, DateTime endDay) {
+    if (startDay.isAfter(endDay)) return false;
+
+    var cursor = DateTime(startDay.year, startDay.month, startDay.day);
+    final normalizedEnd = DateTime(endDay.year, endDay.month, endDay.day);
+
+    while (!cursor.isAfter(normalizedEnd)) {
+      final weekday = cursor.weekday;
+      if (weekday != DateTime.saturday && weekday != DateTime.sunday) {
+        return false;
+      }
+      cursor = cursor.add(const Duration(days: 1));
+    }
+
+    return true;
+  }
+
+  Future<bool> _hasReliableTradingContext({
+    required DateTime uncheckedStartDay,
+    required DateTime uncheckedEndDay,
+    required DateTime today,
+  }) async {
+    final probeStartDay = uncheckedStartDay.subtract(const Duration(days: 15));
+
+    final latestHistoricalDay = today.subtract(const Duration(days: 1));
+    var probeEndDay = uncheckedEndDay.add(const Duration(days: 15));
+    if (probeEndDay.isAfter(latestHistoricalDay)) {
+      probeEndDay = latestHistoricalDay;
+    }
+
+    if (probeStartDay.isAfter(probeEndDay)) {
+      return false;
+    }
+
+    final probeRange = DateRange(
+      probeStartDay,
+      DateTime(
+        probeEndDay.year,
+        probeEndDay.month,
+        probeEndDay.day,
+        23,
+        59,
+        59,
+        999,
+        999,
+      ),
+    );
+
+    final probeTradingDates = await getTradingDates(probeRange);
+    return _hasReliableTradingDateCoverage(probeTradingDates, probeRange);
+  }
+
   @override
   Future<MissingDatesResult> findMissingMinuteDates({
     required String stockCode,
     required DateRange dateRange,
+  }) async {
+    return _findMissingMinuteDatesInternal(
+      stockCode: stockCode,
+      dateRange: dateRange,
+      verifyCachedComplete: false,
+    );
+  }
+
+  Future<MissingDatesResult> _findMissingMinuteDatesInternal({
+    required String stockCode,
+    required DateRange dateRange,
+    required bool verifyCachedComplete,
   }) async {
     // 1. Get trading dates from daily K-line data
     final tradingDates = await getTradingDates(dateRange);
@@ -649,65 +809,83 @@ class MarketDataRepository implements DataRepository {
       );
     }
 
-    // 2. Query cached status
+    // 统一归一化到日期粒度，避免时间部分导致哈希匹配问题。
+    final normalizedTradingDates =
+        tradingDates
+            .map((date) => DateTime(date.year, date.month, date.day))
+            .toSet()
+            .toList()
+          ..sort();
+
     final checkedStatus = await _dateCheckStorage.getCheckedStatus(
       stockCode: stockCode,
       dataType: KLineDataType.oneMinute,
-      dates: tradingDates,
+      dates: normalizedTradingDates,
     );
 
-    final now = DateTime.now();
+    final now = _nowProvider();
     final todayDate = DateTime(now.year, now.month, now.day);
 
-    // 选取一个“应稳定完成”的验证日，防止 complete 缓存脏读导致误判。
-    DateTime? validationDate;
-    for (final date in tradingDates.reversed) {
-      final dateOnly = DateTime(date.year, date.month, date.day);
-      if (dateOnly != todayDate) {
-        validationDate = dateOnly;
-        break;
-      }
-    }
-    validationDate ??= DateTime(
-      tradingDates.last.year,
-      tradingDates.last.month,
-      tradingDates.last.day,
-    );
-
-    // 3. Categorize dates
+    // 2. Determine which dates need actual bar recount.
+    final datesToCheck = <DateTime>[];
     final missingDates = <DateTime>[];
     final incompleteDates = <DateTime>[];
     final completeDates = <DateTime>[];
-    final toCheckDates = <DateTime>{};
 
-    for (final date in tradingDates) {
-      final dateOnly = DateTime(date.year, date.month, date.day);
-      final status = checkedStatus[date];
+    for (final dateOnly in normalizedTradingDates) {
+      final status = checkedStatus[dateOnly];
 
-      if (status == null) {
-        toCheckDates.add(dateOnly);
-      } else if (status == DayDataStatus.complete) {
-        if (dateOnly == validationDate) {
-          // 对关键日期进行复验，避免缓存“complete”但底层文件已缺失。
-          toCheckDates.add(dateOnly);
-        } else {
-          completeDates.add(dateOnly);
+      if (!verifyCachedComplete && status == DayDataStatus.complete) {
+        completeDates.add(dateOnly);
+        continue;
+      }
+
+      datesToCheck.add(dateOnly);
+    }
+
+    // 3. Count bars only for dates that need verification.
+    final barCountsByDate = <DateTime, int>{};
+    if (datesToCheck.isNotEmpty) {
+      if (verifyCachedComplete) {
+        final firstDate = datesToCheck.first;
+        final lastDate = datesToCheck.last;
+        final checkRange = DateRange(
+          firstDate,
+          DateTime(
+            lastDate.year,
+            lastDate.month,
+            lastDate.day,
+            23,
+            59,
+            59,
+            999,
+            999,
+          ),
+        );
+
+        final counted = await _metadataManager.countBarsByDateInRange(
+          stockCode: stockCode,
+          dataType: KLineDataType.oneMinute,
+          dateRange: checkRange,
+        );
+        for (final date in datesToCheck) {
+          barCountsByDate[date] = counted[date] ?? 0;
         }
       } else {
-        // incomplete or missing - re-check
-        toCheckDates.add(dateOnly);
+        for (final date in datesToCheck) {
+          final barCount = await _metadataManager.countBarsForDate(
+            stockCode: stockCode,
+            dataType: KLineDataType.oneMinute,
+            date: date,
+          );
+          barCountsByDate[date] = barCount;
+        }
       }
     }
 
-    // 4. Check uncached dates
-    for (final date in toCheckDates) {
-      final barCount = await _metadataManager.countBarsForDate(
-        stockCode: stockCode,
-        dataType: KLineDataType.oneMinute,
-        date: date,
-      );
-
-      final dateOnly = DateTime(date.year, date.month, date.day);
+    // 4. Categorize recounted dates and update cache.
+    for (final dateOnly in datesToCheck) {
+      final barCount = barCountsByDate[dateOnly] ?? 0;
       final isToday = dateOnly == todayDate;
 
       DayDataStatus status;
@@ -736,6 +914,10 @@ class MarketDataRepository implements DataRepository {
         );
       }
     }
+
+    completeDates.sort();
+    missingDates.sort();
+    incompleteDates.sort();
 
     return MissingDatesResult(
       missingDates: missingDates,

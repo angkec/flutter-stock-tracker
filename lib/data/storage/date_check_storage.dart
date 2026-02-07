@@ -81,6 +81,7 @@ class DateCheckStorage {
     required String stockCode,
     required KLineDataType dataType,
     bool excludeToday = false,
+    DateTime? today,
   }) async {
     final db = await _database.database;
 
@@ -92,8 +93,12 @@ class DateCheckStorage {
     final args = <dynamic>[stockCode, dataType.name];
 
     if (excludeToday) {
-      final today = DateTime.now();
-      final todayStart = DateTime(today.year, today.month, today.day);
+      final baseDate = today ?? DateTime.now();
+      final todayStart = DateTime(
+        baseDate.year,
+        baseDate.month,
+        baseDate.day,
+      );
       query += ' AND date < ?';
       args.add(todayStart.millisecondsSinceEpoch);
     }

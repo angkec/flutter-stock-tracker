@@ -20,6 +20,9 @@ class DataManagementScreen extends StatefulWidget {
 class _DataManagementScreenState extends State<DataManagementScreen> {
   // 用于强制刷新 FutureBuilder
   int _refreshKey = 0;
+  static const double _minTradingDateCoverageRatio = 0.3;
+  static const int _minCompleteMinuteBars = 220;
+  static const int _latestTradingDayProbeDays = 20;
 
   void _triggerRefresh() {
     setState(() {
@@ -309,6 +312,48 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         DateTime.now().subtract(const Duration(days: 30)),
         DateTime.now(),
       );
+      final dateRangeStr =
+          '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}';
+
+      final tradingDays = await repository.getTradingDates(dateRange);
+      if (!_hasReliableTradingDateCoverage(tradingDays, dateRange)) {
+        final lastTradingStatus = await _evaluateLatestTradingDayStatus(
+          repository: repository,
+          stockCodes: sampleCodes,
+        );
+
+        final lastTradingDate = lastTradingStatus.lastTradingDate;
+        if (lastTradingDate == null) {
+          return (subtitle: '$dateRangeStr，交易日基线不足，历史完整性待确认', missingDays: 30);
+        }
+
+        final issueCount =
+            lastTradingStatus.missingStocks +
+            lastTradingStatus.incompleteStocks;
+        final dateStr = _formatDate(lastTradingDate);
+
+        if (issueCount == 0) {
+          return (
+            subtitle:
+                '$dateRangeStr，交易日基线不足；最后交易日($dateStr)数据完整 (${lastTradingStatus.completeStocks}/${sampleCodes.length})',
+            missingDays: 0,
+          );
+        }
+
+        final issueParts = <String>[];
+        if (lastTradingStatus.missingStocks > 0) {
+          issueParts.add('缺失${lastTradingStatus.missingStocks}只');
+        }
+        if (lastTradingStatus.incompleteStocks > 0) {
+          issueParts.add('不完整${lastTradingStatus.incompleteStocks}只');
+        }
+
+        return (
+          subtitle:
+              '$dateRangeStr，交易日基线不足；最后交易日($dateStr)${issueParts.join('，')}',
+          missingDays: issueCount,
+        );
+      }
 
       // 使用 findMissingMinuteDatesBatch 获取真实的完整性状态
       final results = await repository.findMissingMinuteDatesBatch(
@@ -329,9 +374,6 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         totalMissingDays += result.missingDates.length;
         totalIncompleteDays += result.incompleteDates.length;
       }
-
-      final dateRangeStr =
-          '${dateRange.start.toString().split(' ')[0]} ~ ${dateRange.end.toString().split(' ')[0]}';
 
       // 判断整体状态
       if (completeCount == 0 &&
@@ -509,6 +551,38 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
       // 0 条新增时，强制复检是否仍有缺失，防止“看起来成功但实际没拉到数据”。
       if (fetchResult.totalRecords == 0) {
+        final tradingDays = await repository.getTradingDates(dateRange);
+        if (!_hasReliableTradingDateCoverage(tradingDays, dateRange)) {
+          final sampleCodes = stockCodes.length > 20
+              ? stockCodes.sublist(0, 20)
+              : stockCodes;
+          final lastTradingStatus = await _evaluateLatestTradingDayStatus(
+            repository: repository,
+            stockCodes: sampleCodes,
+          );
+          final lastTradingDate = lastTradingStatus.lastTradingDate;
+
+          if (lastTradingDate == null) {
+            throw Exception('交易日基线不足，且未找到可验证的最近分钟K交易日');
+          }
+
+          final issueCount =
+              lastTradingStatus.missingStocks +
+              lastTradingStatus.incompleteStocks;
+          if (issueCount > 0) {
+            final issueParts = <String>[];
+            if (lastTradingStatus.missingStocks > 0) {
+              issueParts.add('缺失${lastTradingStatus.missingStocks}只');
+            }
+            if (lastTradingStatus.incompleteStocks > 0) {
+              issueParts.add('不完整${lastTradingStatus.incompleteStocks}只');
+            }
+            throw Exception(
+              '交易日基线不足，最近交易日(${_formatDate(lastTradingDate)})仍有问题：${issueParts.join('，')}',
+            );
+          }
+        }
+
         progressNotifier.value = (
           current: 0,
           total: stockCodes.length,
@@ -580,13 +654,123 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         Navigator.of(context).pop();
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(
-          SnackBar(content: Text(completionMessage ?? '历史数据未变化')),
-        );
+        ).showSnackBar(SnackBar(content: Text(completionMessage ?? '历史数据未变化')));
         _triggerRefresh();
       }
       progressNotifier.dispose();
     }
+  }
+
+  bool _hasReliableTradingDateCoverage(
+    List<DateTime> tradingDates,
+    DateRange dateRange,
+  ) {
+    if (tradingDates.isEmpty) return false;
+
+    final startDate = DateTime(
+      dateRange.start.year,
+      dateRange.start.month,
+      dateRange.start.day,
+    );
+    final endDate = DateTime(
+      dateRange.end.year,
+      dateRange.end.month,
+      dateRange.end.day,
+    );
+    final calendarDays = endDate.difference(startDate).inDays + 1;
+    if (calendarDays <= 5) return true;
+
+    final minExpectedTradingDates =
+        (calendarDays * _minTradingDateCoverageRatio).ceil();
+    return tradingDates.length >= minExpectedTradingDates;
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.year.toString().padLeft(4, '0')}-'
+        '${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  DateTime _normalizeDate(DateTime dateTime) {
+    return DateTime(dateTime.year, dateTime.month, dateTime.day);
+  }
+
+  Future<
+    ({
+      DateTime? lastTradingDate,
+      int completeStocks,
+      int incompleteStocks,
+      int missingStocks,
+    })
+  >
+  _evaluateLatestTradingDayStatus({
+    required DataRepository repository,
+    required List<String> stockCodes,
+  }) async {
+    if (stockCodes.isEmpty) {
+      return (
+        lastTradingDate: null,
+        completeStocks: 0,
+        incompleteStocks: 0,
+        missingStocks: 0,
+      );
+    }
+
+    final now = DateTime.now();
+    final probeRange = DateRange(
+      now.subtract(const Duration(days: _latestTradingDayProbeDays)),
+      now,
+    );
+    final klinesByStock = await repository.getKlines(
+      stockCodes: stockCodes,
+      dateRange: probeRange,
+      dataType: KLineDataType.oneMinute,
+    );
+
+    DateTime? lastTradingDate;
+    for (final bars in klinesByStock.values) {
+      for (final bar in bars) {
+        final dateOnly = _normalizeDate(bar.datetime);
+        if (lastTradingDate == null || dateOnly.isAfter(lastTradingDate)) {
+          lastTradingDate = dateOnly;
+        }
+      }
+    }
+
+    if (lastTradingDate == null) {
+      return (
+        lastTradingDate: null,
+        completeStocks: 0,
+        incompleteStocks: 0,
+        missingStocks: stockCodes.length,
+      );
+    }
+
+    var completeStocks = 0;
+    var incompleteStocks = 0;
+    var missingStocks = 0;
+
+    for (final stockCode in stockCodes) {
+      final bars = klinesByStock[stockCode] ?? const [];
+      final barCount = bars
+          .where((bar) => _normalizeDate(bar.datetime) == lastTradingDate)
+          .length;
+
+      if (barCount >= _minCompleteMinuteBars) {
+        completeStocks++;
+      } else if (barCount == 0) {
+        missingStocks++;
+      } else {
+        incompleteStocks++;
+      }
+    }
+
+    return (
+      lastTradingDate: lastTradingDate,
+      completeStocks: completeStocks,
+      incompleteStocks: incompleteStocks,
+      missingStocks: missingStocks,
+    );
   }
 
   void _confirmClear(BuildContext context, String title, VoidCallback onClear) {
