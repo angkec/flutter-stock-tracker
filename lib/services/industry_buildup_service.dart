@@ -48,6 +48,9 @@ class IndustryBuildUpService extends ChangeNotifier {
   DateTime? _lastComputedAt;
   int _calculatedFromVersion = -1;
   List<IndustryBuildupBoardItem> _latestBoard = [];
+  final Map<String, List<IndustryBuildupDailyRecord>> _industryHistory = {};
+  final Set<String> _industryHistoryLoaded = {};
+  final Set<String> _industryHistoryLoading = {};
   bool _hasPreviousDate = false;
   bool _hasNextDate = false;
   IndustryBuildupTagConfig _tagConfig = IndustryBuildupTagConfig.defaults;
@@ -78,6 +81,15 @@ class IndustryBuildUpService extends ChangeNotifier {
   IndustryBuildupTagConfig get tagConfig => _tagConfig;
   List<IndustryBuildupBoardItem> get latestBoard =>
       List.unmodifiable(_latestBoard);
+  bool hasIndustryHistory(String industry) =>
+      _industryHistoryLoaded.contains(industry.trim());
+  bool isIndustryHistoryLoading(String industry) =>
+      _industryHistoryLoading.contains(industry.trim());
+  List<IndustryBuildupDailyRecord> getIndustryHistory(String industry) =>
+      List.unmodifiable(
+        _industryHistory[industry.trim()] ??
+            const <IndustryBuildupDailyRecord>[],
+      );
 
   void updateTagConfig(IndustryBuildupTagConfig config) {
     _tagConfig = config;
@@ -89,6 +101,32 @@ class IndustryBuildUpService extends ChangeNotifier {
     _tagConfig = IndustryBuildupTagConfig.defaults;
     notifyListeners();
     _saveTagConfig();
+  }
+
+  Future<void> loadIndustryHistory(
+    String industry, {
+    bool force = false,
+  }) async {
+    final normalizedIndustry = industry.trim();
+    if (normalizedIndustry.isEmpty) return;
+    if (!force && _industryHistoryLoaded.contains(normalizedIndustry)) return;
+    if (_industryHistoryLoading.contains(normalizedIndustry)) return;
+
+    _industryHistoryLoading.add(normalizedIndustry);
+    notifyListeners();
+    try {
+      final records = await _storage.getIndustryHistory(normalizedIndustry);
+      _industryHistory[normalizedIndustry] = records;
+      _industryHistoryLoaded.add(normalizedIndustry);
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[IndustryBuildUp] loadIndustryHistory failed: $normalizedIndustry, $e',
+      );
+      debugPrint('$stackTrace');
+    } finally {
+      _industryHistoryLoading.remove(normalizedIndustry);
+      notifyListeners();
+    }
   }
 
   Future<void> load() async {
@@ -376,6 +414,7 @@ class IndustryBuildUpService extends ChangeNotifier {
       _calculatedFromVersion = currentVersion;
       _lastComputedAt = now;
       _isStale = false;
+      _clearIndustryHistoryCache();
       await _reloadLatestBoard();
       _setProgress('完成', 1, 1);
     } catch (e, stackTrace) {
@@ -541,6 +580,12 @@ class IndustryBuildUpService extends ChangeNotifier {
     _progressCurrent = current;
     _progressTotal = total;
     notifyListeners();
+  }
+
+  void _clearIndustryHistoryCache() {
+    _industryHistory.clear();
+    _industryHistoryLoaded.clear();
+    _industryHistoryLoading.clear();
   }
 
   int _dateKey(DateTime date) =>

@@ -131,6 +131,22 @@ class IndustryBuildUpStorage {
     return trend.reversed.toList();
   }
 
+  Future<List<IndustryBuildupDailyRecord>> getIndustryHistory(
+    String industry, {
+    int? limit,
+  }) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      'industry_buildup_daily',
+      where: 'industry = ?',
+      whereArgs: [industry],
+      orderBy: 'date DESC, rank ASC',
+      limit: limit,
+    );
+
+    return rows.map(IndustryBuildupDailyRecord.fromDbMap).toList();
+  }
+
   Future<void> clearAll() async {
     final db = await _database.database;
     await db.delete('industry_buildup_daily');

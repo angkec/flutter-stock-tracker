@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
+import 'package:stock_rtwatcher/models/industry_buildup_stage.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
 import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
@@ -439,47 +440,25 @@ _BuildupInterpretation _interpretRecord(
   IndustryBuildupDailyRecord record,
   IndustryBuildupTagConfig config,
 ) {
-  final z = record.zRel;
-  final breadth = record.breadth;
-  final q = record.q;
+  final stage = resolveIndustryBuildupStage(record, config);
+  return _BuildupInterpretation(label: stage.label, color: _stageColor(stage));
+}
 
-  if (z > config.emotionMinZ && breadth > config.emotionMinBreadth) {
-    return const _BuildupInterpretation(
-      label: '情绪驱动',
-      color: Color(0xFFD84343),
-    );
+Color _stageColor(IndustryBuildupStage stage) {
+  switch (stage) {
+    case IndustryBuildupStage.emotion:
+      return const Color(0xFFD84343);
+    case IndustryBuildupStage.allocation:
+      return const Color(0xFFB8860B);
+    case IndustryBuildupStage.early:
+      return const Color(0xFF2E8B57);
+    case IndustryBuildupStage.noise:
+      return const Color(0xFFB26B00);
+    case IndustryBuildupStage.neutral:
+      return const Color(0xFF70757A);
+    case IndustryBuildupStage.observing:
+      return const Color(0xFF2A6BB1);
   }
-  if (z > config.allocationMinZ &&
-      breadth >= config.allocationMinBreadth &&
-      breadth <= config.allocationMaxBreadth &&
-      q > config.allocationMinQ) {
-    return const _BuildupInterpretation(
-      label: '行业配置期',
-      color: Color(0xFFB8860B),
-    );
-  }
-  if (z >= config.earlyMinZ &&
-      z <= config.earlyMaxZ &&
-      breadth >= config.earlyMinBreadth &&
-      breadth <= config.earlyMaxBreadth &&
-      q > config.earlyMinQ) {
-    return const _BuildupInterpretation(
-      label: '早期建仓',
-      color: Color(0xFF2E8B57),
-    );
-  }
-  if (z >= config.noiseMinZ &&
-      breadth < config.noiseMaxBreadth &&
-      q < config.noiseMaxQ) {
-    return const _BuildupInterpretation(
-      label: '噪音信号',
-      color: Color(0xFFB26B00),
-    );
-  }
-  if (z >= config.neutralMinZ && z <= config.neutralMaxZ) {
-    return const _BuildupInterpretation(label: '无异常', color: Color(0xFF70757A));
-  }
-  return const _BuildupInterpretation(label: '观察中', color: Color(0xFF2A6BB1));
 }
 
 String _f2(double v) => v.toStringAsFixed(2);
@@ -576,7 +555,7 @@ class _TagConfigDialogState extends State<_TagConfigDialog> {
   }
 
   void _reset() {
-    final d = IndustryBuildupTagConfig.defaults;
+    const d = IndustryBuildupTagConfig.defaults;
     _emotionMinZ.text = _f2(d.emotionMinZ);
     _emotionMinBreadth.text = _f2(d.emotionMinBreadth);
     _allocationMinZ.text = _f2(d.allocationMinZ);

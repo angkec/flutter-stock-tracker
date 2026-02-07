@@ -438,6 +438,26 @@ void main() {
     });
 
     test(
+      'loadIndustryHistory returns all records for target industry',
+      () async {
+        await service.recalculate(force: true);
+
+        expect(service.hasIndustryHistory('半导体'), isFalse);
+        expect(service.getIndustryHistory('半导体'), isEmpty);
+
+        await service.loadIndustryHistory('半导体');
+
+        expect(service.hasIndustryHistory('半导体'), isTrue);
+        final history = service.getIndustryHistory('半导体');
+        expect(history.length, 3);
+        expect(history.first.industry, '半导体');
+        expect(history[0].dateOnly, DateTime(2026, 2, 6));
+        expect(history[1].dateOnly, DateTime(2026, 2, 5));
+        expect(history[2].dateOnly, DateTime(2026, 2, 4));
+      },
+    );
+
+    test(
       'dataUpdated event marks service stale without auto recompute',
       () async {
         await service.recalculate(force: true);
