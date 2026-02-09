@@ -265,9 +265,10 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
     // 计算可折叠区域的高度
     const double chartHeight = 150.0;
     const double summaryHeight = 48.0;
-    const double buildupCardHeight = 184.0;
+    const double buildupCardHeight = 252.0;
     const double titleHeight = 32.0;
     const double expandedHeight =
+        kToolbarHeight +
         chartHeight +
         12 +
         summaryHeight +
@@ -423,7 +424,9 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
                   child: StockTable(
                     stocks: industryStocks,
                     isLoading: marketProvider.isLoading,
-                    ratioOverrides: _ratioSortDate == null ? null : _ratioSortValues,
+                    ratioOverrides: _ratioSortDate == null
+                        ? null
+                        : _ratioSortValues,
                     showHeader: false,
                     showIndustry: false,
                     bottomPadding: 68,
@@ -446,7 +449,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
   }
 }
 
-class _IndustryBuildupHistoryCard extends StatelessWidget {
+class _IndustryBuildupHistoryCard extends StatefulWidget {
   final List<IndustryBuildupDailyRecord> records;
   final bool isLoading;
   final double height;
@@ -460,16 +463,79 @@ class _IndustryBuildupHistoryCard extends StatelessWidget {
   });
 
   @override
+  State<_IndustryBuildupHistoryCard> createState() =>
+      _IndustryBuildupHistoryCardState();
+}
+
+class _IndustryBuildupHistoryCardState
+    extends State<_IndustryBuildupHistoryCard> {
+  DateTime? _selectedDay;
+
+  IndustryBuildupDailyRecord? _resolveSelectedRecord(
+    List<IndustryBuildupDailyRecord> chronological,
+  ) {
+    if (chronological.isEmpty) return null;
+    if (_selectedDay == null) return chronological.last;
+    final index = chronological.indexWhere((record) {
+      final date = record.dateOnly;
+      return date.year == _selectedDay!.year &&
+          date.month == _selectedDay!.month &&
+          date.day == _selectedDay!.day;
+    });
+    if (index < 0) return chronological.last;
+    return chronological[index];
+  }
+
+  int _selectedRecordIndex(
+    List<IndustryBuildupDailyRecord> chronological,
+    IndustryBuildupDailyRecord selected,
+  ) {
+    final index = chronological.indexWhere((record) {
+      final date = record.dateOnly;
+      final selectedDate = selected.dateOnly;
+      return date.year == selectedDate.year &&
+          date.month == selectedDate.month &&
+          date.day == selectedDate.day;
+    });
+    return index < 0 ? chronological.length - 1 : index;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final latest = records.isEmpty ? null : records.first;
+    final latest = widget.records.isEmpty ? null : widget.records.first;
+    final earliest = widget.records.isEmpty ? null : widget.records.last;
+    final recent = widget.records.take(20).toList(growable: false);
+    final chronological = recent.reversed.toList(growable: false);
+    final selectedRecord = _resolveSelectedRecord(chronological);
+    final selectedIndex = selectedRecord == null
+        ? 0
+        : _selectedRecordIndex(chronological, selectedRecord);
+    final bestRank = chronological.isEmpty
+        ? null
+        : chronological
+              .map((record) => record.rank)
+              .reduce((a, b) => a < b ? a : b);
+    final worstRank = chronological.isEmpty
+        ? null
+        : chronological
+              .map((record) => record.rank)
+              .reduce((a, b) => a > b ? a : b);
     final latestStage = latest == null
         ? null
-        : resolveIndustryBuildupStage(latest, tagConfig);
+        : resolveIndustryBuildupStage(latest, widget.tagConfig);
+    final trendDirection = (latest != null && earliest != null)
+        ? (latest.scoreEma >= earliest.scoreEma ? '上升' : '下降')
+        : null;
+    final rankFrom = earliest?.rank;
+    final rankTo = latest?.rank;
+    final rankMove = (rankFrom != null && rankTo != null)
+        ? rankFrom - rankTo
+        : 0;
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
 
     return Container(
-      height: height,
+      height: widget.height,
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
       decoration: BoxDecoration(
@@ -482,7 +548,7 @@ class _IndustryBuildupHistoryCard extends StatelessWidget {
           Row(
             children: [
               Icon(
-                Icons.radar,
+                Icons.multiline_chart,
                 size: 16,
                 color: Theme.of(context).colorScheme.primary,
               ),
@@ -497,9 +563,9 @@ class _IndustryBuildupHistoryCard extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                records.isEmpty
-                    ? (isLoading ? '加载中' : '暂无')
-                    : '${records.length} 条',
+                widget.records.isEmpty
+                    ? (widget.isLoading ? '加载中' : '暂无')
+                    : '${widget.records.length} 条',
                 style: TextStyle(fontSize: 11, color: onSurfaceVariant),
               ),
             ],
@@ -507,72 +573,158 @@ class _IndustryBuildupHistoryCard extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             latest == null
-                ? (isLoading ? '正在加载建仓雷达历史...' : '暂无建仓雷达历史数据')
-                : '最新 ${_formatDate(latest.dateOnly)}  ${latestStage!.label}  Z ${latest.zRel.toStringAsFixed(2)}  广度 ${(latest.breadth * 100).toStringAsFixed(0)}%  Q ${latest.q.toStringAsFixed(2)}',
+                ? (widget.isLoading ? '正在加载建仓雷达历史...' : '暂无建仓雷达历史数据')
+                : '最新 ${_formatDate(latest.dateOnly)}  ${latestStage!.label}  '
+                      'Z ${latest.zRel.toStringAsFixed(2)}  Q ${latest.q.toStringAsFixed(2)}  '
+                      '广度 ${(latest.breadth * 100).toStringAsFixed(0)}%  '
+                      'Raw ${latest.rawScore.toStringAsFixed(2)}  '
+                      'EMA ${latest.scoreEma.toStringAsFixed(2)}',
             style: TextStyle(fontSize: 11, color: onSurfaceVariant),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
+          const SizedBox(height: 2),
+          if (latest != null && earliest != null)
+            Text(
+              '近20日趋势：scoreEma $trendDirection  '
+              'rank ${rankFrom!} → ${rankTo!} (${rankMove >= 0 ? '+' : ''}$rankMove)',
+              style: TextStyle(fontSize: 11, color: onSurfaceVariant),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           const SizedBox(height: 4),
+          Text(
+            latest == null ? '雷达排名趋势' : '雷达排名趋势  当前排名 #${latest.rank}',
+            style: TextStyle(
+              fontSize: 11,
+              color: onSurface,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 6),
+          if (chronological.isNotEmpty)
+            SizedBox(
+              height: 98,
+              child: _IndustryRadarRankTrendChart(
+                key: const ValueKey('industry_detail_radar_rank_chart'),
+                records: chronological,
+                selectedIndex: selectedIndex,
+                onSelectedIndex: (index) {
+                  if (index < 0 || index >= chronological.length) return;
+                  setState(() {
+                    _selectedDay = chronological[index].dateOnly;
+                  });
+                },
+              ),
+            ),
+          if (chronological.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              '手指滑动或点击图表可选择日期',
+              style: TextStyle(fontSize: 10, color: onSurfaceVariant),
+            ),
+          ],
+          const SizedBox(height: 6),
           Expanded(
-            child: records.isEmpty
+            child: selectedRecord == null
                 ? const SizedBox.shrink()
-                : ListView.separated(
-                    padding: EdgeInsets.zero,
-                    itemCount: records.length,
-                    itemBuilder: (context, index) {
-                      final record = records[index];
-                      final stage = resolveIndustryBuildupStage(
-                        record,
-                        tagConfig,
-                      );
-                      final stageColor = _stageColor(stage);
-                      return Row(
+                : Container(
+                    key: const ValueKey(
+                      'industry_detail_radar_selected_detail',
+                    ),
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          SizedBox(
-                            width: 80,
-                            child: Text(
-                              _formatDate(record.dateOnly),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: onSurface,
-                                fontFamily: 'monospace',
+                          Row(
+                            children: [
+                              Text(
+                                '当日详情 ${_formatDate(selectedRecord.dateOnly)}',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: onSurface,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: stageColor.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              stage.label,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: stageColor,
-                                fontWeight: FontWeight.w600,
+                              const Spacer(),
+                              Text(
+                                '近20日最高#$bestRank / 最低#$worstRank',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: onSurfaceVariant,
+                                ),
                               ),
-                            ),
+                            ],
                           ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              'Z ${record.zRel.toStringAsFixed(2)}  广度 ${(record.breadth * 100).toStringAsFixed(0)}%  Q ${record.q.toStringAsFixed(2)}  排名#${record.rank}',
-                              style: TextStyle(fontSize: 11, color: onSurface),
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Builder(
+                                builder: (context) {
+                                  final stage = resolveIndustryBuildupStage(
+                                    selectedRecord,
+                                    widget.tagConfig,
+                                  );
+                                  final stageColor = _stageColor(stage);
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 1,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: stageColor.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    child: Text(
+                                      stage.label,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: stageColor,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '排名 #${selectedRecord.rank}  '
+                                  '${selectedRecord.rankArrow}${selectedRecord.rankChange.abs()}',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: onSurface,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            'Z ${selectedRecord.zRel.toStringAsFixed(2)}  '
+                            'Q ${selectedRecord.q.toStringAsFixed(2)}  '
+                            '广度 ${(selectedRecord.breadth * 100).toStringAsFixed(0)}%  '
+                            'Gate ${selectedRecord.breadthGate.toStringAsFixed(2)}',
+                            style: TextStyle(fontSize: 11, color: onSurface),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Raw ${selectedRecord.rawScore.toStringAsFixed(2)}  '
+                            'EMA ${selectedRecord.scoreEma.toStringAsFixed(2)}  '
+                            'zPos ${selectedRecord.zPos.toStringAsFixed(2)}',
+                            style: TextStyle(fontSize: 11, color: onSurface),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
-                      );
-                    },
-                    separatorBuilder: (_, _) => Divider(
-                      height: 8,
-                      thickness: 0.5,
-                      color: Theme.of(
-                        context,
-                      ).dividerColor.withValues(alpha: 0.4),
+                      ),
                     ),
                   ),
           ),
@@ -602,6 +754,245 @@ class _IndustryBuildupHistoryCard extends StatelessWidget {
       case IndustryBuildupStage.observing:
         return const Color(0xFF2A6BB1);
     }
+  }
+}
+
+class _IndustryRadarRankTrendChart extends StatelessWidget {
+  static const double _horizontalPadding = 12.0;
+  static const double _topPadding = 10.0;
+  static const double _bottomPadding = 20.0;
+
+  final List<IndustryBuildupDailyRecord> records;
+  final int selectedIndex;
+  final ValueChanged<int> onSelectedIndex;
+
+  const _IndustryRadarRankTrendChart({
+    super.key,
+    required this.records,
+    required this.selectedIndex,
+    required this.onSelectedIndex,
+  });
+
+  int _resolveIndex(double dx, double width) {
+    if (records.length <= 1) return 0;
+    final usableWidth = (width - _horizontalPadding * 2).clamp(1.0, width);
+    final localX = (dx - _horizontalPadding).clamp(0.0, usableWidth);
+    final step = usableWidth / (records.length - 1);
+    return (localX / step).round().clamp(0, records.length - 1);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (records.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (details) {
+            onSelectedIndex(_resolveIndex(details.localPosition.dx, width));
+          },
+          onHorizontalDragUpdate: (details) {
+            onSelectedIndex(_resolveIndex(details.localPosition.dx, width));
+          },
+          child: CustomPaint(
+            size: Size(width, 98),
+            painter: _IndustryRadarRankTrendPainter(
+              records: records,
+              selectedIndex: selectedIndex,
+              horizontalPadding: _horizontalPadding,
+              topPadding: _topPadding,
+              bottomPadding: _bottomPadding,
+              colorScheme: Theme.of(context).colorScheme,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _IndustryRadarRankTrendPainter extends CustomPainter {
+  final List<IndustryBuildupDailyRecord> records;
+  final int selectedIndex;
+  final double horizontalPadding;
+  final double topPadding;
+  final double bottomPadding;
+  final ColorScheme colorScheme;
+
+  _IndustryRadarRankTrendPainter({
+    required this.records,
+    required this.selectedIndex,
+    required this.horizontalPadding,
+    required this.topPadding,
+    required this.bottomPadding,
+    required this.colorScheme,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (records.isEmpty) return;
+
+    final chartRect = Rect.fromLTWH(
+      horizontalPadding,
+      topPadding,
+      (size.width - horizontalPadding * 2).clamp(1.0, size.width),
+      (size.height - topPadding - bottomPadding).clamp(1.0, size.height),
+    );
+    final minRank = records
+        .map((record) => record.rank.toDouble())
+        .reduce((a, b) => a < b ? a : b);
+    final maxRank = records
+        .map((record) => record.rank.toDouble())
+        .reduce((a, b) => a > b ? a : b);
+    final rankRange = (maxRank - minRank).abs() < 0.0001
+        ? 1.0
+        : maxRank - minRank;
+
+    Offset pointAt(int index) {
+      final divisor = records.length > 1 ? records.length - 1 : 1;
+      final x = chartRect.left + (index / divisor) * chartRect.width;
+      final rank = records[index].rank.toDouble();
+      final y =
+          chartRect.top + ((rank - minRank) / rankRange) * chartRect.height;
+      return Offset(x, y);
+    }
+
+    final gridPaint = Paint()
+      ..color = colorScheme.outlineVariant.withValues(alpha: 0.5)
+      ..strokeWidth = 1;
+    canvas.drawLine(chartRect.topLeft, chartRect.topRight, gridPaint);
+    canvas.drawLine(chartRect.bottomLeft, chartRect.bottomRight, gridPaint);
+
+    final path = Path();
+    for (var i = 0; i < records.length; i++) {
+      final point = pointAt(i);
+      if (i == 0) {
+        path.moveTo(point.dx, point.dy);
+      } else {
+        path.lineTo(point.dx, point.dy);
+      }
+    }
+    final linePaint = Paint()
+      ..color = colorScheme.primary
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawPath(path, linePaint);
+
+    final selected = selectedIndex.clamp(0, records.length - 1);
+    for (var i = 0; i < records.length; i++) {
+      final point = pointAt(i);
+      final isSelected = i == selected;
+      final dotPaint = Paint()
+        ..color = isSelected
+            ? colorScheme.primary
+            : colorScheme.primaryContainer
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(point, isSelected ? 4 : 2.5, dotPaint);
+    }
+
+    final selectedPoint = pointAt(selected);
+    final markerPaint = Paint()
+      ..color = colorScheme.primary.withValues(alpha: 0.35)
+      ..strokeWidth = 1;
+    canvas.drawLine(
+      Offset(selectedPoint.dx, chartRect.top),
+      Offset(selectedPoint.dx, chartRect.bottom),
+      markerPaint,
+    );
+
+    final selectedRecord = records[selected];
+    final tooltip =
+        '${_formatMonthDay(selectedRecord.dateOnly)}  #${selectedRecord.rank}';
+    final tooltipPainter = TextPainter(
+      text: TextSpan(
+        text: tooltip,
+        style: TextStyle(
+          color: colorScheme.onPrimaryContainer,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final tooltipRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(
+        (selectedPoint.dx - tooltipPainter.width / 2 - 6).clamp(
+          chartRect.left,
+          chartRect.right - tooltipPainter.width - 12,
+        ),
+        (selectedPoint.dy - tooltipPainter.height - 16).clamp(
+          chartRect.top,
+          chartRect.bottom - tooltipPainter.height - 4,
+        ),
+        tooltipPainter.width + 12,
+        tooltipPainter.height + 4,
+      ),
+      const Radius.circular(6),
+    );
+    final tooltipBgPaint = Paint()
+      ..color = colorScheme.primaryContainer.withValues(alpha: 0.95);
+    canvas.drawRRect(tooltipRect, tooltipBgPaint);
+    tooltipPainter.paint(
+      canvas,
+      Offset(tooltipRect.left + 6, tooltipRect.top + 2),
+    );
+
+    _paintAxisText(
+      canvas,
+      '#${minRank.toInt()}',
+      Offset(chartRect.left, chartRect.top - 10),
+    );
+    _paintAxisText(
+      canvas,
+      '#${maxRank.toInt()}',
+      Offset(chartRect.left, chartRect.bottom - 10),
+    );
+    _paintAxisText(
+      canvas,
+      _formatMonthDay(records.first.dateOnly),
+      Offset(chartRect.left, chartRect.bottom + 4),
+    );
+    final lastLabel = _formatMonthDay(records.last.dateOnly);
+    final lastPainter = TextPainter(
+      text: TextSpan(
+        text: lastLabel,
+        style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 10),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    lastPainter.paint(
+      canvas,
+      Offset(chartRect.right - lastPainter.width, chartRect.bottom + 4),
+    );
+  }
+
+  void _paintAxisText(Canvas canvas, String text, Offset offset) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 10),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(canvas, offset);
+  }
+
+  String _formatMonthDay(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '$month/$day';
+  }
+
+  @override
+  bool shouldRepaint(covariant _IndustryRadarRankTrendPainter oldDelegate) {
+    return oldDelegate.records != records ||
+        oldDelegate.selectedIndex != selectedIndex ||
+        oldDelegate.colorScheme != colorScheme;
   }
 }
 

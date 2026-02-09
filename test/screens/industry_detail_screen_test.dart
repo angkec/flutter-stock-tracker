@@ -224,18 +224,29 @@ class _FakeIndustryBuildUpService extends IndustryBuildUpService {
   }
 }
 
-IndustryBuildupDailyRecord _record(DateTime date, {required int rank}) {
+IndustryBuildupDailyRecord _record(
+  DateTime date, {
+  required int rank,
+  double rawScore = 0,
+  double scoreEma = 0,
+  int rankChange = 0,
+  String rankArrow = '→',
+}) {
   return IndustryBuildupDailyRecord(
     date: date,
     industry: '半导体',
     zRel: 1.0 + rank,
     breadth: 0.4,
     q: 0.8,
+    rawScore: rawScore,
+    scoreEma: scoreEma,
     xI: 0.1,
     xM: 0.05,
     passedCount: 10,
     memberCount: 20,
     rank: rank,
+    rankChange: rankChange,
+    rankArrow: rankArrow,
     updatedAt: DateTime(2026, 2, 6, 15),
   );
 }
@@ -263,9 +274,26 @@ void main() {
     final buildUpService = _FakeIndustryBuildUpService(
       historyByIndustry: {
         '半导体': [
-          _record(DateTime(2026, 2, 6), rank: 1),
-          _record(DateTime(2026, 2, 5), rank: 2),
-          _record(DateTime(2026, 2, 4), rank: 3),
+          _record(
+            DateTime(2026, 2, 6),
+            rank: 1,
+            rawScore: 0.62,
+            scoreEma: 0.55,
+            rankChange: 1,
+            rankArrow: '↑',
+          ),
+          _record(
+            DateTime(2026, 2, 5),
+            rank: 2,
+            rawScore: 0.48,
+            scoreEma: 0.46,
+          ),
+          _record(
+            DateTime(2026, 2, 4),
+            rank: 3,
+            rawScore: 0.32,
+            scoreEma: 0.34,
+          ),
         ],
       },
     );
@@ -293,10 +321,82 @@ void main() {
     expect(buildUpService.loadCallCount, 1);
     expect(find.text('建仓雷达历史'), findsOneWidget);
     expect(find.text('行业配置期'), findsWidgets);
-    expect(find.text('2026-02-06'), findsOneWidget);
-    expect(find.text('2026-02-05'), findsOneWidget);
-    expect(find.text('2026-02-04'), findsOneWidget);
-    expect(find.textContaining('排序: 最新'), findsOneWidget);
+    expect(find.textContaining('当日详情 2026-02-06'), findsOneWidget);
+    expect(find.textContaining('雷达排名趋势'), findsOneWidget);
+    expect(find.textContaining('当前排名 #1'), findsOneWidget);
+  });
+
+  testWidgets('雷达排名趋势图支持手指选择日期并刷新当日详情', (tester) async {
+    final repository = _DummyRepository();
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600001', name: '测试A', market: 1),
+          ratio: 1.2,
+          changePercent: 2.5,
+          industry: '半导体',
+        ),
+      ],
+    );
+    final trendService = _FakeTrendService();
+    final buildUpService = _FakeIndustryBuildUpService(
+      historyByIndustry: {
+        '半导体': [
+          _record(
+            DateTime(2026, 2, 6),
+            rank: 1,
+            rawScore: 0.62,
+            scoreEma: 0.55,
+            rankChange: 1,
+            rankArrow: '↑',
+          ),
+          _record(
+            DateTime(2026, 2, 5),
+            rank: 2,
+            rawScore: 0.48,
+            scoreEma: 0.46,
+          ),
+          _record(
+            DateTime(2026, 2, 4),
+            rank: 3,
+            rawScore: 0.32,
+            scoreEma: 0.34,
+          ),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildUpService,
+          ),
+        ],
+        child: const MaterialApp(home: IndustryDetailScreen(industry: '半导体')),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('当日详情 2026-02-06'), findsOneWidget);
+
+    final chartFinder = find.byKey(
+      const ValueKey('industry_detail_radar_rank_chart'),
+    );
+    expect(chartFinder, findsOneWidget);
+    final rect = tester.getRect(chartFinder);
+    await tester.tapAt(Offset(rect.left + 8, rect.center.dy));
+    await tester.pump();
+
+    expect(find.textContaining('当日详情 2026-02-04'), findsOneWidget);
   });
 
   testWidgets('成分股列表可按指定日期量比排序', (tester) async {
@@ -351,16 +451,26 @@ void main() {
 
     await tester.pumpAndSettle();
 
+    await tester.drag(find.byType(NestedScrollView), const Offset(0, -320));
+    await tester.pumpAndSettle();
+
     expect(
       _topYOfText(tester, '600001'),
       lessThan(_topYOfText(tester, '600002')),
     );
 
-    await tester.ensureVisible(find.text('排序: 最新'));
-    await tester.tap(find.text('排序: 最新'));
+    final sortMenu = find.byKey(
+      const ValueKey('industry_detail_ratio_sort_day_menu'),
+    );
+    await tester.ensureVisible(sortMenu);
+    tester.state<PopupMenuButtonState<DateTime?>>(sortMenu).showButtonMenu();
     await tester.pumpAndSettle();
-    expect(find.text('02-05'), findsWidgets);
-    await tester.tap(find.text('02-05').first);
+    final dayOption = find.text('02-05').last;
+    expect(dayOption, findsOneWidget);
+    await tester.tap(dayOption);
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(NestedScrollView), const Offset(0, -120));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('排序: 02-05'), findsOneWidget);
