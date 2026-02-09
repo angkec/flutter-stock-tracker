@@ -44,7 +44,7 @@ class _IndustryScreenState extends State<IndustryScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -463,7 +463,7 @@ class _IndustryScreenState extends State<IndustryScreen>
               ),
               tooltip: '筛选',
             ),
-          if (_tabController.index != 2 &&
+          if (_tabController.index <= 1 &&
               marketProvider.allData.isNotEmpty &&
               !_isRecalculatingIndustry)
             IconButton(
@@ -471,7 +471,7 @@ class _IndustryScreenState extends State<IndustryScreen>
               icon: const Icon(Icons.auto_graph, size: 20),
               tooltip: '重算行业数据',
             ),
-          if (_tabController.index != 2 &&
+          if (_tabController.index <= 1 &&
               marketProvider.allData.isNotEmpty &&
               _isRecalculatingIndustry)
             const Padding(
@@ -483,7 +483,7 @@ class _IndustryScreenState extends State<IndustryScreen>
               ),
             ),
           // 更新趋势按钮
-          if (_tabController.index != 2 &&
+          if (_tabController.index <= 1 &&
               marketProvider.allData.isNotEmpty &&
               !trendService.isLoading)
             IconButton(
@@ -519,6 +519,7 @@ class _IndustryScreenState extends State<IndustryScreen>
                   ),
                   const Tab(text: '排名趋势'),
                   const Tab(text: '建仓雷达'),
+                  const Tab(text: '雷达排名'),
                 ],
               ),
             ),
@@ -546,7 +547,15 @@ class _IndustryScreenState extends State<IndustryScreen>
                       );
                     },
                   ),
-                  const IndustryBuildupList(fullHeight: true),
+                  const IndustryBuildupList(
+                    fullHeight: true,
+                    showRankingBoard: false,
+                  ),
+                  const IndustryBuildupList(
+                    fullHeight: true,
+                    showRankingBoard: true,
+                    rankingTrendTableMode: true,
+                  ),
                 ],
               ),
             ),

@@ -224,6 +224,72 @@ class _FakeIndustryRankService extends IndustryRankService {
 }
 
 void main() {
+  testWidgets('行业页包含雷达排名子tab且在该tab隐藏重算按钮', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+
+    final repository = _FakeDataRepository(dataVersion: 99);
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 1.0,
+          industry: '银行',
+          upVolume: 120,
+          downVolume: 100,
+        ),
+      ],
+    );
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final historicalKlineService = HistoricalKlineService(
+      repository: repository,
+    );
+    final buildupService = IndustryBuildUpService(
+      repository: repository,
+      industryService: IndustryService(),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryRankService>.value(value: rankService),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildupService,
+          ),
+          ChangeNotifierProvider<HistoricalKlineService>.value(
+            value: historicalKlineService,
+          ),
+        ],
+        child: const MaterialApp(home: IndustryScreen()),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('行业统计'), findsOneWidget);
+    expect(find.text('排名趋势'), findsOneWidget);
+    expect(find.text('建仓雷达'), findsOneWidget);
+    expect(find.text('雷达排名'), findsOneWidget);
+
+    await tester.tap(find.text('雷达排名'));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.auto_graph), findsNothing);
+
+    buildupService.dispose();
+    marketProvider.dispose();
+    historicalKlineService.dispose();
+    await repository.dispose();
+  });
+
   testWidgets('顶部显示重算按钮并触发行业趋势与排名重算', (tester) async {
     SharedPreferences.setMockInitialValues({});
 

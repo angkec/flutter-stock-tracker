@@ -239,6 +239,13 @@ IndustryBuildupBoardItem _boardItem({
   required double zRel,
   required double breadth,
   required double q,
+  double rawScore = 0.0,
+  double scoreEma = 0.0,
+  int rank = 1,
+  int rankChange = 0,
+  String rankArrow = '→',
+  List<double> scoreEmaTrend = const [],
+  List<double> rankTrend = const [],
 }) {
   return IndustryBuildupBoardItem(
     record: IndustryBuildupDailyRecord(
@@ -247,14 +254,20 @@ IndustryBuildupBoardItem _boardItem({
       zRel: zRel,
       breadth: breadth,
       q: q,
+      rawScore: rawScore,
+      scoreEma: scoreEma,
       xI: 0.1,
       xM: 0.05,
       passedCount: 10,
       memberCount: 20,
-      rank: 1,
+      rank: rank,
+      rankChange: rankChange,
+      rankArrow: rankArrow,
       updatedAt: DateTime(2026, 2, 6, 15),
     ),
     zRelTrend: const [0.1, 0.2, 0.3],
+    scoreEmaTrend: scoreEmaTrend,
+    rankTrend: rankTrend,
   );
 }
 
@@ -459,8 +472,8 @@ void main() {
     );
 
     expect(find.textContaining('本周候选榜 2026-W06'), findsOneWidget);
-    expect(find.textContaining('1. 半导体'), findsOneWidget);
-    expect(find.textContaining('2. 军工'), findsOneWidget);
+    expect(find.textContaining('1. 半导体'), findsWidgets);
+    expect(find.textContaining('2. 军工'), findsWidgets);
     expect(find.textContaining('score 1.06'), findsOneWidget);
     expect(find.textContaining('score 0.89'), findsOneWidget);
   });
@@ -495,5 +508,199 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('观察中'), findsOneWidget);
+  });
+
+  testWidgets('雷达排名模式仅展示Top10趋势表并支持窗口切换', (tester) async {
+    final service = _FakeIndustryBuildUpService();
+    service.setUiState(
+      board: [
+        _boardItem(
+          industry: '半导体',
+          zRel: 1.6,
+          breadth: 0.42,
+          q: 0.72,
+          rawScore: 1.12,
+          scoreEma: 0.96,
+          rank: 1,
+          rankChange: 2,
+          rankArrow: '↑',
+          scoreEmaTrend: const [0.55, 0.66, 0.74, 0.82, 0.96],
+          rankTrend: const [4, 3, 2, 2, 1],
+        ),
+        _boardItem(
+          industry: '军工',
+          zRel: 1.2,
+          breadth: 0.35,
+          q: 0.66,
+          rawScore: 0.84,
+          scoreEma: 0.78,
+          rank: 2,
+          rankChange: -1,
+          rankArrow: '↓',
+          scoreEmaTrend: const [0.48, 0.58, 0.61, 0.73, 0.78],
+          rankTrend: const [2, 2, 3, 1, 2],
+        ),
+      ],
+      isCalculating: false,
+      errorMessage: null,
+      latestResultDate: DateTime(2026, 2, 6),
+      hasPreviousDate: true,
+      hasNextDate: true,
+      weeklyConfig: AdaptiveWeeklyConfig(
+        week: '2026-W06',
+        k: 3,
+        floors: const AdaptiveFloors(z: 0.8, q: 0.5, breadth: 0.2),
+        thresholds: const AdaptiveThresholds(z: 1.27, q: 0.56, breadth: 0.27),
+        candidates: [
+          AdaptiveCandidate(
+            industry: '半导体',
+            day: DateTime(2026, 2, 6),
+            z: 1.62,
+            q: 0.71,
+            breadth: 0.41,
+            score: 1.06,
+          ),
+        ],
+        status: AdaptiveWeeklyStatus.strong,
+      ),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<IndustryBuildUpService>.value(
+        value: service,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: IndustryBuildupList(
+              fullHeight: true,
+              showRankingBoard: true,
+              rankingTrendTableMode: true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('20日趋势 Top10'), findsOneWidget);
+    expect(find.text('今日'), findsOneWidget);
+    expect(find.text('5日'), findsOneWidget);
+    expect(find.text('10日'), findsOneWidget);
+    expect(find.text('20日'), findsOneWidget);
+    expect(find.text('排名'), findsOneWidget);
+    expect(find.text('行业'), findsOneWidget);
+    expect(find.text('指标'), findsOneWidget);
+    expect(find.text('变化'), findsOneWidget);
+    expect(find.text('趋势'), findsOneWidget);
+
+    expect(find.textContaining('本周候选榜'), findsNothing);
+    expect(find.byTooltip('上一日'), findsNothing);
+    expect(find.byTooltip('下一日'), findsNothing);
+    expect(find.text('趋势最强'), findsNothing);
+    expect(find.text('今日爆点'), findsNothing);
+
+    await tester.tap(find.text('5日'));
+    await tester.pump();
+
+    expect(find.textContaining('EMA'), findsWidgets);
+  });
+
+  testWidgets('建仓雷达概览以全行业大表展示并可滚动查看全部行业', (tester) async {
+    final service = _FakeIndustryBuildUpService();
+    final board = List<IndustryBuildupBoardItem>.generate(
+      10,
+      (index) => _boardItem(
+        industry: '行业${index + 1}',
+        zRel: 1.0 + index * 0.1,
+        breadth: 0.3 + index * 0.01,
+        q: 0.6,
+        rawScore: 0.5 + index * 0.05,
+        scoreEma: 0.4 + index * 0.04,
+        rank: index + 1,
+      ),
+    );
+    service.setUiState(
+      board: board,
+      isCalculating: false,
+      errorMessage: null,
+      latestResultDate: DateTime(2026, 2, 6),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<IndustryBuildUpService>.value(
+        value: service,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: IndustryBuildupList(
+              fullHeight: true,
+              showRankingBoard: false,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('建仓雷达概览表'), findsOneWidget);
+    expect(find.text('行业/状态'), findsOneWidget);
+    expect(find.text('EMA'), findsOneWidget);
+    expect(find.text('Raw'), findsOneWidget);
+    expect(find.text('Z/Q/广'), findsOneWidget);
+    expect(find.text('排名变动'), findsOneWidget);
+    expect(find.text('趋势'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('行业10'),
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('行业10'), findsOneWidget);
+  });
+
+  testWidgets('建仓雷达概览表支持横向滚动查看右侧列', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final service = _FakeIndustryBuildUpService();
+    service.setUiState(
+      board: [
+        _boardItem(
+          industry: '半导体',
+          zRel: 1.5,
+          breadth: 0.42,
+          q: 0.72,
+          rawScore: 1.12,
+          scoreEma: 0.96,
+          rank: 1,
+        ),
+      ],
+      isCalculating: false,
+      errorMessage: null,
+      latestResultDate: DateTime(2026, 2, 6),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<IndustryBuildUpService>.value(
+        value: service,
+        child: const MaterialApp(
+          home: Scaffold(
+            body: IndustryBuildupList(
+              fullHeight: true,
+              showRankingBoard: false,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final horizontalScroll = find.byKey(
+      const ValueKey('industry_buildup_overview_hscroll'),
+    );
+    expect(horizontalScroll, findsOneWidget);
+    final trendHeader = find.text('趋势').first;
+    final before = tester.getTopLeft(trendHeader).dx;
+
+    await tester.drag(horizontalScroll, const Offset(-180, 0));
+    await tester.pumpAndSettle();
+
+    final after = tester.getTopLeft(trendHeader).dx;
+    expect(after, lessThan(before));
   });
 }

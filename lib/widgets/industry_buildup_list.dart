@@ -8,10 +8,109 @@ import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 
-class IndustryBuildupList extends StatelessWidget {
-  final bool fullHeight;
+enum IndustryBuildupSortMode { trendScore, rawScore }
 
-  const IndustryBuildupList({super.key, this.fullHeight = false});
+class IndustryBuildupList extends StatefulWidget {
+  final bool fullHeight;
+  final bool showRankingBoard;
+  final bool rankingTrendTableMode;
+
+  const IndustryBuildupList({
+    super.key,
+    this.fullHeight = false,
+    this.showRankingBoard = true,
+    this.rankingTrendTableMode = false,
+  });
+
+  @override
+  State<IndustryBuildupList> createState() => _IndustryBuildupListState();
+}
+
+class _IndustryBuildupListState extends State<IndustryBuildupList> {
+  IndustryBuildupSortMode _sortMode = IndustryBuildupSortMode.trendScore;
+  int _trendWindowDays = 20;
+
+  List<IndustryBuildupBoardItem> _sortRows(
+    List<IndustryBuildupBoardItem> rows,
+  ) {
+    final sorted = List<IndustryBuildupBoardItem>.from(rows);
+    sorted.sort((a, b) {
+      if (_sortMode == IndustryBuildupSortMode.rawScore) {
+        final byRaw = b.record.rawScore.compareTo(a.record.rawScore);
+        if (byRaw != 0) return byRaw;
+      }
+      final byEma = b.record.scoreEma.compareTo(a.record.scoreEma);
+      if (byEma != 0) return byEma;
+      return a.record.industry.compareTo(b.record.industry);
+    });
+    return sorted;
+  }
+
+  String _rankChangeLabel(IndustryBuildupDailyRecord record) {
+    final absValue = record.rankChange.abs();
+    if (absValue == 0) return record.rankArrow;
+    return '${record.rankArrow}$absValue';
+  }
+
+  List<double> _windowedSeries(List<double> source, int days) {
+    if (source.isEmpty) return const [];
+    if (days <= 1) return [source.last];
+    if (source.length <= days) return List<double>.from(source);
+    return source.sublist(source.length - days);
+  }
+
+  int _windowedRankChange(IndustryBuildupBoardItem item, int days) {
+    final window = _windowedSeries(item.rankTrend, days);
+    if (window.length < 2) return 0;
+    return window.first.round() - window.last.round();
+  }
+
+  String _windowedRankArrow(IndustryBuildupBoardItem item, int days) {
+    final change = _windowedRankChange(item, days);
+    if (change > 0) return '↑';
+    if (change < 0) return '↓';
+    return '→';
+  }
+
+  (int, int) _windowedRankRange(IndustryBuildupBoardItem item, int days) {
+    final window = _windowedSeries(item.rankTrend, days);
+    if (window.isEmpty) {
+      final rank = item.record.rank;
+      return (rank, rank);
+    }
+    var low = window.first.round();
+    var high = window.first.round();
+    for (final rank in window) {
+      final value = rank.round();
+      if (value < low) low = value;
+      if (value > high) high = value;
+    }
+    return (low, high);
+  }
+
+  double _trendMetric(IndustryBuildupBoardItem item, int days) {
+    if (days == 1) {
+      return item.record.rawScore;
+    }
+    final emaWindow = _windowedSeries(item.scoreEmaTrend, days);
+    if (emaWindow.isNotEmpty) {
+      return emaWindow.last;
+    }
+    return item.record.scoreEma;
+  }
+
+  List<IndustryBuildupBoardItem> _sortedTrendRows(
+    List<IndustryBuildupBoardItem> rows,
+    int days,
+  ) {
+    final sorted = List<IndustryBuildupBoardItem>.from(rows);
+    sorted.sort((a, b) {
+      final byMetric = _trendMetric(b, days).compareTo(_trendMetric(a, days));
+      if (byMetric != 0) return byMetric;
+      return a.record.industry.compareTo(b.record.industry);
+    });
+    return sorted;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,13 +123,220 @@ class IndustryBuildupList extends StatelessWidget {
       return _EmptyState(service: service);
     }
 
-    final rows = fullHeight ? board : board.take(20).toList();
+    final sortedBoard = _sortRows(board);
+    final rows = widget.fullHeight
+        ? sortedBoard
+        : sortedBoard.take(20).toList();
+
+    if (!widget.showRankingBoard) {
+      return Column(
+        children: [
+          _StatusBar(service: service),
+          if (adaptiveConfig != null && adaptiveConfig.candidates.isNotEmpty)
+            _WeeklyCandidatesBoard(config: adaptiveConfig),
+          Expanded(
+            child: _BuildupOverviewPanel(board: rows, tagConfig: tagConfig),
+          ),
+        ],
+      );
+    }
+
+    if (widget.rankingTrendTableMode) {
+      final trendRows = _sortedTrendRows(
+        board,
+        _trendWindowDays,
+      ).take(10).toList(growable: false);
+      return Column(
+        children: [
+          _TrendDaysBar(
+            selectedDays: _trendWindowDays,
+            onSelected: (days) {
+              setState(() {
+                _trendWindowDays = days;
+              });
+            },
+          ),
+          Container(
+            height: 28,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(
+                context,
+              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            ),
+            child: const Row(
+              children: [
+                SizedBox(
+                  width: 28,
+                  child: Text('排名', style: TextStyle(fontSize: 10)),
+                ),
+                SizedBox(
+                  width: 58,
+                  child: Text('行业', style: TextStyle(fontSize: 10)),
+                ),
+                SizedBox(
+                  width: 72,
+                  child: Text('指标', style: TextStyle(fontSize: 10)),
+                ),
+                SizedBox(
+                  width: 40,
+                  child: Text('变化', style: TextStyle(fontSize: 10)),
+                ),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Text('趋势', style: TextStyle(fontSize: 10)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: trendRows.length,
+              itemExtent: 42,
+              itemBuilder: (context, index) {
+                final item = trendRows[index];
+                final metric = _trendMetric(item, _trendWindowDays);
+                final rankChange = _windowedRankChange(item, _trendWindowDays);
+                final rankArrow = _windowedRankArrow(item, _trendWindowDays);
+                final rankRange = _windowedRankRange(item, _trendWindowDays);
+                final trendSeries = _windowedSeries(
+                  item.scoreEmaTrend,
+                  _trendWindowDays,
+                );
+                final changeText = rankChange == 0
+                    ? rankArrow
+                    : '$rankArrow${rankChange.abs()}';
+                final metricText = _trendWindowDays == 1
+                    ? 'Raw ${metric.toStringAsFixed(2)}'
+                    : 'EMA ${metric.toStringAsFixed(2)}';
+
+                return GestureDetector(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => IndustryDetailScreen(
+                          industry: item.record.industry,
+                        ),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: index.isOdd
+                          ? Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest
+                                .withValues(alpha: 0.25)
+                          : null,
+                    ),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 28,
+                          child: Text(
+                            '${index + 1}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 58,
+                          child: Text(
+                            item.record.industry,
+                            style: const TextStyle(fontSize: 11),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 72,
+                          child: Text(
+                            metricText,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 40,
+                          child: Text(
+                            changeText,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: rankChange > 0
+                                  ? const Color(0xFFD84343)
+                                  : rankChange < 0
+                                  ? const Color(0xFF2E8B57)
+                                  : Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              trendSeries.length >= 2
+                                  ? SparklineChart(
+                                      data: trendSeries,
+                                      width: 64,
+                                      height: 18,
+                                      strokeWidth: 1.2,
+                                    )
+                                  : Text(
+                                      '-',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                              const SizedBox(width: 6),
+                              SizedBox(
+                                width: 54,
+                                child: Text(
+                                  '#${rankRange.$1}-#${rankRange.$2}',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                                  textAlign: TextAlign.right,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      );
+    }
 
     return Column(
       children: [
         _StatusBar(service: service),
         if (adaptiveConfig != null && adaptiveConfig.candidates.isNotEmpty)
           _WeeklyCandidatesBoard(config: adaptiveConfig),
+        _SortModeBar(
+          mode: _sortMode,
+          onChanged: (mode) {
+            setState(() {
+              _sortMode = mode;
+            });
+          },
+        ),
+        if (widget.fullHeight) _TwentyDayTrendPanel(board: sortedBoard),
         Container(
           height: 30,
           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -40,30 +346,37 @@ class IndustryBuildupList extends StatelessWidget {
           child: const Row(
             children: [
               SizedBox(
-                width: 94,
+                width: 86,
                 child: Text(
                   '行业/状态',
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
                 ),
               ),
               SizedBox(
-                width: 44,
+                width: 52,
                 child: Text(
-                  'Z值',
+                  'EMA',
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
                 ),
               ),
               SizedBox(
-                width: 44,
+                width: 52,
                 child: Text(
-                  '广度',
+                  'Raw',
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
                 ),
               ),
               SizedBox(
-                width: 38,
+                width: 110,
                 child: Text(
-                  'Q',
+                  'Z/Q/广',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ),
+              SizedBox(
+                width: 42,
+                child: Text(
+                  '变动',
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -107,7 +420,7 @@ class IndustryBuildupList extends StatelessWidget {
                   child: Row(
                     children: [
                       SizedBox(
-                        width: 94,
+                        width: 86,
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -123,9 +436,9 @@ class IndustryBuildupList extends StatelessWidget {
                         ),
                       ),
                       SizedBox(
-                        width: 44,
+                        width: 52,
                         child: Text(
-                          record.zRel.toStringAsFixed(2),
+                          record.scoreEma.toStringAsFixed(2),
                           style: TextStyle(
                             fontSize: 12,
                             color: interpretation.color,
@@ -134,25 +447,44 @@ class IndustryBuildupList extends StatelessWidget {
                         ),
                       ),
                       SizedBox(
-                        width: 44,
+                        width: 52,
                         child: Text(
-                          '${(record.breadth * 100).toStringAsFixed(0)}%',
+                          record.rawScore.toStringAsFixed(2),
                           style: const TextStyle(fontSize: 12),
                         ),
                       ),
                       SizedBox(
-                        width: 38,
+                        width: 110,
                         child: Text(
-                          record.q.toStringAsFixed(2),
-                          style: const TextStyle(fontSize: 12),
+                          'Z${record.zRel.toStringAsFixed(2)} '
+                          'Q${record.q.toStringAsFixed(2)} '
+                          'B${(record.breadth * 100).toStringAsFixed(0)}%',
+                          style: const TextStyle(fontSize: 10),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 42,
+                        child: Text(
+                          _rankChangeLabel(record),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: record.rankChange > 0
+                                ? const Color(0xFFD84343)
+                                : record.rankChange < 0
+                                ? const Color(0xFF2E8B57)
+                                : Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                       Expanded(
                         child: Align(
                           alignment: Alignment.centerRight,
-                          child: item.zRelTrend.length >= 2
+                          child: item.scoreEmaTrend.length >= 2
                               ? SparklineChart(
-                                  data: item.zRelTrend,
+                                  data: item.scoreEmaTrend,
                                   width: 72,
                                   height: 20,
                                 )
@@ -172,6 +504,335 @@ class IndustryBuildupList extends StatelessWidget {
                 ),
               );
             },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BuildupOverviewPanel extends StatelessWidget {
+  final List<IndustryBuildupBoardItem> board;
+  final IndustryBuildupTagConfig tagConfig;
+
+  const _BuildupOverviewPanel({required this.board, required this.tagConfig});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      children: [
+        Container(
+          height: 32,
+          margin: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.35,
+            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
+          ),
+          child: Row(
+            children: [
+              Text(
+                '建仓雷达概览表',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '共 ${board.length} 个行业',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.25,
+              ),
+              borderRadius: const BorderRadius.vertical(
+                bottom: Radius.circular(10),
+              ),
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                const tableWidth = 528.0;
+                return Scrollbar(
+                  thumbVisibility: true,
+                  child: SingleChildScrollView(
+                    key: const ValueKey('industry_buildup_overview_hscroll'),
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: tableWidth,
+                      height: constraints.maxHeight,
+                      child: Column(
+                        children: [
+                          Container(
+                            height: 30,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surfaceContainerHighest
+                                  .withValues(alpha: 0.55),
+                            ),
+                            child: const Row(
+                              children: [
+                                SizedBox(
+                                  width: 30,
+                                  child: Text(
+                                    '序',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 92,
+                                  child: Text(
+                                    '行业/状态',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 52,
+                                  child: Text(
+                                    'EMA',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 52,
+                                  child: Text(
+                                    'Raw',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 110,
+                                  child: Text(
+                                    'Z/Q/广',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 62,
+                                  child: Text(
+                                    '排名变动',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(
+                                  width: 114,
+                                  child: Align(
+                                    alignment: Alignment.centerRight,
+                                    child: Text(
+                                      '趋势',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: ListView.builder(
+                              itemCount: board.length,
+                              itemExtent: 56,
+                              itemBuilder: (context, index) {
+                                final item = board[index];
+                                final stage = resolveIndustryBuildupStage(
+                                  item.record,
+                                  tagConfig,
+                                );
+                                final record = item.record;
+                                final rankChangeText = record.rankChange == 0
+                                    ? record.rankArrow
+                                    : '${record.rankArrow}${record.rankChange.abs()}';
+                                return GestureDetector(
+                                  onTap: () {
+                                    Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => IndustryDetailScreen(
+                                          industry: record.industry,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: index.isOdd
+                                          ? theme.colorScheme.surface
+                                                .withValues(alpha: 0.2)
+                                          : null,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        SizedBox(
+                                          width: 30,
+                                          child: Text(
+                                            '${index + 1}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color:
+                                                  theme.colorScheme.onSurface,
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 92,
+                                          child: Column(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                record.industry,
+                                                style: const TextStyle(
+                                                  fontSize: 12,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 1,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: _stageColor(
+                                                    stage,
+                                                  ).withValues(alpha: 0.12),
+                                                  borderRadius:
+                                                      BorderRadius.circular(10),
+                                                ),
+                                                child: Text(
+                                                  stage.label,
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    color: _stageColor(stage),
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 52,
+                                          child: Text(
+                                            record.scoreEma.toStringAsFixed(2),
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 52,
+                                          child: Text(
+                                            record.rawScore.toStringAsFixed(2),
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 110,
+                                          child: Text(
+                                            'Z${record.zRel.toStringAsFixed(2)} '
+                                            'Q${record.q.toStringAsFixed(2)} '
+                                            'B${(record.breadth * 100).toStringAsFixed(0)}%',
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 62,
+                                          child: Text(
+                                            '#${record.rank} $rankChangeText',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: record.rankChange > 0
+                                                  ? const Color(0xFFD84343)
+                                                  : record.rankChange < 0
+                                                  ? const Color(0xFF2E8B57)
+                                                  : theme
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ),
+                                        SizedBox(
+                                          width: 114,
+                                          child: Align(
+                                            alignment: Alignment.centerRight,
+                                            child:
+                                                item.scoreEmaTrend.length >= 2
+                                                ? SparklineChart(
+                                                    data: item.scoreEmaTrend,
+                                                    width: 72,
+                                                    height: 20,
+                                                  )
+                                                : Text(
+                                                    '-',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: theme
+                                                          .colorScheme
+                                                          .onSurfaceVariant,
+                                                    ),
+                                                  ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ],
@@ -224,6 +885,261 @@ class _WeeklyCandidatesBoard extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _SortModeBar extends StatelessWidget {
+  final IndustryBuildupSortMode mode;
+  final ValueChanged<IndustryBuildupSortMode> onChanged;
+
+  const _SortModeBar({required this.mode, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          _SortChip(
+            label: '趋势最强',
+            selected: mode == IndustryBuildupSortMode.trendScore,
+            onTap: () => onChanged(IndustryBuildupSortMode.trendScore),
+          ),
+          const SizedBox(width: 6),
+          _SortChip(
+            label: '今日爆点',
+            selected: mode == IndustryBuildupSortMode.rawScore,
+            onTap: () => onChanged(IndustryBuildupSortMode.rawScore),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SortChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _SortChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+        decoration: BoxDecoration(
+          color: selected
+              ? theme.colorScheme.primary
+              : theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: selected
+                ? theme.colorScheme.onPrimary
+                : theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TrendDaysBar extends StatelessWidget {
+  static const List<int> _dayOptions = [1, 5, 10, 20];
+
+  final int selectedDays;
+  final ValueChanged<int> onSelected;
+
+  const _TrendDaysBar({required this.selectedDays, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          const Text(
+            '20日趋势 Top10',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          const Spacer(),
+          for (final days in _dayOptions) ...[
+            _TrendDayChip(
+              label: days == 1 ? '今日' : '$days日',
+              selected: selectedDays == days,
+              onTap: () => onSelected(days),
+            ),
+            if (days != _dayOptions.last) const SizedBox(width: 6),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TrendDayChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _TrendDayChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: selected
+              ? theme.colorScheme.primary
+              : theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: selected
+                ? theme.colorScheme.onPrimary
+                : theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TwentyDayTrendPanel extends StatelessWidget {
+  final List<IndustryBuildupBoardItem> board;
+
+  const _TwentyDayTrendPanel({required this.board});
+
+  @override
+  Widget build(BuildContext context) {
+    if (board.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final topItems = board.take(10).toList(growable: false);
+    final theme = Theme.of(context);
+    return Container(
+      height: 184,
+      margin: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.35,
+        ),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '20日趋势 Top10（按最新 scoreEma）',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: ListView.separated(
+              padding: EdgeInsets.zero,
+              itemCount: topItems.length,
+              itemBuilder: (context, index) {
+                final item = topItems[index];
+                final rankRange = _rankRange(item);
+                return Row(
+                  children: [
+                    SizedBox(
+                      width: 66,
+                      child: Text(
+                        '${index + 1}. ${item.record.industry}',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 72,
+                      child: item.scoreEmaTrend.length >= 2
+                          ? SparklineChart(
+                              data: item.scoreEmaTrend,
+                              width: 70,
+                              height: 18,
+                              strokeWidth: 1.2,
+                            )
+                          : Text(
+                              '-',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'EMA ${item.record.scoreEma.toStringAsFixed(2)}  '
+                        'Rank#${item.record.rank}  '
+                        '20日区间 ${rankRange.$1}-${rankRange.$2}',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                );
+              },
+              separatorBuilder: (_, _) => Divider(
+                height: 6,
+                thickness: 0.4,
+                color: theme.dividerColor.withValues(alpha: 0.45),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  (int, int) _rankRange(IndustryBuildupBoardItem item) {
+    if (item.rankTrend.isEmpty) {
+      final rank = item.record.rank;
+      return (rank, rank);
+    }
+    var low = item.rankTrend.first.round();
+    var high = item.rankTrend.first.round();
+    for (final rank in item.rankTrend) {
+      final value = rank.round();
+      if (value < low) low = value;
+      if (value > high) high = value;
+    }
+    return (low, high);
   }
 }
 
