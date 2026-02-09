@@ -79,6 +79,57 @@ class MarketDatabase {
       await db.execute(DatabaseSchema.createIndustryBuildupDateRankIndex);
       await db.execute(DatabaseSchema.createIndustryBuildupIndustryDateIndex);
     }
+    if (oldVersion < 4) {
+      // Version 3 -> 4: Add score/ema/rank-trend columns to industry table
+      await _addColumnIfMissing(
+        db,
+        table: 'industry_buildup_daily',
+        columnName: 'z_pos',
+        definition: 'z_pos REAL NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(
+        db,
+        table: 'industry_buildup_daily',
+        columnName: 'breadth_gate',
+        definition: 'breadth_gate REAL NOT NULL DEFAULT 0.5',
+      );
+      await _addColumnIfMissing(
+        db,
+        table: 'industry_buildup_daily',
+        columnName: 'raw_score',
+        definition: 'raw_score REAL NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(
+        db,
+        table: 'industry_buildup_daily',
+        columnName: 'score_ema',
+        definition: 'score_ema REAL NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(
+        db,
+        table: 'industry_buildup_daily',
+        columnName: 'rank_change',
+        definition: 'rank_change INTEGER NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(
+        db,
+        table: 'industry_buildup_daily',
+        columnName: 'rank_arrow',
+        definition: "rank_arrow TEXT NOT NULL DEFAULT '→'",
+      );
+    }
+  }
+
+  Future<void> _addColumnIfMissing(
+    Database db, {
+    required String table,
+    required String columnName,
+    required String definition,
+  }) async {
+    final columns = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = columns.any((c) => c['name'] == columnName);
+    if (exists) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $definition');
   }
 
   Future<void> close() async {

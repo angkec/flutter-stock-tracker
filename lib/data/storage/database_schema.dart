@@ -1,7 +1,7 @@
 // lib/data/storage/database_schema.dart
 
 class DatabaseSchema {
-  static const int version = 3;
+  static const int version = 4;
   static const String databaseName = 'market_data.db';
 
   // 股票基本信息表
@@ -84,13 +84,19 @@ class DatabaseSchema {
       date INTEGER NOT NULL,
       industry TEXT NOT NULL,
       z_rel REAL NOT NULL,
+      z_pos REAL NOT NULL DEFAULT 0,
       breadth REAL NOT NULL,
+      breadth_gate REAL NOT NULL DEFAULT 0.5,
       q REAL NOT NULL,
+      raw_score REAL NOT NULL DEFAULT 0,
+      score_ema REAL NOT NULL DEFAULT 0,
       x_i REAL NOT NULL,
       x_m REAL NOT NULL,
       passed_count INTEGER NOT NULL,
       member_count INTEGER NOT NULL,
       rank INTEGER NOT NULL,
+      rank_change INTEGER NOT NULL DEFAULT 0,
+      rank_arrow TEXT NOT NULL DEFAULT '→',
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (date, industry)
     )

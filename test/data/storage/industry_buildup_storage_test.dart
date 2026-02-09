@@ -36,18 +36,28 @@ void main() {
     required String industry,
     required double zRel,
     required int rank,
+    double rawScore = 0.0,
+    double scoreEma = 0.0,
+    int rankChange = 0,
+    String rankArrow = '→',
   }) {
     return IndustryBuildupDailyRecord(
       date: date,
       industry: industry,
       zRel: zRel,
+      zPos: zRel > 0 ? zRel : 0,
       breadth: 0.5,
+      breadthGate: 1.0,
       q: 0.7,
+      rawScore: rawScore,
+      scoreEma: scoreEma,
       xI: 0.1,
       xM: 0.02,
       passedCount: 10,
       memberCount: 20,
       rank: rank,
+      rankChange: rankChange,
+      rankArrow: rankArrow,
       updatedAt: DateTime(2026, 2, 6, 16, 0),
     );
   }
@@ -91,14 +101,41 @@ void main() {
       final storage = IndustryBuildUpStorage();
 
       await storage.upsertDailyResults([
-        record(date: DateTime(2026, 2, 4), industry: '半导体', zRel: 0.4, rank: 3),
-        record(date: DateTime(2026, 2, 5), industry: '半导体', zRel: 0.9, rank: 2),
-        record(date: DateTime(2026, 2, 6), industry: '半导体', zRel: 1.3, rank: 1),
+        record(
+          date: DateTime(2026, 2, 4),
+          industry: '半导体',
+          zRel: 0.4,
+          rawScore: 0.2,
+          scoreEma: 0.2,
+          rank: 3,
+        ),
+        record(
+          date: DateTime(2026, 2, 5),
+          industry: '半导体',
+          zRel: 0.9,
+          rawScore: 0.4,
+          scoreEma: 0.3,
+          rank: 2,
+        ),
+        record(
+          date: DateTime(2026, 2, 6),
+          industry: '半导体',
+          zRel: 1.3,
+          rawScore: 0.6,
+          scoreEma: 0.5,
+          rank: 1,
+        ),
       ]);
 
       final trend = await storage.getIndustryTrend('半导体', days: 2);
+      final rawTrend = await storage.getIndustryRawScoreTrend('半导体', days: 2);
+      final emaTrend = await storage.getIndustryScoreEmaTrend('半导体', days: 2);
+      final rankTrend = await storage.getIndustryRankTrend('半导体', days: 2);
 
       expect(trend, [0.9, 1.3]);
+      expect(rawTrend, [0.4, 0.6]);
+      expect(emaTrend, [0.3, 0.5]);
+      expect(rankTrend, [2.0, 1.0]);
     });
   });
 }

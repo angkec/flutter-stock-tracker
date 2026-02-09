@@ -117,17 +117,48 @@ class IndustryBuildUpStorage {
     String industry, {
     int days = 20,
   }) async {
+    return _getIndustryMetricTrend(industry, column: 'z_rel', days: days);
+  }
+
+  Future<List<double>> getIndustryRawScoreTrend(
+    String industry, {
+    int days = 20,
+  }) async {
+    return _getIndustryMetricTrend(industry, column: 'raw_score', days: days);
+  }
+
+  Future<List<double>> getIndustryScoreEmaTrend(
+    String industry, {
+    int days = 20,
+  }) async {
+    return _getIndustryMetricTrend(industry, column: 'score_ema', days: days);
+  }
+
+  Future<List<double>> getIndustryRankTrend(
+    String industry, {
+    int days = 20,
+  }) async {
+    return _getIndustryMetricTrend(industry, column: 'rank', days: days);
+  }
+
+  Future<List<double>> _getIndustryMetricTrend(
+    String industry, {
+    required String column,
+    required int days,
+  }) async {
     final db = await _database.database;
     final rows = await db.query(
       'industry_buildup_daily',
-      columns: ['z_rel'],
+      columns: [column],
       where: 'industry = ?',
       whereArgs: [industry],
       orderBy: 'date DESC',
       limit: days,
     );
 
-    final trend = rows.map((row) => (row['z_rel'] as num).toDouble()).toList();
+    final trend = rows
+        .map((row) => (row[column] as num?)?.toDouble() ?? 0.0)
+        .toList();
     return trend.reversed.toList();
   }
 

@@ -110,7 +110,7 @@ void main() {
     });
   });
 
-  group('Database schema version 3', () {
+  group('Database schema version 4', () {
     late MarketDatabase database;
 
     setUp(() {
@@ -142,13 +142,19 @@ void main() {
       expect(columnNames, contains('date'));
       expect(columnNames, contains('industry'));
       expect(columnNames, contains('z_rel'));
+      expect(columnNames, contains('z_pos'));
       expect(columnNames, contains('breadth'));
+      expect(columnNames, contains('breadth_gate'));
       expect(columnNames, contains('q'));
+      expect(columnNames, contains('raw_score'));
+      expect(columnNames, contains('score_ema'));
       expect(columnNames, contains('x_i'));
       expect(columnNames, contains('x_m'));
       expect(columnNames, contains('passed_count'));
       expect(columnNames, contains('member_count'));
       expect(columnNames, contains('rank'));
+      expect(columnNames, contains('rank_change'));
+      expect(columnNames, contains('rank_arrow'));
       expect(columnNames, contains('updated_at'));
     });
   });
