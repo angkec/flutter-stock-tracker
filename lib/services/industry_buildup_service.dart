@@ -14,6 +14,7 @@ import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/services/adaptive_topk_calibrator.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/services/industry_score_engine.dart';
 
 class IndustryBuildUpService extends ChangeNotifier {
   static const String _tagConfigStorageKey = 'industry_buildup_tag_config';
@@ -59,6 +60,7 @@ class IndustryBuildUpService extends ChangeNotifier {
   IndustryBuildupTagConfig _tagConfig = IndustryBuildupTagConfig.defaults;
   AdaptiveTopKParams _adaptiveTopKParams = const AdaptiveTopKParams();
   AdaptiveWeeklyConfig? _latestWeeklyAdaptiveConfig;
+  IndustryScoreConfig _scoreConfig = const IndustryScoreConfig();
 
   IndustryBuildUpService({
     required DataRepository repository,
@@ -87,6 +89,7 @@ class IndustryBuildUpService extends ChangeNotifier {
   AdaptiveTopKParams get adaptiveTopKParams => _adaptiveTopKParams;
   AdaptiveWeeklyConfig? get latestWeeklyAdaptiveConfig =>
       _latestWeeklyAdaptiveConfig;
+  IndustryScoreConfig get scoreConfig => _scoreConfig;
   List<IndustryBuildupBoardItem> get latestBoard =>
       List.unmodifiable(_latestBoard);
   bool hasIndustryHistory(String industry) =>
@@ -120,6 +123,16 @@ class IndustryBuildUpService extends ChangeNotifier {
       );
     }
     notifyListeners();
+  }
+
+  Future<void> updateScoreConfig(IndustryScoreConfig config) async {
+    _scoreConfig = config;
+    final currentDate = _latestResultDate;
+    if (currentDate != null) {
+      await recalculate(force: true);
+    } else {
+      notifyListeners();
+    }
   }
 
   Future<void> loadIndustryHistory(
@@ -382,29 +395,13 @@ class IndustryBuildUpService extends ChangeNotifier {
         );
       }
 
-      final finalRecords = <IndustryBuildupDailyRecord>[];
-      for (final entry in recordsByDate.entries) {
-        final dayRecords = entry.value
-          ..sort((a, b) => b.zRel.compareTo(a.zRel));
-        for (var i = 0; i < dayRecords.length; i++) {
-          final base = dayRecords[i];
-          finalRecords.add(
-            IndustryBuildupDailyRecord(
-              date: base.date,
-              industry: base.industry,
-              zRel: base.zRel,
-              breadth: base.breadth,
-              q: base.q,
-              xI: base.xI,
-              xM: base.xM,
-              passedCount: base.passedCount,
-              memberCount: base.memberCount,
-              rank: i + 1,
-              updatedAt: base.updatedAt,
-            ),
-          );
-        }
-      }
+      final baseRecords = recordsByDate.values
+          .expand((dayRecords) => dayRecords)
+          .toList(growable: false);
+      final finalRecords = IndustryScoreEngine.enrichAndRank(
+        baseRecords,
+        config: _scoreConfig,
+      );
 
       final hasLatestTradingDayResult = finalRecords.any(
         (record) => _dateKey(record.date) == latestTradingDateKey,
@@ -582,9 +579,30 @@ class IndustryBuildUpService extends ChangeNotifier {
     final records = await _storage.getBoardForDate(date, limit: 50);
     final boardItems = <IndustryBuildupBoardItem>[];
     for (final record in records) {
-      final trend = await _storage.getIndustryTrend(record.industry, days: 20);
+      final zRelTrend = await _storage.getIndustryTrend(
+        record.industry,
+        days: 20,
+      );
+      final rawScoreTrend = await _storage.getIndustryRawScoreTrend(
+        record.industry,
+        days: 20,
+      );
+      final scoreEmaTrend = await _storage.getIndustryScoreEmaTrend(
+        record.industry,
+        days: 20,
+      );
+      final rankTrend = await _storage.getIndustryRankTrend(
+        record.industry,
+        days: 20,
+      );
       boardItems.add(
-        IndustryBuildupBoardItem(record: record, zRelTrend: trend),
+        IndustryBuildupBoardItem(
+          record: record,
+          zRelTrend: zRelTrend,
+          rawScoreTrend: rawScoreTrend,
+          scoreEmaTrend: scoreEmaTrend,
+          rankTrend: rankTrend,
+        ),
       );
     }
     _latestResultDate = DateTime(date.year, date.month, date.day);
