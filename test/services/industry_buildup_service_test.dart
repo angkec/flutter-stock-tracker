@@ -16,10 +16,110 @@ import 'package:stock_rtwatcher/data/storage/database_schema.dart';
 import 'package:stock_rtwatcher/data/storage/industry_buildup_storage.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
+import 'package:stock_rtwatcher/models/industry_buildup.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
+import 'package:stock_rtwatcher/services/industry_buildup/industry_buildup_computer.dart';
+import 'package:stock_rtwatcher/services/industry_buildup/industry_buildup_loader.dart';
+import 'package:stock_rtwatcher/services/industry_buildup/industry_buildup_pipeline_models.dart';
+import 'package:stock_rtwatcher/services/industry_buildup/industry_buildup_writer.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+
+class _FakeBuildUpLoader extends IndustryBuildUpLoader {
+  bool called = false;
+
+  @override
+  Future<IndustryBuildUpLoadOutcome> load({
+    required DataRepository repository,
+    required IndustryService industryService,
+    required void Function(int current, int total) onTradingDateScanProgress,
+    required void Function(int current, int total) onPreprocessProgress,
+  }) async {
+    called = true;
+    onPreprocessProgress(0, 1);
+    onPreprocessProgress(1, 1);
+
+    final day = DateTime(2026, 2, 6);
+    final dayKey = industryBuildUpDateKey(day);
+    return IndustryBuildUpLoadOutcome.success(
+      IndustryBuildUpLoadResult(
+        industryStocks: {
+          '半导体': ['000001'],
+        },
+        stockCodes: ['000001'],
+        sortedTradingDates: [day],
+        latestTradingDate: day,
+        latestTradingDateKey: dayKey,
+        dateRange: DateRange(day, day),
+        stockFeatures: {
+          '000001': {
+            dayKey: const IndustryBuildUpStockDayFeature(
+              xHat: 0.5,
+              vSum: 240000,
+              aSum: 50000000,
+              maxShare: 0.01,
+              minuteCount: 240,
+              passed: true,
+            ),
+          },
+        },
+      ),
+    );
+  }
+}
+
+class _FakeBuildUpComputer extends IndustryBuildUpComputer {
+  bool called = false;
+
+  @override
+  IndustryBuildUpComputeResult compute({
+    required IndustryBuildUpLoadResult loadResult,
+    required IndustryScoreConfig scoreConfig,
+    required DateTime now,
+    required void Function(int current, int total) onAggregationProgress,
+    required void Function(int current, int total) onScoringProgress,
+  }) {
+    called = true;
+    onAggregationProgress(0, 1);
+    onAggregationProgress(1, 1);
+    onScoringProgress(0, 1);
+    onScoringProgress(1, 1);
+    return IndustryBuildUpComputeResult(
+      finalRecords: [
+        IndustryBuildupDailyRecord(
+          date: loadResult.latestTradingDate,
+          industry: '半导体',
+          zRel: 1.2,
+          breadth: 0.7,
+          q: 0.8,
+          xI: 0.5,
+          xM: 0.3,
+          passedCount: 1,
+          memberCount: 1,
+          rank: 1,
+          updatedAt: now,
+        ),
+      ],
+      hasLatestTradingDayResult: true,
+    );
+  }
+}
+
+class _FakeBuildUpWriter extends IndustryBuildUpWriter {
+  bool called = false;
+  List<IndustryBuildupDailyRecord> writtenRecords = [];
+
+  @override
+  Future<IndustryBuildUpWriteResult> write({
+    required IndustryBuildUpStorage storage,
+    required List<IndustryBuildupDailyRecord> records,
+  }) async {
+    called = true;
+    writtenRecords = records;
+    return IndustryBuildUpWriteResult(writtenCount: records.length);
+  }
+}
 
 class MockBuildUpRepository implements DataRepository {
   final _statusController = StreamController<DataStatus>.broadcast();
@@ -303,6 +403,28 @@ void main() {
       expect(snapshots.any((s) => s.startsWith('行业聚合')), isTrue);
       expect(snapshots.any((s) => s.startsWith('写入结果')), isTrue);
       expect(service.isCalculating, isFalse);
+    });
+
+    test('recalculate uses injected pipeline collaborators', () async {
+      final loader = _FakeBuildUpLoader();
+      final computer = _FakeBuildUpComputer();
+      final writer = _FakeBuildUpWriter();
+
+      service = IndustryBuildUpService(
+        repository: repository,
+        industryService: industryService,
+        storage: storage,
+        loader: loader,
+        computer: computer,
+        writer: writer,
+      );
+
+      await service.recalculate(force: true);
+
+      expect(loader.called, isTrue);
+      expect(computer.called, isTrue);
+      expect(writer.called, isTrue);
+      expect(writer.writtenRecords, isNotEmpty);
     });
 
     test(
