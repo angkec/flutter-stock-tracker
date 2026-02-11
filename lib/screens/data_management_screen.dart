@@ -23,6 +23,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   static const double _minTradingDateCoverageRatio = 0.3;
   static const int _minCompleteMinuteBars = 220;
   static const int _latestTradingDayProbeDays = 20;
+  static const int _baselineFallbackFullCheckStockLimit = 500;
+  static const int _baselineFallbackSampleSize = 60;
 
   void _triggerRefresh() {
     setState(() {
@@ -302,11 +304,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     try {
       final allStockCodes = provider.allData.map((d) => d.stock.code).toList();
 
-      // 只抽样检查前 20 只股票，避免检查全部导致卡顿
-      const sampleSize = 20;
-      final sampleCodes = allStockCodes.length > sampleSize
-          ? allStockCodes.sublist(0, sampleSize)
-          : allStockCodes;
+      // 交易日基线不足时优先全量核验（中小规模），避免“前序样本完整但整体缺失”的误报。
+      final sampleCodes = _buildBaselineFallbackCheckCodes(allStockCodes);
 
       final dateRange = DateRange(
         DateTime.now().subtract(const Duration(days: 30)),
@@ -553,9 +552,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       if (fetchResult.totalRecords == 0) {
         final tradingDays = await repository.getTradingDates(dateRange);
         if (!_hasReliableTradingDateCoverage(tradingDays, dateRange)) {
-          final sampleCodes = stockCodes.length > 20
-              ? stockCodes.sublist(0, 20)
-              : stockCodes;
+          final sampleCodes = _buildBaselineFallbackCheckCodes(stockCodes);
           final lastTradingStatus = await _evaluateLatestTradingDayStatus(
             repository: repository,
             stockCodes: sampleCodes,
@@ -693,6 +690,37 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
   DateTime _normalizeDate(DateTime dateTime) {
     return DateTime(dateTime.year, dateTime.month, dateTime.day);
+  }
+
+  List<String> _buildBaselineFallbackCheckCodes(List<String> allStockCodes) {
+    if (allStockCodes.length <= _baselineFallbackFullCheckStockLimit) {
+      return allStockCodes;
+    }
+    return _buildUniformSample(allStockCodes, _baselineFallbackSampleSize);
+  }
+
+  List<String> _buildUniformSample(List<String> source, int sampleSize) {
+    if (source.length <= sampleSize) return source;
+    if (sampleSize <= 0) return const <String>[];
+    if (sampleSize == 1) return <String>[source.first];
+
+    final sampled = <String>[];
+    final usedIndexes = <int>{};
+    for (var i = 0; i < sampleSize; i++) {
+      final index = ((i * (source.length - 1)) / (sampleSize - 1)).round();
+      if (usedIndexes.add(index)) {
+        sampled.add(source[index]);
+      }
+    }
+
+    if (sampled.length < sampleSize) {
+      for (var i = 0; i < source.length && sampled.length < sampleSize; i++) {
+        if (usedIndexes.add(i)) {
+          sampled.add(source[i]);
+        }
+      }
+    }
+    return sampled;
   }
 
   Future<

@@ -161,6 +161,17 @@ List<KLine> _buildBarsForDate(DateTime day, int count) {
   });
 }
 
+List<StockMonitorData> _buildStocks(int count) {
+  return List.generate(count, (index) {
+    final code = (600000 + index).toString();
+    return StockMonitorData(
+      stock: Stock(code: code, name: '股票$code', market: 1),
+      ratio: 1.0,
+      changePercent: 0.0,
+    );
+  });
+}
+
 void main() {
   Future<void> pumpDataManagement(
     WidgetTester tester, {
@@ -250,6 +261,38 @@ void main() {
 
     expect(find.textContaining('最后交易日'), findsOneWidget);
     expect(find.textContaining('不完整'), findsOneWidget);
+    expect(find.text('拉取缺失'), findsOneWidget);
+
+    provider.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('交易日覆盖率不足时抽样需覆盖全量避免误报完整', (tester) async {
+    final repository = _FakeDataRepository();
+    final provider = _FakeMarketDataProvider(data: _buildStocks(40));
+
+    final today = DateTime.now();
+    final lastTradingDay = DateTime(
+      today.year,
+      today.month,
+      today.day,
+    ).subtract(const Duration(days: 1));
+
+    repository.tradingDates = <DateTime>[];
+    repository.klinesByStock = {
+      for (var i = 0; i < 20; i++)
+        (600000 + i).toString(): _buildBarsForDate(lastTradingDay, 220),
+    };
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+    );
+
+    expect(find.textContaining('交易日基线不足'), findsOneWidget);
+    expect(find.textContaining('数据完整'), findsNothing);
+    expect(find.textContaining('缺失20只'), findsOneWidget);
     expect(find.text('拉取缺失'), findsOneWidget);
 
     provider.dispose();
