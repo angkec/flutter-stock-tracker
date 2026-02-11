@@ -193,7 +193,6 @@ class IndustryBuildUpService extends ChangeNotifier {
       }
       final loadResult = loadOutcome.result!;
       final latestTradingDate = loadResult.latestTradingDate;
-      final latestTradingDateKey = loadResult.latestTradingDateKey;
 
       _setProgress('准备数据', 1, 1);
       final now = DateTime.now();
@@ -401,8 +400,6 @@ class IndustryBuildUpService extends ChangeNotifier {
     _industryHistoryLoaded.clear();
     _industryHistoryLoading.clear();
   }
-
-  int _dateKey(DateTime date) => industryBuildUpDateKey(date);
 
   String _formatDate(DateTime date) {
     return '${date.year.toString().padLeft(4, '0')}-'
