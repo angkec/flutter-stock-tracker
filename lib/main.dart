@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
+import 'package:stock_rtwatcher/config/minute_sync_config.dart';
 import 'package:stock_rtwatcher/screens/main_screen.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
@@ -21,6 +22,7 @@ import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
+import 'package:stock_rtwatcher/data/repository/tdx_pool_fetch_adapter.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,7 +49,7 @@ class MyApp extends StatelessWidget {
             return service;
           },
         ),
-        Provider(create: (_) => TdxPool(poolSize: 5)),
+        Provider(create: (_) => TdxPool(poolSize: 12)),
         ProxyProvider<TdxPool, StockService>(
           update: (_, pool, __) => StockService(pool),
         ),
@@ -102,7 +104,20 @@ class MyApp extends StatelessWidget {
         ),
         // DataRepository must be created before HistoricalKlineService
         Provider<DataRepository>(
-          create: (_) => MarketDataRepository(),
+          create: (context) {
+            final pool = context.read<TdxPool>();
+            return MarketDataRepository(
+              minuteFetchAdapter: TdxPoolFetchAdapter(pool: pool),
+              minuteSyncConfig: const MinuteSyncConfig(
+                enablePoolMinutePipeline: true,
+                enableMinutePipelineLogs: false,
+                minutePipelineFallbackToLegacyOnError: true,
+                poolBatchCount: 800,
+                poolMaxBatches: 10,
+                minuteWriteConcurrency: 6,
+              ),
+            );
+          },
           dispose: (_, repo) => repo.dispose(),
         ),
         ChangeNotifierProxyProvider2<

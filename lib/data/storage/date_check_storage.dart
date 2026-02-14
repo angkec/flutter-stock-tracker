@@ -8,7 +8,7 @@ class DateCheckStorage {
   final MarketDatabase _database;
 
   DateCheckStorage({MarketDatabase? database})
-      : _database = database ?? MarketDatabase();
+    : _database = database ?? MarketDatabase();
 
   /// 保存检测状态
   Future<void> saveCheckStatus({
@@ -21,18 +21,14 @@ class DateCheckStorage {
     final db = await _database.database;
     final dateOnly = DateTime(date.year, date.month, date.day);
 
-    await db.insert(
-      'date_check_status',
-      {
-        'stock_code': stockCode,
-        'data_type': dataType.name,
-        'date': dateOnly.millisecondsSinceEpoch,
-        'status': status.name,
-        'bar_count': barCount,
-        'checked_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await db.insert('date_check_status', {
+      'stock_code': stockCode,
+      'data_type': dataType.name,
+      'date': dateOnly.millisecondsSinceEpoch,
+      'status': status.name,
+      'bar_count': barCount,
+      'checked_at': DateTime.now().millisecondsSinceEpoch,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// 查询多个日期的检测状态
@@ -94,11 +90,7 @@ class DateCheckStorage {
 
     if (excludeToday) {
       final baseDate = today ?? DateTime.now();
-      final todayStart = DateTime(
-        baseDate.year,
-        baseDate.month,
-        baseDate.day,
-      );
+      final todayStart = DateTime(baseDate.year, baseDate.month, baseDate.day);
       query += ' AND date < ?';
       args.add(todayStart.millisecondsSinceEpoch);
     }
@@ -111,6 +103,100 @@ class DateCheckStorage {
       final dateMs = row['date'] as int;
       return DateTime.fromMillisecondsSinceEpoch(dateMs);
     }).toList();
+  }
+
+  /// 批量获取多只股票的未完成日期（missing / incomplete）
+  Future<Map<String, List<DateTime>>> getPendingDatesBatch({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+    DateTime? fromDate,
+    DateTime? toDate,
+    bool excludeToday = false,
+    DateTime? today,
+  }) async {
+    if (stockCodes.isEmpty) return {};
+
+    final db = await _database.database;
+    final normalizedFrom = fromDate == null
+        ? null
+        : DateTime(fromDate.year, fromDate.month, fromDate.day);
+    final normalizedTo = toDate == null
+        ? null
+        : DateTime(toDate.year, toDate.month, toDate.day);
+    final todayStart = excludeToday
+        ? DateTime(
+            (today ?? DateTime.now()).year,
+            (today ?? DateTime.now()).month,
+            (today ?? DateTime.now()).day,
+          )
+        : null;
+
+    final pendingByStock = <String, List<DateTime>>{
+      for (final code in stockCodes) code: <DateTime>[],
+    };
+
+    const maxSqlVariables = 900;
+    const reservedVariables = 4;
+    const maxCodesPerQuery = maxSqlVariables - reservedVariables;
+
+    var offset = 0;
+    while (offset < stockCodes.length) {
+      final end = offset + maxCodesPerQuery < stockCodes.length
+          ? offset + maxCodesPerQuery
+          : stockCodes.length;
+      final chunkCodes = stockCodes.sublist(offset, end);
+      final placeholders = List.filled(chunkCodes.length, '?').join(',');
+
+      final buffer = StringBuffer()
+        ..write('SELECT stock_code, date FROM date_check_status ')
+        ..write(
+          "WHERE data_type = ? AND status IN ('missing', 'incomplete') "
+          'AND stock_code IN ($placeholders)',
+        );
+
+      final args = <dynamic>[dataType.name, ...chunkCodes];
+
+      if (normalizedFrom != null) {
+        buffer.write(' AND date >= ?');
+        args.add(normalizedFrom.millisecondsSinceEpoch);
+      }
+
+      if (normalizedTo != null) {
+        final inclusiveDayEnd = DateTime(
+          normalizedTo.year,
+          normalizedTo.month,
+          normalizedTo.day,
+          23,
+          59,
+          59,
+          999,
+          999,
+        );
+        buffer.write(' AND date <= ?');
+        args.add(inclusiveDayEnd.millisecondsSinceEpoch);
+      }
+
+      if (todayStart != null) {
+        buffer.write(' AND date < ?');
+        args.add(todayStart.millisecondsSinceEpoch);
+      }
+
+      buffer.write(' ORDER BY stock_code, date');
+
+      final rows = await db.rawQuery(buffer.toString(), args);
+      for (final row in rows) {
+        final stockCode = row['stock_code'] as String;
+        final dateMs = row['date'] as int;
+        pendingByStock[stockCode] ??= <DateTime>[];
+        pendingByStock[stockCode]!.add(
+          DateTime.fromMillisecondsSinceEpoch(dateMs),
+        );
+      }
+
+      offset = end;
+    }
+
+    return pendingByStock;
   }
 
   /// 获取最新的已检测完成日期

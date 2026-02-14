@@ -135,6 +135,54 @@ void main() {
       expect(pendingWithoutToday, isNot(contains(todayOnly)));
     });
 
+    test('getPendingDatesBatch filters by range and excludes today', () async {
+      final jan14 = DateTime(2026, 1, 14);
+      final jan15 = DateTime(2026, 1, 15);
+      final jan16 = DateTime(2026, 1, 16);
+      final today = DateTime(2026, 1, 17);
+
+      await storage.saveCheckStatus(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        date: jan14,
+        status: DayDataStatus.missing,
+        barCount: 0,
+      );
+      await storage.saveCheckStatus(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        date: jan15,
+        status: DayDataStatus.incomplete,
+        barCount: 120,
+      );
+      await storage.saveCheckStatus(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        date: jan16,
+        status: DayDataStatus.complete,
+        barCount: 240,
+      );
+      await storage.saveCheckStatus(
+        stockCode: '000002',
+        dataType: KLineDataType.oneMinute,
+        date: today,
+        status: DayDataStatus.incomplete,
+        barCount: 60,
+      );
+
+      final pending = await storage.getPendingDatesBatch(
+        stockCodes: const ['000001', '000002'],
+        dataType: KLineDataType.oneMinute,
+        fromDate: jan15,
+        toDate: jan16,
+        excludeToday: true,
+        today: today,
+      );
+
+      expect(pending['000001'], [jan15]);
+      expect(pending['000002'], isEmpty);
+    });
+
     test('getLatestCheckedDate returns most recent complete date', () async {
       final jan15 = DateTime(2026, 1, 15);
       final jan16 = DateTime(2026, 1, 16);

@@ -53,6 +53,7 @@ class MarketDatabase {
     await db.execute(DatabaseSchema.createDataVersionsTable);
     await db.execute(DatabaseSchema.createDateCheckStatusTable); // 新增
     await db.execute(DatabaseSchema.createIndustryBuildupDailyTable);
+    await db.execute(DatabaseSchema.createMinuteSyncStateTable);
 
     // 创建索引
     await db.execute(DatabaseSchema.createKlineFilesStockIndex);
@@ -60,6 +61,7 @@ class MarketDatabase {
     await db.execute(DatabaseSchema.createDateCheckStatusIndex); // 新增
     await db.execute(DatabaseSchema.createIndustryBuildupDateRankIndex);
     await db.execute(DatabaseSchema.createIndustryBuildupIndustryDateIndex);
+    await db.execute(DatabaseSchema.createMinuteSyncStateUpdatedAtIndex);
 
     // 插入初始版本
     await db.rawInsert(DatabaseSchema.insertInitialVersion, [
@@ -117,6 +119,10 @@ class MarketDatabase {
         columnName: 'rank_arrow',
         definition: "rank_arrow TEXT NOT NULL DEFAULT '→'",
       );
+    }
+    if (oldVersion < 5) {
+      await db.execute(DatabaseSchema.createMinuteSyncStateTable);
+      await db.execute(DatabaseSchema.createMinuteSyncStateUpdatedAtIndex);
     }
   }
 

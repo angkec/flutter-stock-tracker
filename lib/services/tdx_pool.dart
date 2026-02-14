@@ -1,11 +1,15 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 
 /// TDX 连接池，支持并行请求
 class TdxPool {
+  static const int _slowRequestLogThresholdMs = 1500;
+
   final List<TdxClient> _clients = [];
   final int _poolSize;
   bool _isConnected = false;
@@ -143,36 +147,40 @@ class TdxPool {
     final results = List<List<KLine>>.filled(stocks.length, []);
     var completed = 0;
 
-    // 创建所有任务
-    final futures = <Future<void>>[];
-
-    for (var i = 0; i < stocks.length; i++) {
-      final stockIndex = i;
-      final client = _clients[i % _clients.length];
-      final stock = stocks[i];
-
-      futures.add(
-        client
-            .getSecurityBars(
-              market: stock.market,
-              code: stock.code,
-              category: category,
-              start: start,
-              count: count,
-            )
-            .then((bars) {
+    await _runDynamicWorkerQueue(
+      workerCount: _clients.length,
+      totalTasks: stocks.length,
+      runTask: (workerIndex, stockIndex) async {
+        final client = _clients[workerIndex];
+        final stock = stocks[stockIndex];
+        final requestStopwatch = Stopwatch()..start();
+        try {
+          final bars = await client.getSecurityBars(
+            market: stock.market,
+            code: stock.code,
+            category: category,
+            start: start,
+            count: count,
+          );
           results[stockIndex] = bars;
-          completed++;
-          onProgress?.call(completed, stocks.length);
-        }).catchError((_) {
+        } catch (_) {
           results[stockIndex] = [];
-          completed++;
-          onProgress?.call(completed, stocks.length);
-        }),
-      );
-    }
+        } finally {
+          requestStopwatch.stop();
+          if (requestStopwatch.elapsedMilliseconds >=
+              _slowRequestLogThresholdMs) {
+            debugPrint(
+              '[TdxPool][slow] worker=$workerIndex code=${stock.code} '
+              'category=$category start=$start count=$count '
+              'elapsedMs=${requestStopwatch.elapsedMilliseconds}',
+            );
+          }
+        }
+        completed++;
+        onProgress?.call(completed, stocks.length);
+      },
+    );
 
-    await Future.wait(futures);
     return results;
   }
 
@@ -187,30 +195,78 @@ class TdxPool {
   }) async {
     if (_clients.isEmpty) throw StateError('Not connected');
 
-    final futures = <Future<void>>[];
-
-    for (var i = 0; i < stocks.length; i++) {
-      final stockIndex = i;
-      final client = _clients[i % _clients.length];
-      final stock = stocks[i];
-
-      futures.add(
-        client
-            .getSecurityBars(
-              market: stock.market,
-              code: stock.code,
-              category: category,
-              start: start,
-              count: count,
-            )
-            .then((bars) {
+    await _runDynamicWorkerQueue(
+      workerCount: _clients.length,
+      totalTasks: stocks.length,
+      runTask: (workerIndex, stockIndex) async {
+        final client = _clients[workerIndex];
+        final stock = stocks[stockIndex];
+        final requestStopwatch = Stopwatch()..start();
+        try {
+          final bars = await client.getSecurityBars(
+            market: stock.market,
+            code: stock.code,
+            category: category,
+            start: start,
+            count: count,
+          );
           onStockBars(stockIndex, bars);
-        }).catchError((_) {
+        } catch (_) {
           onStockBars(stockIndex, []);
-        }),
-      );
+        } finally {
+          requestStopwatch.stop();
+          if (requestStopwatch.elapsedMilliseconds >=
+              _slowRequestLogThresholdMs) {
+            debugPrint(
+              '[TdxPool][slow] worker=$workerIndex code=${stock.code} '
+              'category=$category start=$start count=$count '
+              'elapsedMs=${requestStopwatch.elapsedMilliseconds}',
+            );
+          }
+        }
+      },
+    );
+  }
+
+  static Future<void> _runDynamicWorkerQueue({
+    required int workerCount,
+    required int totalTasks,
+    required Future<void> Function(int workerIndex, int taskIndex) runTask,
+  }) async {
+    if (workerCount <= 0 || totalTasks <= 0) {
+      return;
     }
 
-    await Future.wait(futures);
+    var nextTaskIndex = 0;
+    final actualWorkers = workerCount < totalTasks ? workerCount : totalTasks;
+
+    final workers = List<Future<void>>.generate(actualWorkers, (workerIndex) {
+      return Future<void>(() async {
+        while (true) {
+          if (nextTaskIndex >= totalTasks) {
+            return;
+          }
+
+          final taskIndex = nextTaskIndex;
+          nextTaskIndex++;
+          await runTask(workerIndex, taskIndex);
+        }
+      });
+    });
+
+    await Future.wait(workers);
+  }
+
+  @visibleForTesting
+  static Future<void> runDynamicWorkerQueueForTesting({
+    required int workerCount,
+    required int totalTasks,
+    required Future<void> Function(int workerIndex, int taskIndex) runTask,
+  }) {
+    return _runDynamicWorkerQueue(
+      workerCount: workerCount,
+      totalTasks: totalTasks,
+      runTask: runTask,
+    );
   }
 }

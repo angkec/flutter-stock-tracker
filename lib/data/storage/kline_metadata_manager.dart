@@ -1,6 +1,7 @@
 // lib/data/storage/kline_metadata_manager.dart
 
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
@@ -95,6 +96,7 @@ class KLineMetadataManager {
     required String stockCode,
     required List<KLine> newBars,
     required KLineDataType dataType,
+    bool bumpVersion = true,
   }) async {
     if (newBars.isEmpty) return;
 
@@ -109,7 +111,7 @@ class KLineMetadataManager {
     }
 
     // Save to files (this will handle deduplication)
-    final monthsUpdated = <String>{};
+    final appendResultsByMonth = <String, KLineAppendResult>{};
     for (final entry in barsByMonth.entries) {
       final yearMonth = entry.key;
       final klines = entry.value;
@@ -118,7 +120,7 @@ class KLineMetadataManager {
       final month = int.parse(yearMonth.substring(4, 6));
 
       try {
-        await _fileStorage.appendKlineData(
+        final appendResult = await _fileStorage.appendKlineData(
           stockCode,
           dataType,
           year,
@@ -126,14 +128,18 @@ class KLineMetadataManager {
           klines,
         );
 
-        monthsUpdated.add(yearMonth);
-      } catch (e) {
-        print('Failed to append K-line data for $stockCode $yearMonth: $e');
+        if (appendResult != null) {
+          appendResultsByMonth[yearMonth] = appendResult;
+        }
+      } catch (error) {
+        debugPrint(
+          'Failed to append K-line data for $stockCode $yearMonth: $error',
+        );
         // Continue with other months
       }
     }
 
-    // Prepare metadata before transaction (avoid I/O inside transaction)
+    // Prepare metadata from append results (avoid repeated file reload)
     final metadataMap =
         <
           String,
@@ -145,45 +151,28 @@ class KLineMetadataManager {
             String filePath,
           })
         >{};
-    for (final yearMonth in monthsUpdated) {
-      final year = int.parse(yearMonth.substring(0, 4));
-      final month = int.parse(yearMonth.substring(4, 6));
 
-      final monthBars = await _fileStorage.loadMonthlyKlineFile(
-        stockCode,
-        dataType,
-        year,
-        month,
-      );
+    for (final entry in appendResultsByMonth.entries) {
+      final yearMonth = entry.key;
+      final appendResult = entry.value;
 
-      if (monthBars.isEmpty) continue;
-
-      monthBars.sort((a, b) => a.datetime.compareTo(b.datetime));
-      final startDate = monthBars.first.datetime;
-      final endDate = monthBars.last.datetime;
-
-      try {
-        final filePath = await _fileStorage.getFilePathAsync(
-          stockCode,
-          dataType,
-          year,
-          month,
-        );
-        final file = File(filePath);
-        final fileSize = await file.length();
-
-        metadataMap[yearMonth] = (
-          startDate: startDate,
-          endDate: endDate,
-          recordCount: monthBars.length,
-          fileSize: fileSize,
-          filePath: filePath,
-        );
-      } catch (e) {
-        print('Failed to get file size for $stockCode $yearMonth: $e');
-        // Skip this month's metadata update
+      if (!appendResult.changed ||
+          appendResult.startDate == null ||
+          appendResult.endDate == null) {
         continue;
       }
+
+      metadataMap[yearMonth] = (
+        startDate: appendResult.startDate!,
+        endDate: appendResult.endDate!,
+        recordCount: appendResult.recordCount,
+        fileSize: appendResult.fileSize,
+        filePath: appendResult.filePath,
+      );
+    }
+
+    if (metadataMap.isEmpty) {
+      return;
     }
 
     // Update metadata in transaction
@@ -209,25 +198,31 @@ class KLineMetadataManager {
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
-      // Increment data version within the transaction
-      final currentVersionRows = await txn.query(
-        'data_versions',
-        columns: ['version'],
-        orderBy: 'id DESC',
-        limit: 1,
-      );
+      if (bumpVersion) {
+        // Increment data version within the transaction
+        final currentVersionRows = await txn.query(
+          'data_versions',
+          columns: ['version'],
+          orderBy: 'id DESC',
+          limit: 1,
+        );
 
-      final currentVersion = currentVersionRows.isEmpty
-          ? 1
-          : (currentVersionRows.first['version'] as int);
-      final newVersion = currentVersion + 1;
+        final currentVersion = currentVersionRows.isEmpty
+            ? 1
+            : (currentVersionRows.first['version'] as int);
+        final newVersion = currentVersion + 1;
 
-      await txn.insert('data_versions', {
-        'version': newVersion,
-        'description': 'Updated K-line data for $stockCode',
-        'created_at': now,
-      });
+        await txn.insert('data_versions', {
+          'version': newVersion,
+          'description': 'Updated K-line data for $stockCode',
+          'created_at': now,
+        });
+      }
     });
+  }
+
+  Future<int> incrementDataVersion(String description) async {
+    return await _db.incrementVersion(description);
   }
 
   /// Get all metadata for a stock and data type
@@ -394,7 +389,7 @@ class KLineMetadataManager {
         }
       } catch (e) {
         // Log but don't fail - orphaned files acceptable
-        print('Warning: Failed to delete file $filePath: $e');
+        debugPrint('Warning: Failed to delete file $filePath: $e');
       }
     }
   }

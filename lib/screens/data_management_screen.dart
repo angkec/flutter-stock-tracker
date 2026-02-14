@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:stock_rtwatcher/config/debug_config.dart';
+import 'package:stock_rtwatcher/data/models/data_status.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
@@ -521,6 +524,9 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     await WakelockPlus.enable();
 
     String? completionMessage;
+    String? baselineVerificationWarning;
+    var hasVerifiedNoMissingAfterFetch = false;
+    StreamSubscription<DataStatus>? statusSubscription;
     try {
       var stocks = marketProvider.allData.map((d) => d.stock).toList();
 
@@ -533,16 +539,42 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         DateTime.now(),
       );
 
+      statusSubscription = repository.statusStream.listen((status) {
+        if (status is! DataFetching) {
+          return;
+        }
+
+        final safeTotal = status.total <= 0 ? 1 : status.total;
+        final safeCurrent = status.current.clamp(0, safeTotal);
+
+        if (status.currentStock == '__WRITE__') {
+          progressNotifier.value = (
+            current: safeCurrent,
+            total: safeTotal,
+            stage: '2/4 写入K线数据',
+          );
+          return;
+        }
+
+        progressNotifier.value = (
+          current: safeCurrent,
+          total: safeTotal,
+          stage: '1/4 拉取K线数据',
+        );
+      });
+
       debugPrint('[DataManagement] 开始拉取历史数据, ${stockCodes.length} 只股票');
       final fetchResult = await repository.fetchMissingData(
         stockCodes: stockCodes,
         dateRange: dateRange,
         dataType: KLineDataType.oneMinute,
         onProgress: (current, total) {
+          final safeTotal = total <= 0 ? 1 : total;
+          final safeCurrent = current.clamp(0, safeTotal);
           progressNotifier.value = (
-            current: current,
-            total: total,
-            stage: '1/3 拉取K线数据',
+            current: safeCurrent,
+            total: safeTotal,
+            stage: '1/4 拉取K线数据',
           );
         },
       );
@@ -560,40 +592,45 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           final lastTradingDate = lastTradingStatus.lastTradingDate;
 
           if (lastTradingDate == null) {
-            throw Exception('交易日基线不足，且未找到可验证的最近分钟K交易日');
+            baselineVerificationWarning = '交易日基线不足，最近分钟K交易日暂不可验证，建议交易日复检';
+            debugPrint('[DataManagement] $baselineVerificationWarning');
           }
 
-          final issueCount =
-              lastTradingStatus.missingStocks +
-              lastTradingStatus.incompleteStocks;
-          if (issueCount > 0) {
-            final issueParts = <String>[];
-            if (lastTradingStatus.missingStocks > 0) {
-              issueParts.add('缺失${lastTradingStatus.missingStocks}只');
+          if (lastTradingDate != null) {
+            final issueCount =
+                lastTradingStatus.missingStocks +
+                lastTradingStatus.incompleteStocks;
+            if (issueCount > 0) {
+              final issueParts = <String>[];
+              if (lastTradingStatus.missingStocks > 0) {
+                issueParts.add('缺失${lastTradingStatus.missingStocks}只');
+              }
+              if (lastTradingStatus.incompleteStocks > 0) {
+                issueParts.add('不完整${lastTradingStatus.incompleteStocks}只');
+              }
+              throw Exception(
+                '交易日基线不足，最近交易日(${_formatDate(lastTradingDate)})仍有问题：${issueParts.join('，')}',
+              );
             }
-            if (lastTradingStatus.incompleteStocks > 0) {
-              issueParts.add('不完整${lastTradingStatus.incompleteStocks}只');
-            }
-            throw Exception(
-              '交易日基线不足，最近交易日(${_formatDate(lastTradingDate)})仍有问题：${issueParts.join('，')}',
-            );
           }
         }
 
         progressNotifier.value = (
           current: 0,
           total: stockCodes.length,
-          stage: '1/3 复检缺失状态',
+          stage: '2/4 复检缺失状态',
         );
 
         final verifyResults = await repository.findMissingMinuteDatesBatch(
           stockCodes: stockCodes,
           dateRange: dateRange,
           onProgress: (current, total) {
+            final safeTotal = total <= 0 ? 1 : total;
+            final safeCurrent = current.clamp(0, safeTotal);
             progressNotifier.value = (
-              current: current,
-              total: total,
-              stage: '1/3 复检缺失状态',
+              current: safeCurrent,
+              total: safeTotal,
+              stage: '2/4 复检缺失状态',
             );
           },
         );
@@ -606,6 +643,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         if (stillMissingStocks > 0) {
           throw Exception('拉取后仍有 $stillMissingStocks 只股票分钟K线缺失');
         }
+
+        hasVerifiedNoMissingAfterFetch = true;
       }
 
       if (fetchResult.failureCount > 0) {
@@ -614,6 +653,10 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       } else {
         completionMessage = '历史数据已更新';
       }
+      if (baselineVerificationWarning != null &&
+          !hasVerifiedNoMissingAfterFetch) {
+        completionMessage = '$completionMessage；$baselineVerificationWarning';
+      }
 
       // Get current data version for cache validation
       final dataVersion = await repository.getCurrentVersion();
@@ -621,7 +664,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       // 计算行业趋势和排名（数据来自 DataRepository）
       if (context.mounted) {
         debugPrint('[DataManagement] 开始计算行业趋势');
-        progressNotifier.value = (current: 0, total: 1, stage: '2/3 计算行业趋势...');
+        progressNotifier.value = (current: 0, total: 1, stage: '3/4 计算行业趋势...');
         await trendService.recalculateFromKlineData(
           klineService,
           marketProvider.allData,
@@ -630,7 +673,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         debugPrint('[DataManagement] 行业趋势计算完成');
 
         debugPrint('[DataManagement] 开始计算行业排名');
-        progressNotifier.value = (current: 0, total: 1, stage: '3/3 计算行业排名...');
+        progressNotifier.value = (current: 0, total: 1, stage: '4/4 计算行业排名...');
         await rankService.recalculateFromKlineData(
           klineService,
           marketProvider.allData,
@@ -643,6 +686,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       debugPrint('$stackTrace');
       completionMessage = '历史数据拉取失败: $e';
     } finally {
+      await statusSubscription?.cancel();
+
       // 恢复锁屏
       await WakelockPlus.disable();
 

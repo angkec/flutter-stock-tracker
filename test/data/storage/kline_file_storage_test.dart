@@ -65,10 +65,21 @@ void main() {
       ];
 
       // Save
-      await storage.saveMonthlyKlineFile(stockCode, dataType, year, month, klines);
+      await storage.saveMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+        klines,
+      );
 
       // Load
-      final loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      final loaded = await storage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
 
       // Verify
       expect(loaded.length, equals(2));
@@ -84,7 +95,12 @@ void main() {
       const year = 2025;
       const month = 1;
 
-      final loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      final loaded = await storage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
 
       expect(loaded, isEmpty);
     });
@@ -99,7 +115,12 @@ void main() {
       await storage.saveMonthlyKlineFile(stockCode, dataType, year, month, []);
 
       // Try to load
-      final loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      final loaded = await storage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
       expect(loaded, isEmpty);
     });
 
@@ -131,12 +152,24 @@ void main() {
         ),
       ];
 
-      await storage.saveMonthlyKlineFile(stockCode, dataType, year, month, initialKlines);
+      await storage.saveMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+        initialKlines,
+      );
 
       // New data with overlap
       final newKlines = [
         KLine(
-          datetime: DateTime(2025, 1, 2, 10, 0), // Duplicate, should be replaced
+          datetime: DateTime(
+            2025,
+            1,
+            2,
+            10,
+            0,
+          ), // Duplicate, should be replaced
           open: 101.0,
           close: 103.5, // Different close
           high: 104.5,
@@ -155,10 +188,21 @@ void main() {
         ),
       ];
 
-      await storage.appendKlineData(stockCode, dataType, year, month, newKlines);
+      await storage.appendKlineData(
+        stockCode,
+        dataType,
+        year,
+        month,
+        newKlines,
+      );
 
       // Load and verify
-      final loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      final loaded = await storage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
 
       expect(loaded.length, equals(3));
       expect(loaded[0].datetime, equals(DateTime(2025, 1, 1, 10, 0)));
@@ -166,6 +210,141 @@ void main() {
       expect(loaded[1].close, equals(103.5)); // Updated value
       expect(loaded[2].datetime, equals(DateTime(2025, 1, 3, 10, 0)));
     });
+
+    test('should skip rewrite when append data is identical', () async {
+      const stockCode = 'SH600000';
+      const dataType = KLineDataType.daily;
+      const year = 2025;
+      const month = 1;
+
+      final initialKlines = [
+        KLine(
+          datetime: DateTime(2025, 1, 1, 10, 0),
+          open: 100.0,
+          close: 101.0,
+          high: 102.0,
+          low: 99.0,
+          volume: 1000.0,
+          amount: 100000.0,
+        ),
+        KLine(
+          datetime: DateTime(2025, 1, 2, 10, 0),
+          open: 101.0,
+          close: 103.0,
+          high: 104.0,
+          low: 100.0,
+          volume: 1500.0,
+          amount: 150000.0,
+        ),
+      ];
+
+      await storage.saveMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+        initialKlines,
+      );
+
+      final filePath = storage.getFilePath(stockCode, dataType, year, month);
+      final file = File(filePath);
+      final bytesBefore = await file.readAsBytes();
+
+      final appendResult = await storage
+          .appendKlineData(stockCode, dataType, year, month, [
+            KLine(
+              datetime: DateTime(2025, 1, 2, 10, 0),
+              open: 101.0,
+              close: 103.0,
+              high: 104.0,
+              low: 100.0,
+              volume: 1500.0,
+              amount: 150000.0,
+            ),
+          ]);
+
+      expect(appendResult, isNotNull);
+      expect(appendResult!.changed, isFalse);
+      expect(appendResult.recordCount, equals(2));
+
+      final bytesAfter = await file.readAsBytes();
+      expect(bytesAfter, orderedEquals(bytesBefore));
+    });
+
+    test(
+      'should merge unsorted incoming bars and keep latest duplicate value',
+      () async {
+        const stockCode = 'SH600000';
+        const dataType = KLineDataType.daily;
+        const year = 2025;
+        const month = 1;
+
+        await storage.saveMonthlyKlineFile(stockCode, dataType, year, month, [
+          KLine(
+            datetime: DateTime(2025, 1, 1, 10, 0),
+            open: 100.0,
+            close: 101.0,
+            high: 102.0,
+            low: 99.0,
+            volume: 1000.0,
+            amount: 100000.0,
+          ),
+          KLine(
+            datetime: DateTime(2025, 1, 2, 10, 0),
+            open: 101.0,
+            close: 102.0,
+            high: 103.0,
+            low: 100.0,
+            volume: 1200.0,
+            amount: 120000.0,
+          ),
+        ]);
+
+        await storage.appendKlineData(stockCode, dataType, year, month, [
+          KLine(
+            datetime: DateTime(2025, 1, 3, 10, 0),
+            open: 103.0,
+            close: 104.0,
+            high: 105.0,
+            low: 102.0,
+            volume: 1300.0,
+            amount: 130000.0,
+          ),
+          KLine(
+            datetime: DateTime(2025, 1, 2, 10, 0),
+            open: 101.0,
+            close: 103.0,
+            high: 104.0,
+            low: 100.0,
+            volume: 1500.0,
+            amount: 150000.0,
+          ),
+          KLine(
+            datetime: DateTime(2025, 1, 2, 10, 0),
+            open: 101.0,
+            close: 103.5,
+            high: 104.5,
+            low: 100.0,
+            volume: 1600.0,
+            amount: 160000.0,
+          ),
+        ]);
+
+        final loaded = await storage.loadMonthlyKlineFile(
+          stockCode,
+          dataType,
+          year,
+          month,
+        );
+
+        expect(loaded.length, 3);
+        expect(loaded[0].datetime, DateTime(2025, 1, 1, 10, 0));
+        expect(loaded[1].datetime, DateTime(2025, 1, 2, 10, 0));
+        expect(loaded[2].datetime, DateTime(2025, 1, 3, 10, 0));
+        expect(loaded[1].close, 103.5);
+        expect(loaded[1].amount, 160000.0);
+      },
+    );
 
     test('should handle cross-month data correctly', () async {
       const stockCode = 'SH600000';
@@ -195,26 +374,28 @@ void main() {
       ];
 
       // Save to January
-      await storage.saveMonthlyKlineFile(
+      await storage.saveMonthlyKlineFile(stockCode, dataType, year, 1, [
+        klines[0],
+      ]);
+
+      // Save to February
+      await storage.saveMonthlyKlineFile(stockCode, dataType, year, 2, [
+        klines[1],
+      ]);
+
+      // Load and verify each month
+      final janKlines = await storage.loadMonthlyKlineFile(
         stockCode,
         dataType,
         year,
         1,
-        [klines[0]],
       );
-
-      // Save to February
-      await storage.saveMonthlyKlineFile(
+      final febKlines = await storage.loadMonthlyKlineFile(
         stockCode,
         dataType,
         year,
         2,
-        [klines[1]],
       );
-
-      // Load and verify each month
-      final janKlines = await storage.loadMonthlyKlineFile(stockCode, dataType, year, 1);
-      final febKlines = await storage.loadMonthlyKlineFile(stockCode, dataType, year, 2);
 
       expect(janKlines.length, equals(1));
       expect(janKlines[0].datetime.month, equals(1));
@@ -242,17 +423,33 @@ void main() {
       ];
 
       // Save
-      await storage.saveMonthlyKlineFile(stockCode, dataType, year, month, klines);
+      await storage.saveMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+        klines,
+      );
 
       // Verify file exists
-      var loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      var loaded = await storage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
       expect(loaded.isNotEmpty, isTrue);
 
       // Delete
       await storage.deleteMonthlyFile(stockCode, dataType, year, month);
 
       // Verify file is gone
-      loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      loaded = await storage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
       expect(loaded.isEmpty, isTrue);
     });
 
@@ -308,39 +505,53 @@ void main() {
       expect(dailyKlines.length, equals(1));
     });
 
-    test('should preserve data precision through compress/decompress cycle', () async {
-      const stockCode = 'SH600000';
-      const dataType = KLineDataType.daily;
-      const year = 2025;
-      const month = 1;
+    test(
+      'should preserve data precision through compress/decompress cycle',
+      () async {
+        const stockCode = 'SH600000';
+        const dataType = KLineDataType.daily;
+        const year = 2025;
+        const month = 1;
 
-      // Create data with precise values
-      final klines = [
-        KLine(
-          datetime: DateTime(2025, 1, 1, 10, 30, 45),
-          open: 100.123456,
-          close: 101.654321,
-          high: 102.987654,
-          low: 99.123456,
-          volume: 1000.5,
-          amount: 100000.123456,
-        ),
-      ];
+        // Create data with precise values
+        final klines = [
+          KLine(
+            datetime: DateTime(2025, 1, 1, 10, 30, 45),
+            open: 100.123456,
+            close: 101.654321,
+            high: 102.987654,
+            low: 99.123456,
+            volume: 1000.5,
+            amount: 100000.123456,
+          ),
+        ];
 
-      // Save and load
-      await storage.saveMonthlyKlineFile(stockCode, dataType, year, month, klines);
-      final loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+        // Save and load
+        await storage.saveMonthlyKlineFile(
+          stockCode,
+          dataType,
+          year,
+          month,
+          klines,
+        );
+        final loaded = await storage.loadMonthlyKlineFile(
+          stockCode,
+          dataType,
+          year,
+          month,
+        );
 
-      // Verify precision
-      expect(loaded.length, equals(1));
-      expect(loaded[0].datetime, equals(klines[0].datetime));
-      expect(loaded[0].open, equals(100.123456));
-      expect(loaded[0].close, equals(101.654321));
-      expect(loaded[0].high, equals(102.987654));
-      expect(loaded[0].low, equals(99.123456));
-      expect(loaded[0].volume, equals(1000.5));
-      expect(loaded[0].amount, equals(100000.123456));
-    });
+        // Verify precision
+        expect(loaded.length, equals(1));
+        expect(loaded[0].datetime, equals(klines[0].datetime));
+        expect(loaded[0].open, equals(100.123456));
+        expect(loaded[0].close, equals(101.654321));
+        expect(loaded[0].high, equals(102.987654));
+        expect(loaded[0].low, equals(99.123456));
+        expect(loaded[0].volume, equals(1000.5));
+        expect(loaded[0].amount, equals(100000.123456));
+      },
+    );
 
     test('should handle large dataset efficiently', () async {
       const stockCode = 'SH600000';
@@ -364,13 +575,24 @@ void main() {
 
       // Save
       final stopwatch = Stopwatch()..start();
-      await storage.saveMonthlyKlineFile(stockCode, dataType, year, month, klines);
+      await storage.saveMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+        klines,
+      );
       stopwatch.stop();
 
       // Load
       stopwatch.reset();
       stopwatch.start();
-      final loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      final loaded = await storage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
       stopwatch.stop();
 
       expect(loaded.length, equals(1000));
@@ -398,15 +620,26 @@ void main() {
         ),
       );
 
-      await storage.saveMonthlyKlineFile(stockCode, dataType, year, month, initialKlines);
+      await storage.saveMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+        initialKlines,
+      );
 
       // Append multiple times
       for (int batch = 0; batch < 5; batch++) {
         final newKlines = List.generate(
           5,
           (i) => KLine(
-            datetime: DateTime(2025, 1, 11, 10, 0)
-                .add(Duration(days: batch * 5 + i)),
+            datetime: DateTime(
+              2025,
+              1,
+              11,
+              10,
+              0,
+            ).add(Duration(days: batch * 5 + i)),
             open: 110.0 + batch * 5 + i,
             close: 111.0 + batch * 5 + i,
             high: 112.0 + batch * 5 + i,
@@ -416,11 +649,22 @@ void main() {
           ),
         );
 
-        await storage.appendKlineData(stockCode, dataType, year, month, newKlines);
+        await storage.appendKlineData(
+          stockCode,
+          dataType,
+          year,
+          month,
+          newKlines,
+        );
       }
 
       // Load and verify
-      final loaded = await storage.loadMonthlyKlineFile(stockCode, dataType, year, month);
+      final loaded = await storage.loadMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+      );
 
       // Should have initial 10 + 5 batches of 5 = 35 total
       expect(loaded.length, equals(35));

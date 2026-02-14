@@ -146,8 +146,10 @@ void main() {
       );
 
       // Verify metadata was saved
-      final metadata =
-          await manager.getMetadata(stockCode: stockCode, dataType: dataType);
+      final metadata = await manager.getMetadata(
+        stockCode: stockCode,
+        dataType: dataType,
+      );
 
       expect(metadata, isNotEmpty);
       expect(metadata.first.stockCode, equals(stockCode));
@@ -166,8 +168,10 @@ void main() {
       );
 
       // Verify no metadata was created
-      final metadata =
-          await manager.getMetadata(stockCode: stockCode, dataType: dataType);
+      final metadata = await manager.getMetadata(
+        stockCode: stockCode,
+        dataType: dataType,
+      );
 
       expect(metadata, isEmpty);
     });
@@ -267,10 +271,7 @@ void main() {
       );
 
       // Load data for first week of January
-      final dateRange = DateRange(
-        DateTime(2025, 1, 1),
-        DateTime(2025, 1, 7),
-      );
+      final dateRange = DateRange(DateTime(2025, 1, 1), DateTime(2025, 1, 7));
 
       final loaded = await manager.loadKlineData(
         stockCode: stockCode,
@@ -345,10 +346,7 @@ void main() {
       );
 
       // Load across both months
-      final dateRange = DateRange(
-        DateTime(2025, 1, 25),
-        DateTime(2025, 2, 10),
-      );
+      final dateRange = DateRange(DateTime(2025, 1, 25), DateTime(2025, 2, 10));
 
       final loaded = await manager.loadKlineData(
         stockCode: stockCode,
@@ -396,8 +394,10 @@ void main() {
       );
 
       // Verify initial state
-      var metadata =
-          await manager.getMetadata(stockCode: stockCode, dataType: dataType);
+      var metadata = await manager.getMetadata(
+        stockCode: stockCode,
+        dataType: dataType,
+      );
       expect(metadata.first.recordCount, equals(2));
 
       // Incremental update with some overlapping data
@@ -439,15 +439,61 @@ void main() {
       final loaded = await manager.loadKlineData(
         stockCode: stockCode,
         dataType: dataType,
-        dateRange: DateRange(
-          DateTime(2025, 1, 1),
-          DateTime(2025, 1, 31),
-        ),
+        dateRange: DateRange(DateTime(2025, 1, 1), DateTime(2025, 1, 31)),
       );
 
       expect(loaded.length, equals(3));
       expect(loaded[1].datetime.day, equals(2));
       expect(loaded[1].close, equals(103.5)); // Updated value
+    });
+
+    test('should skip version bump when incoming bars are unchanged', () async {
+      const stockCode = 'SH600000';
+      const dataType = KLineDataType.daily;
+
+      final klines = [
+        KLine(
+          datetime: DateTime(2025, 1, 1, 10, 0),
+          open: 100.0,
+          close: 101.0,
+          high: 102.0,
+          low: 99.0,
+          volume: 1000.0,
+          amount: 100000.0,
+        ),
+        KLine(
+          datetime: DateTime(2025, 1, 2, 10, 0),
+          open: 101.0,
+          close: 103.0,
+          high: 104.0,
+          low: 100.0,
+          volume: 1500.0,
+          amount: 150000.0,
+        ),
+      ];
+
+      await manager.saveKlineData(
+        stockCode: stockCode,
+        newBars: klines,
+        dataType: dataType,
+      );
+      final versionAfterFirst = await manager.getCurrentVersion();
+
+      await manager.saveKlineData(
+        stockCode: stockCode,
+        newBars: klines,
+        dataType: dataType,
+      );
+      final versionAfterSecond = await manager.getCurrentVersion();
+
+      expect(versionAfterSecond, equals(versionAfterFirst));
+
+      final metadata = await manager.getMetadata(
+        stockCode: stockCode,
+        dataType: dataType,
+      );
+      expect(metadata.length, equals(1));
+      expect(metadata.first.recordCount, equals(2));
     });
 
     test('should delete old data correctly', () async {
@@ -508,8 +554,10 @@ void main() {
       );
 
       // Verify all data exists
-      var metadata =
-          await manager.getMetadata(stockCode: stockCode, dataType: dataType);
+      var metadata = await manager.getMetadata(
+        stockCode: stockCode,
+        dataType: dataType,
+      );
       expect(metadata.length, equals(3));
 
       // Delete old data before March
@@ -688,10 +736,7 @@ void main() {
 
       await manager.saveKlineData(
         stockCode: '000001',
-        newBars: [
-          _createKLine(jan15, 10.0),
-          _createKLine(jan17, 11.0),
-        ],
+        newBars: [_createKLine(jan15, 10.0), _createKLine(jan17, 11.0)],
         dataType: KLineDataType.daily,
       );
 
@@ -714,10 +759,12 @@ void main() {
       // Create 50 minute bars for the day
       final klines = <KLine>[];
       for (var i = 0; i < 50; i++) {
-        klines.add(_createKLine(
-          DateTime(date.year, date.month, date.day, 9, 30 + i),
-          10.0 + i * 0.01,
-        ));
+        klines.add(
+          _createKLine(
+            DateTime(date.year, date.month, date.day, 9, 30 + i),
+            10.0 + i * 0.01,
+          ),
+        );
       }
 
       await manager.saveKlineData(

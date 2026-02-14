@@ -346,6 +346,12 @@ ca65c2f fix(history-fetch): avoid stale-cache skip and fail empty fetch verifica
    - Prepared statement reuse
    - Batch operations for bulk inserts
 
+4. **Minute K-line Fetching** (updated in feature branch):
+   - Pool-based fetch pipeline (`TdxPoolFetchAdapter`) for true multi-connection parallelism
+   - Incremental-first planning via per-stock sync state (`minute_sync_state`)
+   - Batch writer path (`MinuteSyncWriter`) to reduce repeated verify/write cycles
+   - Runtime rollback guard (`MinuteSyncConfig.minutePipelineFallbackToLegacyOnError`)
+
 ---
 
 ## Quality Assurance

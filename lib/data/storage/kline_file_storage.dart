@@ -10,6 +10,24 @@ import 'package:path_provider/path_provider.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 
+class KLineAppendResult {
+  final bool changed;
+  final DateTime? startDate;
+  final DateTime? endDate;
+  final int recordCount;
+  final String filePath;
+  final int fileSize;
+
+  const KLineAppendResult({
+    required this.changed,
+    required this.startDate,
+    required this.endDate,
+    required this.recordCount,
+    required this.filePath,
+    required this.fileSize,
+  });
+}
+
 /// File storage for K-line data with monthly sharding
 class KLineFileStorage {
   static const String _baseDir = 'market_data/klines';
@@ -32,7 +50,12 @@ class KLineFileStorage {
   }
 
   /// Get the file path for a monthly K-line file (sync - only for testing)
-  String getFilePath(String stockCode, KLineDataType dataType, int year, int month) {
+  String getFilePath(
+    String stockCode,
+    KLineDataType dataType,
+    int year,
+    int month,
+  ) {
     final baseDirectory = _getBaseSyncDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
@@ -40,7 +63,12 @@ class KLineFileStorage {
   }
 
   /// Get the file path for a monthly K-line file (async - for production)
-  Future<String> getFilePathAsync(String stockCode, KLineDataType dataType, int year, int month) async {
+  Future<String> getFilePathAsync(
+    String stockCode,
+    KLineDataType dataType,
+    int year,
+    int month,
+  ) async {
     final baseDirectory = await _getBaseDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
@@ -53,7 +81,7 @@ class KLineFileStorage {
       return _baseDirPath!;
     }
     throw UnsupportedError(
-      'Use _getBaseDirectory() for async operations or initialize() first'
+      'Use _getBaseDirectory() for async operations or initialize() first',
     );
   }
 
@@ -118,7 +146,8 @@ class KLineFileStorage {
 
     // Make temp filename unique to avoid race conditions
     final timestamp = DateTime.now().microsecondsSinceEpoch;
-    final tempPath = '$baseDir/${stockCode}_${dataType.name}_$yearMonth.$timestamp.tmp';
+    final tempPath =
+        '$baseDir/${stockCode}_${dataType.name}_$yearMonth.$timestamp.tmp';
 
     // Prepare data for compression
     final preparedData = _PrepareCompressionData(
@@ -140,20 +169,6 @@ class KLineFileStorage {
       // Append checksum to the file
       await tempFile.writeAsString('\n$checksum', mode: FileMode.append);
 
-      // Verify checksum by reading back
-      final writtenData = await tempFile.readAsBytes();
-      final lastNewlineIndex = writtenData.lastIndexOf(10); // ASCII for \n
-      if (lastNewlineIndex != -1) {
-        final fileChecksum = String.fromCharCodes(writtenData.sublist(lastNewlineIndex + 1)).trim();
-        final dataChecksum = sha256.convert(writtenData.sublist(0, lastNewlineIndex)).toString();
-
-        if (fileChecksum != dataChecksum) {
-          throw Exception('Checksum validation failed during save');
-        }
-      } else {
-        throw Exception('Checksum separator not found - file write corrupted');
-      }
-
       // Atomic rename
       await tempFile.rename(filePath);
     } catch (e) {
@@ -166,7 +181,9 @@ class KLineFileStorage {
   }
 
   /// Append K-line data to a monthly file (handles deduplication)
-  Future<void> appendKlineData(
+  ///
+  /// Returns append summary so caller can avoid redundant file reload.
+  Future<KLineAppendResult?> appendKlineData(
     String stockCode,
     KLineDataType dataType,
     int year,
@@ -174,17 +191,47 @@ class KLineFileStorage {
     List<KLine> newKlines,
   ) async {
     if (newKlines.isEmpty) {
-      return;
+      return null;
     }
 
     // Load existing data
-    final existingKlines = await loadMonthlyKlineFile(stockCode, dataType, year, month);
+    final existingKlines = await loadMonthlyKlineFile(
+      stockCode,
+      dataType,
+      year,
+      month,
+    );
 
-    // Merge and deduplicate
-    final merged = _mergeAndDeduplicate(existingKlines, newKlines);
+    final mergeResult = _mergeAndDeduplicate(existingKlines, newKlines);
 
-    // Save back
-    await saveMonthlyKlineFile(stockCode, dataType, year, month, merged);
+    final filePath = await getFilePathAsync(stockCode, dataType, year, month);
+
+    if (mergeResult.changed) {
+      // Save back only when content actually changes.
+      await saveMonthlyKlineFile(
+        stockCode,
+        dataType,
+        year,
+        month,
+        mergeResult.merged,
+      );
+    }
+
+    final file = File(filePath);
+    final fileSize = await file.length();
+
+    final merged = mergeResult.merged;
+    final startDate = merged.isEmpty ? null : merged.first.datetime;
+    final endDate = merged.isEmpty ? null : merged.last.datetime;
+
+    return KLineAppendResult(
+      changed: mergeResult.changed,
+      startDate: startDate,
+      endDate: endDate,
+      recordCount: merged.length,
+      filePath: filePath,
+      fileSize: fileSize,
+    );
   }
 
   /// Delete a monthly K-line file
@@ -205,25 +252,106 @@ class KLineFileStorage {
     }
   }
 
-  /// Merge and deduplicate K-lines by datetime
-  List<KLine> _mergeAndDeduplicate(List<KLine> existing, List<KLine> newKlines) {
-    final map = <DateTime, KLine>{};
+  /// Merge and deduplicate K-lines by datetime.
+  ///
+  /// Existing bars are expected to be ascending by datetime (storage invariant).
+  /// Incoming bars are deduplicated then sorted once, and merged in linear time.
+  _KLineMergeResult _mergeAndDeduplicate(
+    List<KLine> existing,
+    List<KLine> newKlines,
+  ) {
+    final normalizedExisting = _ensureSorted(existing);
+    final normalizedIncoming = _deduplicateAndSortIncoming(newKlines);
 
-    // Add existing
-    for (final kline in existing) {
-      map[kline.datetime] = kline;
+    if (normalizedIncoming.isEmpty) {
+      return _KLineMergeResult(changed: false, merged: normalizedExisting);
     }
 
-    // Add or overwrite with new
-    for (final kline in newKlines) {
-      map[kline.datetime] = kline;
+    if (normalizedExisting.isEmpty) {
+      return _KLineMergeResult(changed: true, merged: normalizedIncoming);
     }
 
-    // Sort by datetime
-    final merged = map.values.toList();
-    merged.sort((a, b) => a.datetime.compareTo(b.datetime));
+    final merged = <KLine>[];
+    var changed = false;
+    var existingIndex = 0;
+    var incomingIndex = 0;
 
-    return merged;
+    while (existingIndex < normalizedExisting.length &&
+        incomingIndex < normalizedIncoming.length) {
+      final existingBar = normalizedExisting[existingIndex];
+      final incomingBar = normalizedIncoming[incomingIndex];
+      final compare = existingBar.datetime.compareTo(incomingBar.datetime);
+
+      if (compare < 0) {
+        merged.add(existingBar);
+        existingIndex++;
+        continue;
+      }
+
+      if (compare > 0) {
+        merged.add(incomingBar);
+        incomingIndex++;
+        changed = true;
+        continue;
+      }
+
+      if (!_isSameKLine(existingBar, incomingBar)) {
+        changed = true;
+      }
+      merged.add(incomingBar);
+      existingIndex++;
+      incomingIndex++;
+    }
+
+    while (existingIndex < normalizedExisting.length) {
+      merged.add(normalizedExisting[existingIndex]);
+      existingIndex++;
+    }
+
+    while (incomingIndex < normalizedIncoming.length) {
+      merged.add(normalizedIncoming[incomingIndex]);
+      incomingIndex++;
+      changed = true;
+    }
+
+    return _KLineMergeResult(changed: changed, merged: merged);
+  }
+
+  List<KLine> _deduplicateAndSortIncoming(List<KLine> newKlines) {
+    final byDatetime = <DateTime, KLine>{
+      for (final kline in newKlines) kline.datetime: kline,
+    };
+
+    final deduplicated = byDatetime.values.toList(growable: false)
+      ..sort((left, right) => left.datetime.compareTo(right.datetime));
+
+    return deduplicated;
+  }
+
+  List<KLine> _ensureSorted(List<KLine> klines) {
+    if (klines.length < 2) {
+      return klines;
+    }
+
+    for (var index = 1; index < klines.length; index++) {
+      if (klines[index - 1].datetime.isAfter(klines[index].datetime)) {
+        final sorted = List<KLine>.from(klines);
+        sorted.sort((left, right) => left.datetime.compareTo(right.datetime));
+        return sorted;
+      }
+    }
+
+    return klines;
+  }
+
+  bool _isSameKLine(KLine left, KLine right) {
+    return left.datetime == right.datetime &&
+        left.open == right.open &&
+        left.close == right.close &&
+        left.high == right.high &&
+        left.low == right.low &&
+        left.volume == right.volume &&
+        left.amount == right.amount;
   }
 
   /// Static method to serialize and compress K-line data
@@ -250,7 +378,7 @@ class KLineFileStorage {
 
     final dataToDecompress = compressedData.sublist(0, lastNewlineIndex);
     final fileChecksum = String.fromCharCodes(
-      compressedData.sublist(lastNewlineIndex + 1)
+      compressedData.sublist(lastNewlineIndex + 1),
     ).trim();
     final calculatedChecksum = sha256.convert(dataToDecompress).toString();
 
@@ -272,15 +400,17 @@ class KLineFileStorage {
   }
 }
 
+class _KLineMergeResult {
+  final bool changed;
+  final List<KLine> merged;
+
+  const _KLineMergeResult({required this.changed, required this.merged});
+}
+
 /// Helper class for passing data to compute function
 class _PrepareCompressionData {
   final List<KLine> klines;
   final String checksum;
 
-  _PrepareCompressionData({
-    required this.klines,
-    required this.checksum,
-  });
+  _PrepareCompressionData({required this.klines, required this.checksum});
 }
-
-

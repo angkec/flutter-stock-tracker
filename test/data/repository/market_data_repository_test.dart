@@ -2,11 +2,13 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
+import 'package:stock_rtwatcher/data/repository/kline_fetch_adapter.dart';
 import 'package:stock_rtwatcher/data/models/data_status.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/data/storage/date_check_storage.dart';
+import 'package:stock_rtwatcher/data/storage/minute_sync_state_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
@@ -14,6 +16,11 @@ import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/data_freshness.dart';
 import 'package:stock_rtwatcher/data/models/day_data_status.dart';
 import 'package:stock_rtwatcher/data/models/data_updated_event.dart';
+import 'package:stock_rtwatcher/data/repository/minute_fetch_adapter.dart';
+import 'package:stock_rtwatcher/data/repository/minute_sync_planner.dart';
+import 'package:stock_rtwatcher/data/repository/minute_sync_writer.dart';
+import 'package:stock_rtwatcher/data/models/minute_sync_state.dart';
+import 'package:stock_rtwatcher/config/minute_sync_config.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -109,6 +116,133 @@ class MockTdxClient extends TdxClient {
   /// 清除请求记录
   void clearBarRequests() {
     barRequests.clear();
+  }
+}
+
+class FakeMinuteFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
+  int fetchCalls = 0;
+  int fetchBarsCalls = 0;
+  int? lastCategory;
+  int? lastStart;
+  int? lastCount;
+  List<String> lastStockCodes = const [];
+  final List<int> startsByCall = [];
+  final List<List<String>> stockCodesByCall = [];
+  Map<String, List<KLine>> barsToReturn = {};
+
+  @override
+  Future<Map<String, List<KLine>>> fetchMinuteBars({
+    required List<String> stockCodes,
+    required int start,
+    required int count,
+    ProgressCallback? onProgress,
+  }) async {
+    fetchCalls++;
+    lastStart = start;
+    lastCount = count;
+    lastStockCodes = stockCodes;
+    startsByCall.add(start);
+    stockCodesByCall.add(List<String>.from(stockCodes));
+
+    for (var i = 0; i < stockCodes.length; i++) {
+      onProgress?.call(i + 1, stockCodes.length);
+    }
+
+    return {
+      for (final code in stockCodes) code: barsToReturn[code] ?? const [],
+    };
+  }
+
+  @override
+  Future<Map<String, List<KLine>>> fetchBars({
+    required List<String> stockCodes,
+    required int category,
+    required int start,
+    required int count,
+    ProgressCallback? onProgress,
+  }) async {
+    fetchBarsCalls++;
+    lastCategory = category;
+    lastStart = start;
+    lastCount = count;
+    lastStockCodes = stockCodes;
+    startsByCall.add(start);
+    stockCodesByCall.add(List<String>.from(stockCodes));
+
+    for (var i = 0; i < stockCodes.length; i++) {
+      onProgress?.call(i + 1, stockCodes.length);
+    }
+
+    return {
+      for (final code in stockCodes) code: barsToReturn[code] ?? const [],
+    };
+  }
+}
+
+class FakeMinuteSyncPlanner extends MinuteSyncPlanner {
+  int callCount = 0;
+  final Map<String, MinuteFetchPlan> plansByStock = {};
+  final Map<String, List<DateTime>> knownMissingDatesByStock = {};
+  final Map<String, List<DateTime>> knownIncompleteDatesByStock = {};
+
+  @override
+  MinuteFetchPlan planForStock({
+    required String stockCode,
+    required List<DateTime> tradingDates,
+    required MinuteSyncState? syncState,
+    required List<DateTime> knownMissingDates,
+    required List<DateTime> knownIncompleteDates,
+  }) {
+    callCount++;
+    knownMissingDatesByStock[stockCode] = List<DateTime>.from(
+      knownMissingDates,
+    );
+    knownIncompleteDatesByStock[stockCode] = List<DateTime>.from(
+      knownIncompleteDates,
+    );
+
+    return plansByStock[stockCode] ??
+        MinuteFetchPlan(
+          stockCode: stockCode,
+          mode: MinuteSyncMode.skip,
+          datesToFetch: const [],
+        );
+  }
+}
+
+class FakeMinuteSyncWriter extends MinuteSyncWriter {
+  int writeCalls = 0;
+  Map<String, List<KLine>>? lastBarsByStock;
+  KLineDataType? lastDataType;
+  DateTime? lastFetchedTradingDay;
+  MinuteWriteResult resultToReturn = const MinuteWriteResult(
+    updatedStocks: [],
+    totalRecords: 0,
+  );
+
+  FakeMinuteSyncWriter({
+    required super.metadataManager,
+    required super.syncStateStorage,
+  });
+
+  @override
+  Future<MinuteWriteResult> writeBatch({
+    required Map<String, List<KLine>> barsByStock,
+    required KLineDataType dataType,
+    DateTime? fetchedTradingDay,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    writeCalls++;
+    lastBarsByStock = barsByStock;
+    lastDataType = dataType;
+    lastFetchedTradingDay = fetchedTradingDay;
+    final nonEmptyCount = barsByStock.values
+        .where((bars) => bars.isNotEmpty)
+        .length;
+    if (nonEmptyCount > 0) {
+      onProgress?.call(nonEmptyCount, nonEmptyCount);
+    }
+    return resultToReturn;
   }
 }
 
@@ -511,42 +645,45 @@ void main() {
       },
     );
 
-    test('should use nowProvider when excluding today pending status', () async {
-      final fixedNow = DateTime(2025, 1, 10, 10, 0);
-      final fixedToday = DateTime(2025, 1, 10);
-      final fixedYesterday = DateTime(2025, 1, 9);
+    test(
+      'should use nowProvider when excluding today pending status',
+      () async {
+        final fixedNow = DateTime(2025, 1, 10, 10, 0);
+        final fixedToday = DateTime(2025, 1, 10);
+        final fixedYesterday = DateTime(2025, 1, 9);
 
-      final dateCheckStorage = DateCheckStorage(database: database);
-      await dateCheckStorage.saveCheckStatus(
-        stockCode: '000012',
-        dataType: KLineDataType.oneMinute,
-        date: fixedToday,
-        status: DayDataStatus.incomplete,
-        barCount: 80,
-      );
-      await dateCheckStorage.saveCheckStatus(
-        stockCode: '000012',
-        dataType: KLineDataType.oneMinute,
-        date: fixedYesterday,
-        status: DayDataStatus.complete,
-        barCount: 230,
-      );
+        final dateCheckStorage = DateCheckStorage(database: database);
+        await dateCheckStorage.saveCheckStatus(
+          stockCode: '000012',
+          dataType: KLineDataType.oneMinute,
+          date: fixedToday,
+          status: DayDataStatus.incomplete,
+          barCount: 80,
+        );
+        await dateCheckStorage.saveCheckStatus(
+          stockCode: '000012',
+          dataType: KLineDataType.oneMinute,
+          date: fixedYesterday,
+          status: DayDataStatus.complete,
+          barCount: 230,
+        );
 
-      final nowAwareRepository = MarketDataRepository(
-        metadataManager: manager,
-        dateCheckStorage: dateCheckStorage,
-        nowProvider: () => fixedNow,
-      );
+        final nowAwareRepository = MarketDataRepository(
+          metadataManager: manager,
+          dateCheckStorage: dateCheckStorage,
+          nowProvider: () => fixedNow,
+        );
 
-      final freshness = await nowAwareRepository.checkFreshness(
-        stockCodes: ['000012'],
-        dataType: KLineDataType.oneMinute,
-      );
+        final freshness = await nowAwareRepository.checkFreshness(
+          stockCodes: ['000012'],
+          dataType: KLineDataType.oneMinute,
+        );
 
-      expect(freshness['000012'], isA<Fresh>());
+        expect(freshness['000012'], isA<Fresh>());
 
-      await nowAwareRepository.dispose();
-    });
+        await nowAwareRepository.dispose();
+      },
+    );
 
     test('should detect missing data', () async {
       final freshness = await repository.checkFreshness(
@@ -622,74 +759,77 @@ void main() {
       expect(freshness['000003'], isA<Fresh>());
     });
 
-    test('should detect stale data when unchecked range includes weekday', () async {
-      final fixedNow = DateTime(2026, 2, 11, 10, 0); // Wednesday
-      final twoDaysAgo = DateTime(2026, 2, 9); // Monday
+    test(
+      'should detect stale data when unchecked range includes weekday',
+      () async {
+        final fixedNow = DateTime(2026, 2, 11, 10, 0); // Wednesday
+        final twoDaysAgo = DateTime(2026, 2, 9); // Monday
 
-      // Define trading day via daily data
-      await manager.saveKlineData(
-        stockCode: '000004',
-        newBars: [
-          KLine(
-            datetime: twoDaysAgo,
-            open: 10.0,
-            close: 10.5,
-            high: 10.8,
-            low: 9.9,
-            volume: 1000,
-            amount: 10000,
-          ),
-        ],
-        dataType: KLineDataType.daily,
-      );
-
-      // Save complete minute data (230 bars)
-      final minuteKlines = <KLine>[];
-      for (var i = 0; i < 230; i++) {
-        minuteKlines.add(
-          KLine(
-            datetime: DateTime(
-              twoDaysAgo.year,
-              twoDaysAgo.month,
-              twoDaysAgo.day,
-              9,
-              30,
-            ).add(Duration(minutes: i)),
-            open: 10.0 + i * 0.01,
-            close: 10.5 + i * 0.01,
-            high: 10.8 + i * 0.01,
-            low: 9.9 + i * 0.01,
-            volume: 1000.0 + i,
-            amount: 10000 + i * 10,
-          ),
+        // Define trading day via daily data
+        await manager.saveKlineData(
+          stockCode: '000004',
+          newBars: [
+            KLine(
+              datetime: twoDaysAgo,
+              open: 10.0,
+              close: 10.5,
+              high: 10.8,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
         );
-      }
-      await manager.saveKlineData(
-        stockCode: '000004',
-        newBars: minuteKlines,
-        dataType: KLineDataType.oneMinute,
-      );
 
-      final weekdayAwareRepository = MarketDataRepository(
-        metadataManager: manager,
-        nowProvider: () => fixedNow,
-      );
+        // Save complete minute data (230 bars)
+        final minuteKlines = <KLine>[];
+        for (var i = 0; i < 230; i++) {
+          minuteKlines.add(
+            KLine(
+              datetime: DateTime(
+                twoDaysAgo.year,
+                twoDaysAgo.month,
+                twoDaysAgo.day,
+                9,
+                30,
+              ).add(Duration(minutes: i)),
+              open: 10.0 + i * 0.01,
+              close: 10.5 + i * 0.01,
+              high: 10.8 + i * 0.01,
+              low: 9.9 + i * 0.01,
+              volume: 1000.0 + i,
+              amount: 10000 + i * 10,
+            ),
+          );
+        }
+        await manager.saveKlineData(
+          stockCode: '000004',
+          newBars: minuteKlines,
+          dataType: KLineDataType.oneMinute,
+        );
 
-      // Populate cache
-      await weekdayAwareRepository.findMissingMinuteDates(
-        stockCode: '000004',
-        dateRange: DateRange(twoDaysAgo, twoDaysAgo),
-      );
+        final weekdayAwareRepository = MarketDataRepository(
+          metadataManager: manager,
+          nowProvider: () => fixedNow,
+        );
 
-      final freshness = await weekdayAwareRepository.checkFreshness(
-        stockCodes: ['000004'],
-        dataType: KLineDataType.oneMinute,
-      );
+        // Populate cache
+        await weekdayAwareRepository.findMissingMinuteDates(
+          stockCode: '000004',
+          dateRange: DateRange(twoDaysAgo, twoDaysAgo),
+        );
 
-      expect(freshness['000004'], isA<Stale>());
+        final freshness = await weekdayAwareRepository.checkFreshness(
+          stockCodes: ['000004'],
+          dataType: KLineDataType.oneMinute,
+        );
 
-      await weekdayAwareRepository.dispose();
-    });
+        expect(freshness['000004'], isA<Stale>());
+
+        await weekdayAwareRepository.dispose();
+      },
+    );
   });
 
   group('MarketDataRepository - getQuotes', () {
@@ -1636,86 +1776,89 @@ void main() {
       expect(result.totalRecords, greaterThan(0));
     });
 
-    test('should refresh minute freshness cache after successful fetch', () async {
-      final fixedNow = DateTime(2026, 1, 20, 10, 0);
-      final testDate = DateTime(2026, 1, 19);
-      final dateRange = DateRange(
-        testDate,
-        testDate.add(const Duration(hours: 23)),
-      );
-
-      await manager.saveKlineData(
-        stockCode: '000010',
-        newBars: [
-          KLine(
-            datetime: testDate,
-            open: 10.0,
-            close: 10.5,
-            high: 10.8,
-            low: 9.9,
-            volume: 1000,
-            amount: 10000,
-          ),
-        ],
-        dataType: KLineDataType.daily,
-      );
-
-      final localMockTdxClient = MockTdxClient();
-      final cacheAwareRepository = MarketDataRepository(
-        metadataManager: manager,
-        tdxClient: localMockTdxClient,
-        nowProvider: () => fixedNow,
-      );
-
-      final missingBefore = await cacheAwareRepository.findMissingMinuteDates(
-        stockCode: '000010',
-        dateRange: dateRange,
-      );
-      expect(missingBefore.missingDates, contains(testDate));
-
-      final freshnessBefore = await cacheAwareRepository.checkFreshness(
-        stockCodes: ['000010'],
-        dataType: KLineDataType.oneMinute,
-      );
-      expect(freshnessBefore['000010'], isA<Stale>());
-
-      final completeMinuteBars = <KLine>[];
-      for (var i = 0; i < 230; i++) {
-        completeMinuteBars.add(
-          KLine(
-            datetime: DateTime(
-              testDate.year,
-              testDate.month,
-              testDate.day,
-              9,
-              30,
-            ).add(Duration(minutes: i)),
-            open: 10.0 + i * 0.01,
-            close: 10.5 + i * 0.01,
-            high: 10.8 + i * 0.01,
-            low: 9.9 + i * 0.01,
-            volume: 1000.0 + i,
-            amount: 10000 + i * 10,
-          ),
+    test(
+      'should refresh minute freshness cache after successful fetch',
+      () async {
+        final fixedNow = DateTime(2026, 1, 20, 10, 0);
+        final testDate = DateTime(2026, 1, 19);
+        final dateRange = DateRange(
+          testDate,
+          testDate.add(const Duration(hours: 23)),
         );
-      }
-      localMockTdxClient.barsToReturn = {'0_000010_7': completeMinuteBars};
 
-      final result = await cacheAwareRepository.fetchMissingData(
-        stockCodes: ['000010'],
-        dateRange: dateRange,
-        dataType: KLineDataType.oneMinute,
-      );
-      expect(result.totalRecords, greaterThan(0));
+        await manager.saveKlineData(
+          stockCode: '000010',
+          newBars: [
+            KLine(
+              datetime: testDate,
+              open: 10.0,
+              close: 10.5,
+              high: 10.8,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
+        );
 
-      final freshnessAfter = await cacheAwareRepository.checkFreshness(
-        stockCodes: ['000010'],
-        dataType: KLineDataType.oneMinute,
-      );
-      expect(freshnessAfter['000010'], isA<Fresh>());
+        final localMockTdxClient = MockTdxClient();
+        final cacheAwareRepository = MarketDataRepository(
+          metadataManager: manager,
+          tdxClient: localMockTdxClient,
+          nowProvider: () => fixedNow,
+        );
 
-      await cacheAwareRepository.dispose();
-    });
+        final missingBefore = await cacheAwareRepository.findMissingMinuteDates(
+          stockCode: '000010',
+          dateRange: dateRange,
+        );
+        expect(missingBefore.missingDates, contains(testDate));
+
+        final freshnessBefore = await cacheAwareRepository.checkFreshness(
+          stockCodes: ['000010'],
+          dataType: KLineDataType.oneMinute,
+        );
+        expect(freshnessBefore['000010'], isA<Stale>());
+
+        final completeMinuteBars = <KLine>[];
+        for (var i = 0; i < 230; i++) {
+          completeMinuteBars.add(
+            KLine(
+              datetime: DateTime(
+                testDate.year,
+                testDate.month,
+                testDate.day,
+                9,
+                30,
+              ).add(Duration(minutes: i)),
+              open: 10.0 + i * 0.01,
+              close: 10.5 + i * 0.01,
+              high: 10.8 + i * 0.01,
+              low: 9.9 + i * 0.01,
+              volume: 1000.0 + i,
+              amount: 10000 + i * 10,
+            ),
+          );
+        }
+        localMockTdxClient.barsToReturn = {'0_000010_7': completeMinuteBars};
+
+        final result = await cacheAwareRepository.fetchMissingData(
+          stockCodes: ['000010'],
+          dateRange: dateRange,
+          dataType: KLineDataType.oneMinute,
+        );
+        expect(result.totalRecords, greaterThan(0));
+
+        final freshnessAfter = await cacheAwareRepository.checkFreshness(
+          stockCodes: ['000010'],
+          dataType: KLineDataType.oneMinute,
+        );
+        expect(freshnessAfter['000010'], isA<Fresh>());
+
+        await cacheAwareRepository.dispose();
+      },
+    );
 
     test('should fetch minute data when trading dates are unavailable', () async {
       // No daily data is saved on purpose (trading dates unavailable).
@@ -1950,100 +2093,103 @@ void main() {
       },
     );
 
-    test('should reuse cached complete dates without rewriting status', () async {
-      final testDate = DateTime(2024, 1, 22);
-      final dateRange = DateRange(
-        testDate,
-        testDate.add(const Duration(hours: 23)),
-      );
-
-      await manager.saveKlineData(
-        stockCode: '000013',
-        newBars: [
-          KLine(
-            datetime: testDate,
-            open: 10.0,
-            close: 10.5,
-            high: 10.8,
-            low: 9.9,
-            volume: 1000,
-            amount: 10000,
-          ),
-        ],
-        dataType: KLineDataType.daily,
-      );
-
-      final completeMinuteBars = <KLine>[];
-      for (var i = 0; i < 230; i++) {
-        completeMinuteBars.add(
-          KLine(
-            datetime: DateTime(
-              testDate.year,
-              testDate.month,
-              testDate.day,
-              9,
-              30,
-            ).add(Duration(minutes: i)),
-            open: 10.0 + i * 0.01,
-            close: 10.5 + i * 0.01,
-            high: 10.8 + i * 0.01,
-            low: 9.9 + i * 0.01,
-            volume: 1000 + i * 10,
-            amount: 10000 + i * 100,
-          ),
+    test(
+      'should reuse cached complete dates without rewriting status',
+      () async {
+        final testDate = DateTime(2024, 1, 22);
+        final dateRange = DateRange(
+          testDate,
+          testDate.add(const Duration(hours: 23)),
         );
-      }
-      await manager.saveKlineData(
-        stockCode: '000013',
-        newBars: completeMinuteBars,
-        dataType: KLineDataType.oneMinute,
-      );
 
-      final firstResult = await repository.findMissingMinuteDates(
-        stockCode: '000013',
-        dateRange: dateRange,
-      );
-      expect(firstResult.isComplete, isTrue);
+        await manager.saveKlineData(
+          stockCode: '000013',
+          newBars: [
+            KLine(
+              datetime: testDate,
+              open: 10.0,
+              close: 10.5,
+              high: 10.8,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
+        );
 
-      final db = await database.database;
-      final beforeRows = await db.rawQuery(
-        '''
+        final completeMinuteBars = <KLine>[];
+        for (var i = 0; i < 230; i++) {
+          completeMinuteBars.add(
+            KLine(
+              datetime: DateTime(
+                testDate.year,
+                testDate.month,
+                testDate.day,
+                9,
+                30,
+              ).add(Duration(minutes: i)),
+              open: 10.0 + i * 0.01,
+              close: 10.5 + i * 0.01,
+              high: 10.8 + i * 0.01,
+              low: 9.9 + i * 0.01,
+              volume: 1000 + i * 10,
+              amount: 10000 + i * 100,
+            ),
+          );
+        }
+        await manager.saveKlineData(
+          stockCode: '000013',
+          newBars: completeMinuteBars,
+          dataType: KLineDataType.oneMinute,
+        );
+
+        final firstResult = await repository.findMissingMinuteDates(
+          stockCode: '000013',
+          dateRange: dateRange,
+        );
+        expect(firstResult.isComplete, isTrue);
+
+        final db = await database.database;
+        final beforeRows = await db.rawQuery(
+          '''
         SELECT checked_at FROM date_check_status
         WHERE stock_code = ? AND data_type = ? AND date = ?
         ''',
-        [
-          '000013',
-          KLineDataType.oneMinute.name,
-          testDate.millisecondsSinceEpoch,
-        ],
-      );
-      expect(beforeRows, isNotEmpty);
-      final checkedAtBefore = beforeRows.first['checked_at'] as int;
+          [
+            '000013',
+            KLineDataType.oneMinute.name,
+            testDate.millisecondsSinceEpoch,
+          ],
+        );
+        expect(beforeRows, isNotEmpty);
+        final checkedAtBefore = beforeRows.first['checked_at'] as int;
 
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      final secondResult = await repository.findMissingMinuteDates(
-        stockCode: '000013',
-        dateRange: dateRange,
-      );
-      expect(secondResult.isComplete, isTrue);
+        final secondResult = await repository.findMissingMinuteDates(
+          stockCode: '000013',
+          dateRange: dateRange,
+        );
+        expect(secondResult.isComplete, isTrue);
 
-      final afterRows = await db.rawQuery(
-        '''
+        final afterRows = await db.rawQuery(
+          '''
         SELECT checked_at FROM date_check_status
         WHERE stock_code = ? AND data_type = ? AND date = ?
         ''',
-        [
-          '000013',
-          KLineDataType.oneMinute.name,
-          testDate.millisecondsSinceEpoch,
-        ],
-      );
-      expect(afterRows, isNotEmpty);
-      final checkedAtAfter = afterRows.first['checked_at'] as int;
+          [
+            '000013',
+            KLineDataType.oneMinute.name,
+            testDate.millisecondsSinceEpoch,
+          ],
+        );
+        expect(afterRows, isNotEmpty);
+        final checkedAtAfter = afterRows.first['checked_at'] as int;
 
-      expect(checkedAtAfter, equals(checkedAtBefore));
-    });
+        expect(checkedAtAfter, equals(checkedAtBefore));
+      },
+    );
 
     test(
       'should fetch when daily trading dates are too sparse for reliable precheck',
@@ -2783,6 +2929,430 @@ void main() {
             DateTime(tradingDate.year, tradingDate.month, tradingDate.day),
           ),
         );
+      },
+    );
+  });
+
+  group('MarketDataRepository - minute pool pipeline', () {
+    late MarketDataRepository repository;
+    late MockTdxClient mockTdxClient;
+    late KLineMetadataManager manager;
+    late MarketDatabase database;
+    late KLineFileStorage fileStorage;
+    late MinuteSyncStateStorage syncStateStorage;
+    late Directory testDir;
+    late FakeMinuteFetchAdapter fakeAdapter;
+    late FakeMinuteSyncPlanner fakePlanner;
+    late FakeMinuteSyncWriter fakeWriter;
+
+    setUp(() async {
+      testDir = await Directory.systemTemp.createTemp(
+        'market_data_repo_pool_pipeline_test_',
+      );
+
+      fileStorage = KLineFileStorage();
+      fileStorage.setBaseDirPathForTesting(testDir.path);
+      await fileStorage.initialize();
+
+      database = MarketDatabase();
+      await database.database;
+
+      manager = KLineMetadataManager(
+        database: database,
+        fileStorage: fileStorage,
+      );
+      syncStateStorage = MinuteSyncStateStorage(database: database);
+
+      mockTdxClient = MockTdxClient();
+      fakeAdapter = FakeMinuteFetchAdapter();
+      fakePlanner = FakeMinuteSyncPlanner();
+      fakeWriter = FakeMinuteSyncWriter(
+        metadataManager: manager,
+        syncStateStorage: syncStateStorage,
+      );
+
+      repository = MarketDataRepository(
+        metadataManager: manager,
+        tdxClient: mockTdxClient,
+        minuteFetchAdapter: fakeAdapter,
+        minuteSyncPlanner: fakePlanner,
+        minuteSyncWriter: fakeWriter,
+        minuteSyncConfig: const MinuteSyncConfig(
+          enablePoolMinutePipeline: true,
+          poolBatchCount: 800,
+        ),
+      );
+    });
+
+    tearDown(() async {
+      await repository.dispose();
+
+      try {
+        await database.close();
+      } catch (_) {}
+
+      MarketDatabase.resetInstance();
+
+      if (await testDir.exists()) {
+        await testDir.delete(recursive: true);
+      }
+
+      try {
+        final dbPath = await getDatabasesPath();
+        final path = '$dbPath/market_data.db';
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+    });
+
+    KLine buildMinuteBar(DateTime time) {
+      return KLine(
+        datetime: time,
+        open: 10,
+        close: 10.2,
+        high: 10.3,
+        low: 9.9,
+        volume: 1000,
+        amount: 10000,
+      );
+    }
+
+    test('uses new minute pipeline when enabled', () async {
+      final tradingDay = DateTime(2026, 2, 13);
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: tradingDay,
+            open: 10,
+            close: 10.2,
+            high: 10.3,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
+        stockCode: '000001',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+      fakeAdapter.barsToReturn = {
+        '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
+      };
+      fakeWriter.resultToReturn = const MinuteWriteResult(
+        updatedStocks: ['000001'],
+        totalRecords: 1,
+      );
+
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(fakeAdapter.fetchCalls, 1);
+      expect(fakeWriter.writeCalls, 1);
+      expect(fakePlanner.callCount, 1);
+      expect(result.totalRecords, 1);
+    });
+
+    test('minute pipeline emits write-phase DataFetching status', () async {
+      final tradingDay = DateTime(2026, 2, 13);
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: tradingDay,
+            open: 10,
+            close: 10.2,
+            high: 10.3,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
+        stockCode: '000001',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+      fakeAdapter.barsToReturn = {
+        '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
+      };
+      fakeWriter.resultToReturn = const MinuteWriteResult(
+        updatedStocks: ['000001'],
+        totalRecords: 1,
+      );
+
+      final fetchingStatuses = <DataFetching>[];
+      final subscription = repository.statusStream.listen((status) {
+        if (status is DataFetching) {
+          fetchingStatuses.add(status);
+        }
+      });
+
+      await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      await subscription.cancel();
+
+      final writeStatuses = fetchingStatuses
+          .where((status) => status.currentStock == '__WRITE__')
+          .toList(growable: false);
+
+      expect(writeStatuses, isNotEmpty);
+      expect(writeStatuses.last.current, greaterThanOrEqualTo(1));
+      expect(writeStatuses.last.total, greaterThanOrEqualTo(1));
+    });
+
+    test('daily fetch uses pool kline adapter when available', () async {
+      final day = DateTime(2026, 2, 13);
+      fakeAdapter.barsToReturn = {
+        '000001': [
+          KLine(
+            datetime: day,
+            open: 10,
+            close: 10.2,
+            high: 10.3,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+      };
+
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: DateRange(day, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.daily,
+      );
+
+      expect(fakeAdapter.fetchBarsCalls, greaterThan(0));
+      expect(fakeAdapter.lastCategory, klineTypeDaily);
+      expect(mockTdxClient.barRequests, isEmpty);
+      expect(result.totalRecords, 1);
+    });
+
+    test('incremental plan only fetches stocks with datesToFetch', () async {
+      final tradingDay = DateTime(2026, 2, 13);
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: tradingDay,
+            open: 10,
+            close: 10.2,
+            high: 10.3,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      fakePlanner.plansByStock['000001'] = const MinuteFetchPlan(
+        stockCode: '000001',
+        mode: MinuteSyncMode.skip,
+        datesToFetch: [],
+      );
+      fakePlanner.plansByStock['000002'] = MinuteFetchPlan(
+        stockCode: '000002',
+        mode: MinuteSyncMode.incremental,
+        datesToFetch: [tradingDay],
+      );
+      fakeAdapter.barsToReturn = {
+        '000002': [buildMinuteBar(DateTime(2026, 2, 13, 9, 31))],
+      };
+      fakeWriter.resultToReturn = const MinuteWriteResult(
+        updatedStocks: ['000002'],
+        totalRecords: 1,
+      );
+
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001', '000002'],
+        dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(fakeAdapter.lastStockCodes, ['000002']);
+      expect(result.totalRecords, 1);
+    });
+
+    test('planner receives cached pending dates as backfill hints', () async {
+      final tradingDay = DateTime(2026, 2, 13);
+
+      await manager.saveKlineData(
+        stockCode: '000001',
+        newBars: [
+          KLine(
+            datetime: tradingDay,
+            open: 10,
+            close: 10.2,
+            high: 10.3,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+        dataType: KLineDataType.daily,
+      );
+
+      final checkStorage = DateCheckStorage(database: database);
+      await checkStorage.saveCheckStatus(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        date: tradingDay,
+        status: DayDataStatus.incomplete,
+        barCount: 120,
+      );
+
+      fakePlanner.plansByStock['000001'] = const MinuteFetchPlan(
+        stockCode: '000001',
+        mode: MinuteSyncMode.skip,
+        datesToFetch: [],
+      );
+
+      await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(fakePlanner.knownMissingDatesByStock['000001'], [tradingDay]);
+      expect(fakePlanner.knownIncompleteDatesByStock['000001'], isEmpty);
+    });
+
+    test('supports runtime update of minute write concurrency', () {
+      expect(repository.minuteWriteConcurrency, 6);
+
+      repository.setMinuteWriteConcurrency(3);
+      expect(repository.minuteWriteConcurrency, 3);
+
+      repository.setMinuteWriteConcurrency(0);
+      expect(repository.minuteWriteConcurrency, 1);
+    });
+
+    test(
+      'non-trading day without trading-date baseline should still bootstrap minute fetch',
+      () async {
+        await repository.dispose();
+
+        repository = MarketDataRepository(
+          metadataManager: manager,
+          tdxClient: mockTdxClient,
+          minuteFetchAdapter: fakeAdapter,
+          minuteSyncPlanner: MinuteSyncPlanner(),
+          minuteSyncWriter: fakeWriter,
+          minuteSyncConfig: const MinuteSyncConfig(
+            enablePoolMinutePipeline: true,
+            poolBatchCount: 800,
+            poolMaxBatches: 1,
+          ),
+          nowProvider: () => DateTime(2026, 2, 14, 10, 0), // Saturday
+        );
+
+        fakeAdapter.barsToReturn = {
+          '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
+        };
+        fakeWriter.resultToReturn = const MinuteWriteResult(
+          updatedStocks: ['000001'],
+          totalRecords: 1,
+        );
+
+        final result = await repository.fetchMissingData(
+          stockCodes: ['000001'],
+          dateRange: DateRange(
+            DateTime(2026, 1, 15),
+            DateTime(2026, 2, 14, 23, 59, 59),
+          ),
+          dataType: KLineDataType.oneMinute,
+        );
+
+        expect(
+          fakeAdapter.fetchCalls,
+          greaterThan(0),
+          reason: '非交易日仍应尝试全量/回退拉取，而不是直接返回成功',
+        );
+        expect(fakeWriter.writeCalls, 1);
+        expect(result.totalRecords, greaterThan(0));
+      },
+    );
+
+    test(
+      'bootstrap plan paginates pool fetch for long minute ranges',
+      () async {
+        final startDay = DateTime(2026, 1, 5);
+        final tradingDays = List<DateTime>.generate(
+          20,
+          (index) => startDay.add(Duration(days: index)),
+        );
+
+        await manager.saveKlineData(
+          stockCode: '000001',
+          newBars: [
+            for (final day in tradingDays)
+              KLine(
+                datetime: day,
+                open: 10,
+                close: 10.2,
+                high: 10.3,
+                low: 9.9,
+                volume: 1000,
+                amount: 10000,
+              ),
+          ],
+          dataType: KLineDataType.daily,
+        );
+
+        fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
+          stockCode: '000001',
+          mode: MinuteSyncMode.bootstrap,
+          datesToFetch: tradingDays,
+        );
+        fakeAdapter.barsToReturn = {
+          '000001': [buildMinuteBar(DateTime(2026, 1, 24, 9, 30))],
+        };
+        fakeWriter.resultToReturn = const MinuteWriteResult(
+          updatedStocks: ['000001'],
+          totalRecords: 6,
+        );
+
+        final result = await repository.fetchMissingData(
+          stockCodes: ['000001'],
+          dateRange: DateRange(
+            tradingDays.first,
+            DateTime(
+              tradingDays.last.year,
+              tradingDays.last.month,
+              tradingDays.last.day,
+              23,
+              59,
+              59,
+            ),
+          ),
+          dataType: KLineDataType.oneMinute,
+        );
+
+        expect(fakeAdapter.fetchCalls, 6);
+        expect(fakeAdapter.startsByCall, [0, 800, 1600, 2400, 3200, 4000]);
+        expect(result.totalRecords, 6);
       },
     );
   });
