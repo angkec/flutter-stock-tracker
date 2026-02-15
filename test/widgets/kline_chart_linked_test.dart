@@ -75,4 +75,39 @@ void main() {
       expect(find.byIcon(Icons.chevron_left), findsNothing);
     },
   );
+
+  testWidgets('emits selection lifecycle during long press and clears on end', (
+    tester,
+  ) async {
+    final states = <(int?, bool)>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 320,
+            child: KLineChart(
+              key: const ValueKey('chart_selection'),
+              bars: buildDailyBarsForTwoWeeks(),
+              onSelectionChanged: (selectedIndex, isSelecting) {
+                states.add((selectedIndex, isSelecting));
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final center = tester.getCenter(find.byKey(const ValueKey('chart_selection')));
+    final gesture = await tester.startGesture(center);
+    await tester.pump(const Duration(milliseconds: 700));
+    await gesture.moveBy(const Offset(18, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+
+    expect(states, isNotEmpty);
+    expect(states.any((entry) => entry.$2 && entry.$1 != null), isTrue);
+    expect(states.last, (null, false));
+  });
 }

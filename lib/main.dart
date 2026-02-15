@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
+import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/config/minute_sync_config.dart';
 import 'package:stock_rtwatcher/screens/main_screen.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -20,6 +21,7 @@ import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
+import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
 import 'package:stock_rtwatcher/data/repository/tdx_pool_fetch_adapter.dart';
@@ -106,8 +108,10 @@ class MyApp extends StatelessWidget {
         Provider<DataRepository>(
           create: (context) {
             final pool = context.read<TdxPool>();
+            final poolAdapter = TdxPoolFetchAdapter(pool: pool);
             return MarketDataRepository(
-              minuteFetchAdapter: TdxPoolFetchAdapter(pool: pool),
+              minuteFetchAdapter: poolAdapter,
+              klineFetchAdapter: poolAdapter,
               minuteSyncConfig: const MinuteSyncConfig(
                 enablePoolMinutePipeline: true,
                 enableMinutePipelineLogs: false,
@@ -154,6 +158,15 @@ class MyApp extends StatelessWidget {
           },
           update: (_, repository, previous) => previous!,
         ),
+        ChangeNotifierProxyProvider<DataRepository, MacdIndicatorService>(
+          create: (context) {
+            final repository = context.read<DataRepository>();
+            final service = MacdIndicatorService(repository: repository);
+            service.load();
+            return service;
+          },
+          update: (_, repository, previous) => previous!,
+        ),
         ChangeNotifierProvider(
           create: (_) {
             final service = BacktestService();
@@ -162,12 +175,12 @@ class MyApp extends StatelessWidget {
           },
         ),
         ChangeNotifierProxyProvider6<
-          TdxPool,
           StockService,
           IndustryService,
           PullbackService,
           BreakoutService,
           HistoricalKlineService,
+          MacdIndicatorService,
           MarketDataProvider
         >(
           create: (context) {
@@ -178,26 +191,29 @@ class MyApp extends StatelessWidget {
             final breakoutService = context.read<BreakoutService>();
             final historicalKlineService = context
                 .read<HistoricalKlineService>();
+            final macdService = context.read<MacdIndicatorService>();
             breakoutService.setHistoricalKlineService(historicalKlineService);
             final provider = MarketDataProvider(
               pool: pool,
               stockService: stockService,
               industryService: industryService,
+              dailyBarsFileStorage: DailyKlineCacheStore(),
             );
             provider.setPullbackService(pullbackService);
             provider.setBreakoutService(breakoutService);
+            provider.setMacdService(macdService);
             provider.loadFromCache();
             return provider;
           },
           update:
               (
                 _,
-                pool,
                 stockService,
                 industryService,
                 pullbackService,
                 breakoutService,
                 historicalKlineService,
+                macdService,
                 previous,
               ) {
                 breakoutService.setHistoricalKlineService(
@@ -205,6 +221,7 @@ class MyApp extends StatelessWidget {
                 );
                 previous!.setPullbackService(pullbackService);
                 previous.setBreakoutService(breakoutService);
+                previous.setMacdService(macdService);
                 return previous;
               },
         ),

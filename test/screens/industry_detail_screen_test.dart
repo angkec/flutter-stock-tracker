@@ -158,7 +158,11 @@ class _FakeMarketDataProvider extends MarketDataProvider {
   List<StockMonitorData> get allData => _testData;
 
   @override
-  Future<void> refresh({bool silent = false}) async {}
+  Future<void> refresh({
+    bool silent = false,
+    bool forceMinuteRefetch = false,
+    bool forceDailyRefetch = false,
+  }) async {}
 }
 
 class _FakeTrendService extends IndustryTrendService {

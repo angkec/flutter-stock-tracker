@@ -1,29 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
-import 'package:stock_rtwatcher/widgets/kline_chart.dart';
+import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_coordinator.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_models.dart';
+import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
+import 'package:stock_rtwatcher/widgets/macd_subchart.dart';
+import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
 
 class LinkedDualKlineView extends StatefulWidget {
   const LinkedDualKlineView({
     super.key,
+    required this.stockCode,
     required this.weeklyBars,
     required this.dailyBars,
     required this.ratios,
+    this.macdCacheStoreForTest,
   });
 
+  final String stockCode;
   final List<KLine> weeklyBars;
   final List<KLine> dailyBars;
   final List<DailyRatio> ratios;
+  final MacdCacheStore? macdCacheStoreForTest;
 
   @override
   State<LinkedDualKlineView> createState() => _LinkedDualKlineViewState();
 }
 
 class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
-  static const double _chartInfoHeight = 24;
-
   late LinkedCrosshairCoordinator _coordinator;
 
   @override
@@ -98,13 +103,20 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
               flex: 42,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  return KLineChart(
+                  const infoHeight = 24.0;
+                  const subChartSpacing = 10.0;
+                  const subChartHeight = 84.0;
+                  final chartHeight =
+                      constraints.maxHeight -
+                      infoHeight -
+                      subChartSpacing -
+                      subChartHeight;
+
+                  return KLineChartWithSubCharts(
                     key: const ValueKey('linked_weekly_chart'),
+                    stockCode: widget.stockCode,
                     bars: widget.weeklyBars,
-                    height: (constraints.maxHeight - _chartInfoHeight).clamp(
-                      120.0,
-                      double.infinity,
-                    ),
+                    chartHeight: chartHeight.clamp(90.0, double.infinity),
                     linkedPane: LinkedPane.weekly,
                     onLinkedTouchEvent: _coordinator.handleTouch,
                     externalLinkedState: _coordinator.stateForPane(
@@ -112,6 +124,16 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
                     ),
                     externalLinkedBarIndex: _coordinator.mappedWeeklyIndex,
                     showWeeklySeparators: false,
+                    subChartSpacing: subChartSpacing,
+                    subCharts: [
+                      MacdSubChart(
+                        key: const ValueKey('linked_weekly_macd_subchart'),
+                        dataType: KLineDataType.weekly,
+                        cacheStore: widget.macdCacheStoreForTest,
+                        height: subChartHeight,
+                        chartKey: const ValueKey('linked_weekly_macd_paint'),
+                      ),
+                    ],
                   );
                 },
               ),
@@ -121,14 +143,21 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
               flex: 58,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  return KLineChart(
+                  const infoHeight = 24.0;
+                  const subChartSpacing = 10.0;
+                  const subChartHeight = 92.0;
+                  final chartHeight =
+                      constraints.maxHeight -
+                      infoHeight -
+                      subChartSpacing -
+                      subChartHeight;
+
+                  return KLineChartWithSubCharts(
                     key: const ValueKey('linked_daily_chart'),
+                    stockCode: widget.stockCode,
                     bars: widget.dailyBars,
                     ratios: widget.ratios,
-                    height: (constraints.maxHeight - _chartInfoHeight).clamp(
-                      120.0,
-                      double.infinity,
-                    ),
+                    chartHeight: chartHeight.clamp(100.0, double.infinity),
                     linkedPane: LinkedPane.daily,
                     onLinkedTouchEvent: _coordinator.handleTouch,
                     externalLinkedState: _coordinator.stateForPane(
@@ -136,6 +165,16 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
                     ),
                     externalLinkedBarIndex: _coordinator.mappedDailyIndex,
                     showWeeklySeparators: true,
+                    subChartSpacing: subChartSpacing,
+                    subCharts: [
+                      MacdSubChart(
+                        key: const ValueKey('linked_daily_macd_subchart'),
+                        dataType: KLineDataType.daily,
+                        cacheStore: widget.macdCacheStoreForTest,
+                        height: subChartHeight,
+                        chartKey: const ValueKey('linked_daily_macd_paint'),
+                      ),
+                    ],
                   );
                 },
               ),

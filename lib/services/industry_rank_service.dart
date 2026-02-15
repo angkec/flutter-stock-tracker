@@ -9,8 +9,10 @@ import 'package:stock_rtwatcher/services/stock_service.dart';
 class _RankComputeParams {
   /// 每股票每日涨跌量: stockCode -> dateKey -> [up, down]
   final Map<String, Map<String, List<double>>> stockVolumes;
+
   /// 股票行业映射: stockCode -> industry
   final Map<String, String> stockIndustries;
+
   /// 要计算的日期列表
   final List<String> dates;
 
@@ -22,7 +24,9 @@ class _RankComputeParams {
 }
 
 /// Isolate 中计算行业排名
-Map<String, Map<String, Map<String, dynamic>>> _computeRankInIsolate(_RankComputeParams params) {
+Map<String, Map<String, Map<String, dynamic>>> _computeRankInIsolate(
+  _RankComputeParams params,
+) {
   final result = <String, Map<String, Map<String, dynamic>>>{};
 
   for (final dateKey in params.dates) {
@@ -132,10 +136,7 @@ class IndustryRankService extends ChangeNotifier {
 
     if (records.isEmpty) return null;
 
-    return IndustryRankHistory(
-      industryName: industry,
-      records: records,
-    );
+    return IndustryRankHistory(industryName: industry, records: records);
   }
 
   /// 获取所有行业的排名历史（最近N天），按当前排名排序
@@ -229,7 +230,9 @@ class IndustryRankService extends ChangeNotifier {
         final json = jsonDecode(jsonStr) as Map<String, dynamic>;
         _deserializeHistory(json);
         _cleanupOldData();
-        debugPrint('[IndustryRank] 缓存加载完成, calculatedFromVersion=$_calculatedFromVersion, ${_historyData.length} 天');
+        debugPrint(
+          '[IndustryRank] 缓存加载完成, calculatedFromVersion=$_calculatedFromVersion, ${_historyData.length} 天',
+        );
       }
 
       // 加载配置
@@ -279,12 +282,22 @@ class IndustryRankService extends ChangeNotifier {
 
     // 检查是否需要重算
     final currentVersion = dataVersion ?? 0;
-    if (!force && _calculatedFromVersion == currentVersion && _historyData.isNotEmpty) {
+    if (!force &&
+        _calculatedFromVersion == currentVersion &&
+        _historyData.isNotEmpty) {
       debugPrint('[IndustryRank] 数据版本未变 (v$currentVersion)，跳过重算');
       return;
     }
 
-    debugPrint('[IndustryRank] 开始重算排名, ${stocks.length} 只股票, 数据版本 v$currentVersion');
+    debugPrint(
+      '[IndustryRank] 开始重算排名, ${stocks.length} 只股票, 数据版本 v$currentVersion',
+    );
+
+    final totalStopwatch = Stopwatch()..start();
+    final prepareStopwatch = Stopwatch()..start();
+    var cacheHitCount = 0;
+    var cacheMissCount = 0;
+    var loadVolumesMs = 0;
 
     // 准备传给 isolate 的数据
     final stockVolumes = <String, Map<String, List<double>>>{};
@@ -297,7 +310,17 @@ class IndustryRankService extends ChangeNotifier {
 
       stockIndustries[stock.stock.code] = industry;
 
-      final volumes = await klineService.getDailyVolumes(stock.stock.code);
+      final volumes = await klineService.getDailyVolumes(
+        stock.stock.code,
+        onProfile: (profile) {
+          loadVolumesMs += profile.elapsedMs;
+          if (profile.fromCache) {
+            cacheHitCount++;
+          } else {
+            cacheMissCount++;
+          }
+        },
+      );
       if (volumes.isNotEmpty) {
         stockVolumes[stock.stock.code] = volumes.map(
           (dateKey, vol) => MapEntry(dateKey, [vol.up, vol.down]),
@@ -306,11 +329,17 @@ class IndustryRankService extends ChangeNotifier {
         allDates.addAll(volumes.keys);
       }
     }
+    prepareStopwatch.stop();
 
     final dates = allDates.toList()..sort();
-    debugPrint('[IndustryRank] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期');
+    debugPrint(
+      '[IndustryRank] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期, '
+      'prepareMs=${prepareStopwatch.elapsedMilliseconds}, '
+      'dailyVolumesMs=$loadVolumesMs, cacheHit=$cacheHitCount, cacheMiss=$cacheMissCount',
+    );
 
     // 在 isolate 中计算
+    final computeStopwatch = Stopwatch()..start();
     final computeResult = await compute(
       _computeRankInIsolate,
       _RankComputeParams(
@@ -319,8 +348,10 @@ class IndustryRankService extends ChangeNotifier {
         dates: dates,
       ),
     );
+    computeStopwatch.stop();
 
     // 转换结果
+    final transformStopwatch = Stopwatch()..start();
     final newHistory = <String, Map<String, IndustryRankRecord>>{};
     for (final dateEntry in computeResult.entries) {
       final dateKey = dateEntry.key;
@@ -339,13 +370,28 @@ class IndustryRankService extends ChangeNotifier {
         newHistory[dateKey] = dayRanks;
       }
     }
+    transformStopwatch.stop();
 
     debugPrint('[IndustryRank] 计算完成, ${newHistory.length} 天有排名数据');
 
     _historyData = newHistory;
     _calculatedFromVersion = currentVersion;
     _cleanupOldData();
+
+    final saveStopwatch = Stopwatch()..start();
     await _save();
+    saveStopwatch.stop();
+
+    totalStopwatch.stop();
+    debugPrint(
+      '[IndustryRank][timing] '
+      'prepareMs=${prepareStopwatch.elapsedMilliseconds}, '
+      'computeMs=${computeStopwatch.elapsedMilliseconds}, '
+      'transformMs=${transformStopwatch.elapsedMilliseconds}, '
+      'saveMs=${saveStopwatch.elapsedMilliseconds}, '
+      'totalMs=${totalStopwatch.elapsedMilliseconds}',
+    );
+
     debugPrint('[IndustryRank] 保存完成 (基于数据版本 v$currentVersion)');
     notifyListeners();
   }
@@ -377,7 +423,8 @@ class IndustryRankService extends ChangeNotifier {
     while (days.length < count && checked < count * 2) {
       current = current.subtract(const Duration(days: 1));
       checked++;
-      if (current.weekday == DateTime.saturday || current.weekday == DateTime.sunday) {
+      if (current.weekday == DateTime.saturday ||
+          current.weekday == DateTime.sunday) {
         continue;
       }
       days.add(DateTime(current.year, current.month, current.day));
@@ -433,7 +480,9 @@ class IndustryRankService extends ChangeNotifier {
             industryEntry.value as Map<String, dynamic>,
           );
         } catch (e) {
-          debugPrint('Failed to deserialize industry rank for ${industryEntry.key}: $e');
+          debugPrint(
+            'Failed to deserialize industry rank for ${industryEntry.key}: $e',
+          );
         }
       }
       if (dayRanks.isNotEmpty) {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../models/data_status.dart';
 import '../models/data_updated_event.dart';
@@ -49,6 +50,8 @@ class MarketDataRepository implements DataRepository {
   static const int _minCompleteBars = 220;
   static const int _expectedMinuteBarsPerTradingDay = 240;
   static const double _minTradingDateCoverageRatio = 0.3;
+  static const Duration _weeklyFreshnessTolerance = Duration(days: 7);
+  static const String _precheckProgressStock = '__PRECHECK__';
 
   MarketDataRepository({
     KLineMetadataManager? metadataManager,
@@ -417,9 +420,12 @@ class MarketDataRepository implements DataRepository {
 
     if (dataType == KLineDataType.daily && _klineFetchAdapter != null) {
       try {
-        return await _fetchDailyDataWithPoolPipeline(
+        return await _fetchHigherTimeframeDataWithPoolPipeline(
           stockCodes: stockCodes,
           dateRange: dateRange,
+          dataType: KLineDataType.daily,
+          totalStocksForResult: stockCodes.length,
+          skippedStocksCount: 0,
           onProgress: onProgress,
           stopwatch: stopwatch,
         );
@@ -427,6 +433,27 @@ class MarketDataRepository implements DataRepository {
         debugPrint('daily pool pipeline failed: $error');
         if (kDebugMode) {
           debugPrint('daily pool pipeline stack: $stackTrace');
+        }
+      }
+    }
+
+    if (dataType == KLineDataType.weekly &&
+        skipPrecheck &&
+        _klineFetchAdapter != null) {
+      try {
+        return await _fetchHigherTimeframeDataWithPoolPipeline(
+          stockCodes: stockCodes,
+          dateRange: dateRange,
+          dataType: KLineDataType.weekly,
+          totalStocksForResult: stockCodes.length,
+          skippedStocksCount: 0,
+          onProgress: onProgress,
+          stopwatch: stopwatch,
+        );
+      } catch (error, stackTrace) {
+        debugPrint('weekly refetch pool pipeline failed: $error');
+        if (kDebugMode) {
+          debugPrint('weekly refetch pool pipeline stack: $stackTrace');
         }
       }
     }
@@ -470,6 +497,74 @@ class MarketDataRepository implements DataRepository {
           '${stocksNeedingFetch.length} stocks need fetching',
         );
       }
+    } else if (!skipPrecheck && dataType == KLineDataType.weekly) {
+      final coverageRanges = await _metadataManager.getCoverageRanges(
+        stockCodes: stockCodes,
+        dataType: dataType,
+      );
+
+      for (var index = 0; index < stockCodes.length; index++) {
+        final stockCode = stockCodes[index];
+        final coverage = coverageRanges[stockCode];
+
+        _statusController.add(
+          DataFetching(
+            current: index + 1,
+            total: stockCodes.length,
+            currentStock: _precheckProgressStock,
+          ),
+        );
+        onProgress?.call(index + 1, stockCodes.length);
+
+        final hasCoverage = _hasCoverageForDateRange(
+          startDate: coverage?.startDate,
+          endDate: coverage?.endDate,
+          dateRange: dateRange,
+          freshnessTolerance: _weeklyFreshnessTolerance,
+        );
+
+        if (hasCoverage) {
+          skippedStocks.add(stockCode);
+        } else {
+          stocksNeedingFetch.add(stockCode);
+        }
+      }
+
+      debugPrint(
+        'fetchMissingData(weekly): ${skippedStocks.length} stocks skipped (covered), '
+        '${stocksNeedingFetch.length} stocks need fetching',
+      );
+
+      if (stocksNeedingFetch.isNotEmpty && _klineFetchAdapter != null) {
+        try {
+          return await _fetchHigherTimeframeDataWithPoolPipeline(
+            stockCodes: stocksNeedingFetch,
+            dateRange: dateRange,
+            dataType: dataType,
+            totalStocksForResult: stockCodes.length,
+            skippedStocksCount: skippedStocks.length,
+            onProgress: onProgress,
+            stopwatch: stopwatch,
+          );
+        } catch (error, stackTrace) {
+          debugPrint('weekly pool pipeline failed: $error');
+          if (kDebugMode) {
+            debugPrint('weekly pool pipeline stack: $stackTrace');
+          }
+        }
+      }
+
+      if (stocksNeedingFetch.isEmpty) {
+        stopwatch.stop();
+        return FetchResult(
+          totalStocks: stockCodes.length,
+          successCount: stockCodes.length,
+          failureCount: 0,
+          errors: {},
+          totalRecords: 0,
+          duration: stopwatch.elapsed,
+        );
+      }
     } else {
       // 跳过预检查或日线数据 - 拉取所有股票
       stocksNeedingFetch.addAll(stockCodes);
@@ -487,6 +582,7 @@ class MarketDataRepository implements DataRepository {
         duration: stopwatch.elapsed,
       );
     }
+
     // ============ 预检查结束 ============
 
     final total = stocksNeedingFetch.length;
@@ -873,11 +969,7 @@ class MarketDataRepository implements DataRepository {
         .length;
     if (writeTargetCount > 0) {
       _statusController.add(
-        const DataFetching(
-          current: 0,
-          total: 1,
-          currentStock: '__WRITE__',
-        ),
+        const DataFetching(current: 0, total: 1, currentStock: '__WRITE__'),
       );
     }
 
@@ -956,9 +1048,12 @@ class MarketDataRepository implements DataRepository {
     );
   }
 
-  Future<FetchResult> _fetchDailyDataWithPoolPipeline({
+  Future<FetchResult> _fetchHigherTimeframeDataWithPoolPipeline({
     required List<String> stockCodes,
     required DateRange dateRange,
+    required KLineDataType dataType,
+    required int totalStocksForResult,
+    required int skippedStocksCount,
     ProgressCallback? onProgress,
     required Stopwatch stopwatch,
   }) async {
@@ -967,8 +1062,8 @@ class MarketDataRepository implements DataRepository {
       final currentVersion = await _metadataManager.getCurrentVersion();
       _statusController.add(DataReady(currentVersion));
       return FetchResult(
-        totalStocks: 0,
-        successCount: 0,
+        totalStocks: totalStocksForResult,
+        successCount: skippedStocksCount,
         failureCount: 0,
         errors: const {},
         totalRecords: 0,
@@ -976,7 +1071,7 @@ class MarketDataRepository implements DataRepository {
       );
     }
 
-    final category = _mapDataTypeToCategory(KLineDataType.daily);
+    final category = _mapDataTypeToCategory(dataType);
     final batchSize = _minuteSyncConfig.poolBatchCount;
     final maxBatches = _minuteSyncConfig.poolMaxBatches;
 
@@ -992,8 +1087,11 @@ class MarketDataRepository implements DataRepository {
       for (final code in stockCodes) code: <KLine>[],
     };
 
-    final completedByStock = <String, bool>{for (final code in stockCodes) code: false};
+    final completedByStock = <String, bool>{
+      for (final code in stockCodes) code: false,
+    };
     var completedStocks = 0;
+    var fetchProgressCurrent = 0;
 
     for (var batchIndex = 0; batchIndex < maxBatches; batchIndex++) {
       final activeStocks = stockCodes
@@ -1010,6 +1108,28 @@ class MarketDataRepository implements DataRepository {
         category: category,
         start: batchStart,
         count: batchSize,
+        onProgress: (current, total) {
+          final safeTotal = total <= 0 ? activeStocks.length : total;
+          final boundedCurrent = current.clamp(0, safeTotal);
+          final stockIndex = boundedCurrent <= 0
+              ? 0
+              : min(activeStocks.length - 1, boundedCurrent - 1);
+          final overallCurrent = (completedStocks + boundedCurrent).clamp(
+            0,
+            stockCodes.length,
+          );
+          if (overallCurrent > fetchProgressCurrent) {
+            fetchProgressCurrent = overallCurrent;
+            _statusController.add(
+              DataFetching(
+                current: fetchProgressCurrent,
+                total: stockCodes.length,
+                currentStock: activeStocks[stockIndex],
+              ),
+            );
+            onProgress?.call(fetchProgressCurrent, stockCodes.length);
+          }
+        },
       );
 
       for (final stockCode in activeStocks) {
@@ -1019,21 +1139,25 @@ class MarketDataRepository implements DataRepository {
         }
 
         final reachedRangeStart =
-            batchBars.isNotEmpty && batchBars.first.datetime.isBefore(dateRange.start);
+            batchBars.isNotEmpty &&
+            batchBars.first.datetime.isBefore(dateRange.start);
         final noMoreData = batchBars.isEmpty || batchBars.length < batchSize;
 
         if (reachedRangeStart || noMoreData || batchIndex == maxBatches - 1) {
           if (!(completedByStock[stockCode] ?? false)) {
             completedByStock[stockCode] = true;
             completedStocks++;
-            _statusController.add(
-              DataFetching(
-                current: completedStocks,
-                total: stockCodes.length,
-                currentStock: stockCode,
-              ),
-            );
-            onProgress?.call(completedStocks, stockCodes.length);
+            if (completedStocks > fetchProgressCurrent) {
+              fetchProgressCurrent = completedStocks;
+              _statusController.add(
+                DataFetching(
+                  current: fetchProgressCurrent,
+                  total: stockCodes.length,
+                  currentStock: stockCode,
+                ),
+              );
+              onProgress?.call(fetchProgressCurrent, stockCodes.length);
+            }
           }
         }
       }
@@ -1045,35 +1169,112 @@ class MarketDataRepository implements DataRepository {
     var failureCount = 0;
     var totalRecords = 0;
 
-    for (final stockCode in stockCodes) {
-      try {
-        final filteredBars = (allBarsByStock[stockCode] ?? const <KLine>[])
-            .where((bar) => dateRange.contains(bar.datetime))
-            .toList()
-          ..sort((a, b) => a.datetime.compareTo(b.datetime));
+    final writeTargetCount = stockCodes.length;
+    _statusController.add(
+      DataFetching(
+        current: 0,
+        total: writeTargetCount,
+        currentStock: '__WRITE__',
+      ),
+    );
 
-        if (filteredBars.isNotEmpty) {
-          await _metadataManager.saveKlineData(
-            stockCode: stockCode,
-            newBars: filteredBars,
-            dataType: KLineDataType.daily,
-          );
-          _invalidateCache(stockCode, KLineDataType.daily);
-          updatedStockCodes.add(stockCode);
-          totalRecords += filteredBars.length;
+    final writeOutcomes = List<_HigherTimeframeWriteOutcome?>.filled(
+      stockCodes.length,
+      null,
+    );
+    final writeWorkerCount = min(
+      _runtimeMinuteWriteConcurrency,
+      stockCodes.length,
+    );
+    var nextWriteIndex = 0;
+    var completedWrites = 0;
+
+    Future<void> runWriteWorker() async {
+      while (true) {
+        final currentIndex = nextWriteIndex;
+        if (currentIndex >= stockCodes.length) {
+          return;
         }
-        successCount++;
-      } catch (e, stackTrace) {
-        failureCount++;
-        errors[stockCode] = e.toString();
-        debugPrint('daily pool fetch: $stockCode failed - $e');
-        if (kDebugMode) {
-          debugPrint('Stack trace: $stackTrace');
+        nextWriteIndex++;
+
+        final stockCode = stockCodes[currentIndex];
+        late _HigherTimeframeWriteOutcome outcome;
+
+        try {
+          final filteredBars =
+              (allBarsByStock[stockCode] ?? const <KLine>[])
+                  .where((bar) => dateRange.contains(bar.datetime))
+                  .toList()
+                ..sort((a, b) => a.datetime.compareTo(b.datetime));
+
+          if (filteredBars.isNotEmpty) {
+            await _metadataManager.saveKlineData(
+              stockCode: stockCode,
+              newBars: filteredBars,
+              dataType: dataType,
+              bumpVersion: false,
+            );
+            _invalidateCache(stockCode, dataType);
+          }
+
+          outcome = _HigherTimeframeWriteOutcome(
+            stockCode: stockCode,
+            success: true,
+            updated: filteredBars.isNotEmpty,
+            recordCount: filteredBars.length,
+          );
+        } catch (e, stackTrace) {
+          debugPrint('${dataType.name} pool fetch: $stockCode failed - $e');
+          if (kDebugMode) {
+            debugPrint('Stack trace: $stackTrace');
+          }
+          outcome = _HigherTimeframeWriteOutcome(
+            stockCode: stockCode,
+            success: false,
+            updated: false,
+            recordCount: 0,
+            error: e.toString(),
+          );
+        } finally {
+          writeOutcomes[currentIndex] = outcome;
+          completedWrites++;
+          _statusController.add(
+            DataFetching(
+              current: completedWrites,
+              total: writeTargetCount,
+              currentStock: '__WRITE__',
+            ),
+          );
         }
       }
     }
 
+    await Future.wait(
+      List.generate(writeWorkerCount, (_) => runWriteWorker(), growable: false),
+    );
+
+    for (final outcome
+        in writeOutcomes.whereType<_HigherTimeframeWriteOutcome>()) {
+      if (outcome.success) {
+        successCount++;
+      } else {
+        failureCount++;
+        errors[outcome.stockCode] = outcome.error ?? 'unknown error';
+      }
+
+      if (outcome.updated) {
+        updatedStockCodes.add(outcome.stockCode);
+        totalRecords += outcome.recordCount;
+      }
+    }
+
     stopwatch.stop();
+
+    if (updatedStockCodes.isNotEmpty) {
+      await _metadataManager.incrementDataVersion(
+        'Updated ${dataType.name} data for ${updatedStockCodes.length} stocks',
+      );
+    }
     final currentVersion = await _metadataManager.getCurrentVersion();
 
     if (updatedStockCodes.isNotEmpty) {
@@ -1081,7 +1282,7 @@ class MarketDataRepository implements DataRepository {
         DataUpdatedEvent(
           stockCodes: updatedStockCodes,
           dateRange: dateRange,
-          dataType: KLineDataType.daily,
+          dataType: dataType,
           dataVersion: currentVersion,
         ),
       );
@@ -1090,8 +1291,8 @@ class MarketDataRepository implements DataRepository {
     _statusController.add(DataReady(currentVersion));
 
     return FetchResult(
-      totalStocks: stockCodes.length,
-      successCount: successCount,
+      totalStocks: totalStocksForResult,
+      successCount: successCount + skippedStocksCount,
       failureCount: failureCount,
       errors: errors,
       totalRecords: totalRecords,
@@ -1204,15 +1405,49 @@ class MarketDataRepository implements DataRepository {
     return filteredKlines;
   }
 
+  bool _hasCoverageForDateRange({
+    required DateTime? startDate,
+    required DateTime? endDate,
+    required DateRange dateRange,
+    Duration freshnessTolerance = Duration.zero,
+  }) {
+    if (startDate == null || endDate == null) {
+      return false;
+    }
+
+    final requiredStart = DateTime(
+      dateRange.start.year,
+      dateRange.start.month,
+      dateRange.start.day,
+    );
+
+    final rawRequiredEnd = DateTime(
+      dateRange.end.year,
+      dateRange.end.month,
+      dateRange.end.day,
+    ).subtract(freshnessTolerance);
+
+    final requiredEnd = rawRequiredEnd.isBefore(requiredStart)
+        ? requiredStart
+        : rawRequiredEnd;
+
+    final coveredStart = !startDate.isAfter(requiredStart);
+    final coveredEnd = !endDate.isBefore(requiredEnd);
+    return coveredStart && coveredEnd;
+  }
+
   /// 映射数据类型到 TDX category
   /// oneMinute -> 7 (1分钟K线)
   /// daily -> 4 (日线)
+  /// weekly -> 5 (周线)
   int _mapDataTypeToCategory(KLineDataType dataType) {
     switch (dataType) {
       case KLineDataType.oneMinute:
         return 7; // 1分钟K线
       case KLineDataType.daily:
         return 4; // 日线
+      case KLineDataType.weekly:
+        return 5; // 周线
     }
   }
 
@@ -1589,6 +1824,22 @@ class MarketDataRepository implements DataRepository {
     await _dataUpdatedController.close();
     _klineCache.clear();
   }
+}
+
+class _HigherTimeframeWriteOutcome {
+  final String stockCode;
+  final bool success;
+  final bool updated;
+  final int recordCount;
+  final String? error;
+
+  const _HigherTimeframeWriteOutcome({
+    required this.stockCode,
+    required this.success,
+    required this.updated,
+    required this.recordCount,
+    this.error,
+  });
 }
 
 class _LegacyMinuteFetchAdapter implements MinuteFetchAdapter {

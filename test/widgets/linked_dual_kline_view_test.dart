@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:stock_rtwatcher/widgets/kline_chart.dart';
+import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
 import 'package:stock_rtwatcher/widgets/linked_dual_kline_view.dart';
 
 import '../support/kline_fixture_builder.dart';
@@ -11,6 +11,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: LinkedDualKlineView(
+            stockCode: '600000',
             weeklyBars: buildWeeklyBars(),
             dailyBars: buildDailyBarsForTwoWeeks(),
             ratios: const [],
@@ -21,11 +22,19 @@ void main() {
 
     expect(find.byKey(const ValueKey('linked_weekly_chart')), findsOneWidget);
     expect(find.byKey(const ValueKey('linked_daily_chart')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('linked_weekly_macd_subchart')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('linked_daily_macd_subchart')),
+      findsOneWidget,
+    );
 
-    final weeklyChart = tester.widget<KLineChart>(
+    final weeklyChart = tester.widget<KLineChartWithSubCharts>(
       find.byKey(const ValueKey('linked_weekly_chart')),
     );
-    final dailyChart = tester.widget<KLineChart>(
+    final dailyChart = tester.widget<KLineChartWithSubCharts>(
       find.byKey(const ValueKey('linked_daily_chart')),
     );
     expect(weeklyChart.showWeeklySeparators, isFalse);

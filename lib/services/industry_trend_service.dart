@@ -135,6 +135,12 @@ class IndustryTrendService extends ChangeNotifier {
       '[IndustryTrend] 开始重算趋势, ${stocks.length} 只股票, 数据版本 v$currentVersion',
     );
 
+    final totalStopwatch = Stopwatch()..start();
+    final prepareStopwatch = Stopwatch()..start();
+    var cacheHitCount = 0;
+    var cacheMissCount = 0;
+    var loadVolumesMs = 0;
+
     // 准备传给 isolate 的数据（在主线程完成，避免传输大量 K 线数据）
     final stockVolumes = <String, Map<String, List<double>>>{};
     final stockIndustries = <String, String>{};
@@ -147,7 +153,17 @@ class IndustryTrendService extends ChangeNotifier {
       stockIndustries[stock.stock.code] = industry;
 
       // 获取这只股票的每日涨跌量
-      final volumes = await klineService.getDailyVolumes(stock.stock.code);
+      final volumes = await klineService.getDailyVolumes(
+        stock.stock.code,
+        onProfile: (profile) {
+          loadVolumesMs += profile.elapsedMs;
+          if (profile.fromCache) {
+            cacheHitCount++;
+          } else {
+            cacheMissCount++;
+          }
+        },
+      );
       if (volumes.isNotEmpty) {
         stockVolumes[stock.stock.code] = volumes.map(
           (dateKey, vol) => MapEntry(dateKey, [vol.up, vol.down]),
@@ -156,13 +172,17 @@ class IndustryTrendService extends ChangeNotifier {
         allDates.addAll(volumes.keys);
       }
     }
+    prepareStopwatch.stop();
 
     final dates = allDates.toList()..sort();
     debugPrint(
-      '[IndustryTrend] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期',
+      '[IndustryTrend] 准备数据完成, ${stockVolumes.length} 只股票, ${dates.length} 个日期, '
+      'prepareMs=${prepareStopwatch.elapsedMilliseconds}, '
+      'dailyVolumesMs=$loadVolumesMs, cacheHit=$cacheHitCount, cacheMiss=$cacheMissCount',
     );
 
     // 在 isolate 中计算
+    final computeStopwatch = Stopwatch()..start();
     final computeResult = await compute(
       _computeTrendInIsolate,
       _TrendComputeParams(
@@ -171,8 +191,10 @@ class IndustryTrendService extends ChangeNotifier {
         dates: dates,
       ),
     );
+    computeStopwatch.stop();
 
     // 转换结果
+    final transformStopwatch = Stopwatch()..start();
     final newTrendData = <String, IndustryTrendData>{};
     for (final entry in computeResult.entries) {
       final industry = entry.key;
@@ -194,13 +216,28 @@ class IndustryTrendService extends ChangeNotifier {
         points: points,
       );
     }
+    transformStopwatch.stop();
 
     debugPrint('[IndustryTrend] 计算完成, ${newTrendData.length} 个行业有数据');
 
     _trendData = newTrendData;
     _missingDays = 0;
     _calculatedFromVersion = currentVersion;
+
+    final saveStopwatch = Stopwatch()..start();
     await _save();
+    saveStopwatch.stop();
+
+    totalStopwatch.stop();
+    debugPrint(
+      '[IndustryTrend][timing] '
+      'prepareMs=${prepareStopwatch.elapsedMilliseconds}, '
+      'computeMs=${computeStopwatch.elapsedMilliseconds}, '
+      'transformMs=${transformStopwatch.elapsedMilliseconds}, '
+      'saveMs=${saveStopwatch.elapsedMilliseconds}, '
+      'totalMs=${totalStopwatch.elapsedMilliseconds}',
+    );
+
     debugPrint('[IndustryTrend] 保存完成 (基于数据版本 v$currentVersion)');
     notifyListeners();
   }

@@ -9,9 +9,13 @@ import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/screens/macd_settings_screen.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
+import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
+
+enum _WeeklySyncStage { precheck, fetch, write }
 
 class DataManagementScreen extends StatefulWidget {
   const DataManagementScreen({super.key});
@@ -23,11 +27,14 @@ class DataManagementScreen extends StatefulWidget {
 class _DataManagementScreenState extends State<DataManagementScreen> {
   // 用于强制刷新 FutureBuilder
   int _refreshKey = 0;
+  bool _isSyncingWeeklyKline = false;
   static const double _minTradingDateCoverageRatio = 0.3;
   static const int _minCompleteMinuteBars = 220;
   static const int _latestTradingDayProbeDays = 20;
   static const int _baselineFallbackFullCheckStockLimit = 500;
   static const int _baselineFallbackSampleSize = 60;
+  static const int _weeklyTargetBars = 100;
+  static const int _weeklyRangeDays = 760;
 
   void _triggerRefresh() {
     setState(() {
@@ -38,26 +45,38 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('数据管理')),
+      appBar: AppBar(
+        title: Text(
+          '数据管理',
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+      ),
       body: Consumer<MarketDataProvider>(
         builder: (_, provider, __) {
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
             children: [
-              // 缓存总大小
               _buildSummaryCard(context, provider),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
 
-              // 分类缓存列表
+              _buildSectionTitle(context, '基础数据'),
+              const SizedBox(height: 6),
               _buildCacheItem(
                 context,
                 title: '日K数据',
                 subtitle: '${provider.dailyBarsCacheCount}只股票',
                 size: provider.dailyBarsCacheSize,
-                onClear: () => _confirmClear(
+                statusLabel: provider.dailyBarsCacheCount > 0 ? '已缓存' : '待拉取',
+                isReady: provider.dailyBarsCacheCount > 0,
+                isBusy: provider.isLoading,
+                onForceRefetch: () => _confirmForceRefetch(
                   context,
                   '日K数据',
-                  () => provider.clearDailyBarsCache(),
+                  () => _forceRefetchDailyData(context),
                 ),
               ),
               _buildCacheItem(
@@ -65,10 +84,13 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 title: '分时数据',
                 subtitle: '${provider.minuteDataCacheCount}只股票',
                 size: provider.minuteDataCacheSize,
-                onClear: () => _confirmClear(
+                statusLabel: provider.minuteDataCacheCount > 0 ? '已缓存' : '待拉取',
+                isReady: provider.minuteDataCacheCount > 0,
+                isBusy: provider.isLoading,
+                onForceRefetch: () => _confirmForceRefetch(
                   context,
                   '分时数据',
-                  () => provider.clearMinuteDataCache(),
+                  () => _forceRefetchMinuteData(context),
                 ),
               ),
               _buildCacheItem(
@@ -76,14 +98,50 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 title: '行业数据',
                 subtitle: provider.industryDataLoaded ? '已加载' : '未加载',
                 size: provider.industryDataCacheSize,
-                onClear: () => _confirmClear(
+                statusLabel: provider.industryDataLoaded ? '已加载' : '待拉取',
+                isReady: provider.industryDataLoaded,
+                isBusy: provider.isLoading,
+                onForceRefetch: () => _confirmForceRefetch(
                   context,
                   '行业数据',
-                  () => provider.clearIndustryDataCache(),
+                  () => _forceRefetchIndustryData(context),
                 ),
               ),
+              Consumer<DataRepository>(
+                builder: (context, repository, _) {
+                  return FutureBuilder<({String subtitle, int missingStocks})>(
+                    key: ValueKey('weekly_kline_$_refreshKey'),
+                    future: _getWeeklyKlineStatus(repository, provider),
+                    builder: (context, snapshot) {
+                      final status =
+                          snapshot.data ??
+                          (subtitle: '加载中...', missingStocks: 0);
+                      return _buildWeeklyKlineCacheItem(
+                        context,
+                        title: '周K数据',
+                        subtitle: status.subtitle,
+                        missingStocks: status.missingStocks,
+                        isLoading: _isSyncingWeeklyKline,
+                        onFetch: () => _fetchWeeklyKline(context),
+                        onForceRefetch: () => _confirmForceRefetch(
+                          context,
+                          '周K数据',
+                          () => _fetchWeeklyKline(context, forceRefetch: true),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
 
-              // 历史分钟K线 (managed by DataRepository)
+              const SizedBox(height: 10),
+              _buildSectionTitle(context, '技术指标'),
+              const SizedBox(height: 6),
+              _buildMacdSettingsItem(context),
+
+              const SizedBox(height: 10),
+              _buildSectionTitle(context, '历史分钟K线'),
+              const SizedBox(height: 6),
               Consumer<DataRepository>(
                 builder: (context, repository, _) {
                   return FutureBuilder<({String subtitle, int missingDays})>(
@@ -97,80 +155,50 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                         context,
                         title: '历史分钟K线',
                         subtitle: status.subtitle,
-                        size: '-', // Size is managed by DataRepository
+                        size: '-',
                         missingDays: status.missingDays,
-                        isLoading:
-                            false, // Loading state handled by progress dialog
+                        isLoading: false,
                         onFetch: () => _fetchHistoricalKline(context),
+                        onForceRefetch: () => _confirmForceRefetch(
+                          context,
+                          '历史分钟K线',
+                          () => _fetchHistoricalKline(
+                            context,
+                            forceRefetch: true,
+                          ),
+                        ),
                         onRecheck: () =>
                             _recheckDataFreshness(context, repository),
-                        onClear: () => _confirmClear(context, '历史分钟K线', () async {
-                          // Clear all minute K-line data by cleaning up with a future date
-                          await repository.cleanupOldData(
-                            beforeDate: DateTime.now().add(
-                              const Duration(days: 1),
-                            ),
-                            dataType: KLineDataType.oneMinute,
-                          );
-                          if (context.mounted) {
-                            context.read<IndustryTrendService>().clearCache();
-                            context.read<IndustryRankService>().clearCache();
-                            _triggerRefresh();
-                          }
-                        }),
                       );
                     },
                   );
                 },
               ),
 
-              const SizedBox(height: 24),
-
-              // 刷新进度提示
+              const SizedBox(height: 16),
               if (provider.isLoading) ...[
                 Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      children: [
-                        const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            provider.stageDescription ?? '刷新中...',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ),
-                      ],
+                  child: ListTile(
+                    dense: true,
+                    leading: const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
+                    title: Text(provider.stageDescription ?? '刷新中...'),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
               ],
-
-              // 操作按钮
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => _confirmClearAll(context, provider),
-                      child: const Text('清空所有缓存'),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: provider.isLoading
-                          ? null
-                          : () => provider.refresh(),
-                      child: const Text('刷新数据'),
-                    ),
-                  ),
-                ],
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: provider.isLoading
+                      ? null
+                      : () => provider.refresh(),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('刷新数据'),
+                ),
               ),
             ],
           );
@@ -180,18 +208,57 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   }
 
   Widget _buildSummaryCard(BuildContext context, MarketDataProvider provider) {
+    final dataDateText = provider.dataDate == null
+        ? '数据日期未知'
+        : '数据日期 ${_formatDate(provider.dataDate!)}';
+    final updateTimeText = provider.updateTime == null
+        ? '最近刷新：未记录'
+        : '最近刷新：${provider.updateTime}';
+
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('缓存总大小'),
-            Text(provider.totalCacheSizeFormatted),
-          ],
+      margin: EdgeInsets.zero,
+      child: ListTile(
+        leading: const Icon(Icons.storage_rounded),
+        title: const Text('本地缓存概览'),
+        subtitle: Text('$updateTimeText\n$dataDateText'),
+        isThreeLine: true,
+        trailing: Text(
+          provider.totalCacheSizeFormatted,
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
       ),
     );
+  }
+
+  Widget _buildSectionTitle(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Text(
+        title,
+        style: Theme.of(
+          context,
+        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+
+  IconData _iconForCacheType(String title) {
+    switch (title) {
+      case '日K数据':
+        return Icons.candlestick_chart;
+      case '周K数据':
+        return Icons.stacked_line_chart_rounded;
+      case '分时数据':
+        return Icons.show_chart_rounded;
+      case '行业数据':
+        return Icons.account_tree_outlined;
+      case '历史分钟K线':
+        return Icons.timeline_rounded;
+      default:
+        return Icons.dataset_outlined;
+    }
   }
 
   Widget _buildCacheItem(
@@ -199,19 +266,89 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     required String title,
     required String subtitle,
     required String? size,
-    required VoidCallback onClear,
+    required String statusLabel,
+    required bool isReady,
+    required bool isBusy,
+    required VoidCallback onForceRefetch,
   }) {
-    return ListTile(
-      title: Text(title),
-      subtitle: Text(subtitle),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (size != null) Text(size),
-          const SizedBox(width: 8),
-          TextButton(onPressed: onClear, child: const Text('清空')),
-        ],
+    final summary = '$subtitle · ${size ?? '-'} · $statusLabel';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: Icon(_iconForCacheType(title)),
+        title: Text(title),
+        subtitle: Text(summary),
+        trailing: FilledButton.tonal(
+          onPressed: isBusy ? null : onForceRefetch,
+          child: const Text('强制拉取'),
+        ),
       ),
+    );
+  }
+
+  Widget _buildMacdSettingsItem(BuildContext context) {
+    final macdService = context.watch<MacdIndicatorService?>();
+    final config = macdService?.config;
+    final summary = config == null
+        ? '服务未初始化'
+        : '快线${config.fastPeriod} · 慢线${config.slowPeriod} · 信号${config.signalPeriod} · ${config.windowMonths}个月';
+
+    Future<void> navigateToSettings() async {
+      if (macdService == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('MACD服务未初始化')));
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const MacdSettingsScreen()),
+      );
+      _triggerRefresh();
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: const Icon(Icons.auto_graph_rounded),
+        title: const Text('MACD 参数设置'),
+        subtitle: Text(summary),
+        trailing: FilledButton.tonal(
+          onPressed: navigateToSettings,
+          child: const Text('进入'),
+        ),
+        onTap: navigateToSettings,
+      ),
+    );
+  }
+
+  Widget _buildKlineActionButton({
+    required BuildContext context,
+    required String label,
+    required VoidCallback onPressed,
+    bool filled = false,
+    bool enabled = true,
+  }) {
+    final style = Theme.of(context).textTheme.bodySmall;
+    if (filled) {
+      return FilledButton.tonal(
+        onPressed: enabled ? onPressed : null,
+        style: FilledButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        ),
+        child: Text(label, style: style),
+      );
+    }
+
+    return TextButton(
+      onPressed: enabled ? onPressed : null,
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      ),
+      child: Text(label, style: style),
     );
   }
 
@@ -223,72 +360,102 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     required int missingDays,
     required bool isLoading,
     required VoidCallback onFetch,
-    required VoidCallback onClear,
+    required VoidCallback onForceRefetch,
     required VoidCallback onRecheck,
   }) {
+    final dataComplete = missingDays <= 0;
+    final statusLabel = dataComplete ? '数据完整' : '待补全 $missingDays';
+    final summary = '$subtitle · $statusLabel';
+
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+      child: Column(
+        children: [
+          ListTile(
+            leading: Icon(_iconForCacheType(title)),
+            title: Text(title),
+            subtitle: Text(summary),
+            trailing: dataComplete
+                ? _buildKlineActionButton(
+                    context: context,
+                    label: '强制重拉',
+                    onPressed: onForceRefetch,
+                    filled: true,
+                  )
+                : _buildKlineActionButton(
+                    context: context,
+                    label: isLoading ? '拉取中...' : '拉取缺失',
+                    onPressed: onFetch,
+                    filled: true,
+                  ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
+                if (!dataComplete)
+                  _buildKlineActionButton(
+                    context: context,
+                    label: '强制重拉',
+                    onPressed: onForceRefetch,
                   ),
-                ),
-                Text(size),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                if (missingDays > 0)
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: isLoading ? null : onFetch,
-                      icon: isLoading
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.download, size: 18),
-                      label: Text(isLoading ? '拉取中...' : '拉取缺失'),
-                    ),
-                  ),
-                if (missingDays > 0) const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: onRecheck,
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('重新检测'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onClear,
-                    child: const Text('清空'),
-                  ),
+                _buildKlineActionButton(
+                  context: context,
+                  label: '重新检测',
+                  onPressed: onRecheck,
                 ),
               ],
             ),
-          ],
-        ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWeeklyKlineCacheItem(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required int missingStocks,
+    required bool isLoading,
+    required VoidCallback onFetch,
+    required VoidCallback onForceRefetch,
+  }) {
+    final dataComplete = missingStocks <= 0;
+    final statusLabel = dataComplete ? '数据完整' : '待补全 $missingStocks只';
+    final summary = '$subtitle · $statusLabel';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        children: [
+          ListTile(
+            leading: Icon(_iconForCacheType(title)),
+            title: Text(title),
+            subtitle: Text(summary),
+            trailing: _buildKlineActionButton(
+              context: context,
+              label: isLoading ? '拉取中...' : '拉取缺失',
+              onPressed: onFetch,
+              filled: true,
+              enabled: !isLoading,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                _buildKlineActionButton(
+                  context: context,
+                  label: '强制重拉',
+                  onPressed: onForceRefetch,
+                  enabled: !isLoading,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -408,6 +575,48 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     }
   }
 
+  Future<({String subtitle, int missingStocks})> _getWeeklyKlineStatus(
+    DataRepository repository,
+    MarketDataProvider provider,
+  ) async {
+    if (provider.allData.isEmpty) {
+      return (subtitle: '暂无数据', missingStocks: 0);
+    }
+
+    try {
+      final allStockCodes = provider.allData.map((d) => d.stock.code).toList();
+      final sampleCodes = _buildBaselineFallbackCheckCodes(allStockCodes);
+      final dateRange = _buildWeeklyDateRange();
+
+      final klinesByStock = await repository.getKlines(
+        stockCodes: sampleCodes,
+        dateRange: dateRange,
+        dataType: KLineDataType.weekly,
+      );
+
+      var coveredStocks = 0;
+      for (final stockCode in sampleCodes) {
+        final bars = klinesByStock[stockCode] ?? const [];
+        if (bars.length >= _weeklyTargetBars) {
+          coveredStocks++;
+        }
+      }
+
+      final missingStocks = sampleCodes.length - coveredStocks;
+      final dateRangeStr =
+          '${_formatDate(dateRange.start)} ~ ${_formatDate(dateRange.end)}';
+
+      return (
+        subtitle:
+            '$dateRangeStr，覆盖 $coveredStocks/${sampleCodes.length}（目标 $_weeklyTargetBars 周）',
+        missingStocks: missingStocks,
+      );
+    } catch (e) {
+      debugPrint('[DataManagement] 获取周K状态失败: $e');
+      return (subtitle: '状态未知', missingStocks: 0);
+    }
+  }
+
   /// 重新检测数据完整性（清除缓存后重新检查）
   Future<void> _recheckDataFreshness(
     BuildContext context,
@@ -492,7 +701,10 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     }
   }
 
-  Future<void> _fetchHistoricalKline(BuildContext context) async {
+  Future<void> _fetchHistoricalKline(
+    BuildContext context, {
+    bool forceRefetch = false,
+  }) async {
     final klineService = context.read<HistoricalKlineService>();
     final marketProvider = context.read<MarketDataProvider>();
     final repository = context.read<DataRepository>();
@@ -559,29 +771,46 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         progressNotifier.value = (
           current: safeCurrent,
           total: safeTotal,
-          stage: '1/4 拉取K线数据',
+          stage: forceRefetch ? '1/4 强制拉取K线数据' : '1/4 拉取K线数据',
         );
       });
 
-      debugPrint('[DataManagement] 开始拉取历史数据, ${stockCodes.length} 只股票');
-      final fetchResult = await repository.fetchMissingData(
-        stockCodes: stockCodes,
-        dateRange: dateRange,
-        dataType: KLineDataType.oneMinute,
-        onProgress: (current, total) {
-          final safeTotal = total <= 0 ? 1 : total;
-          final safeCurrent = current.clamp(0, safeTotal);
-          progressNotifier.value = (
-            current: safeCurrent,
-            total: safeTotal,
-            stage: '1/4 拉取K线数据',
-          );
-        },
+      debugPrint(
+        '[DataManagement] 开始${forceRefetch ? '强制' : ''}拉取历史数据, ${stockCodes.length} 只股票',
       );
+      final fetchResult = forceRefetch
+          ? await repository.refetchData(
+              stockCodes: stockCodes,
+              dateRange: dateRange,
+              dataType: KLineDataType.oneMinute,
+              onProgress: (current, total) {
+                final safeTotal = total <= 0 ? 1 : total;
+                final safeCurrent = current.clamp(0, safeTotal);
+                progressNotifier.value = (
+                  current: safeCurrent,
+                  total: safeTotal,
+                  stage: '1/4 强制拉取K线数据',
+                );
+              },
+            )
+          : await repository.fetchMissingData(
+              stockCodes: stockCodes,
+              dateRange: dateRange,
+              dataType: KLineDataType.oneMinute,
+              onProgress: (current, total) {
+                final safeTotal = total <= 0 ? 1 : total;
+                final safeCurrent = current.clamp(0, safeTotal);
+                progressNotifier.value = (
+                  current: safeCurrent,
+                  total: safeTotal,
+                  stage: '1/4 拉取K线数据',
+                );
+              },
+            );
       debugPrint('[DataManagement] K线数据已保存');
 
       // 0 条新增时，强制复检是否仍有缺失，防止“看起来成功但实际没拉到数据”。
-      if (fetchResult.totalRecords == 0) {
+      if (!forceRefetch && fetchResult.totalRecords == 0) {
         final tradingDays = await repository.getTradingDates(dateRange);
         if (!_hasReliableTradingDateCoverage(tradingDays, dateRange)) {
           final sampleCodes = _buildBaselineFallbackCheckCodes(stockCodes);
@@ -649,9 +878,9 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
       if (fetchResult.failureCount > 0) {
         completionMessage =
-            '历史数据已更新（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
+            '${forceRefetch ? '历史数据已强制更新' : '历史数据已更新'}（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
       } else {
-        completionMessage = '历史数据已更新';
+        completionMessage = forceRefetch ? '历史数据已强制更新' : '历史数据已更新';
       }
       if (baselineVerificationWarning != null &&
           !hasVerifiedNoMissingAfterFetch) {
@@ -663,23 +892,37 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
       // 计算行业趋势和排名（数据来自 DataRepository）
       if (context.mounted) {
+        final industryCalcStopwatch = Stopwatch()..start();
+
         debugPrint('[DataManagement] 开始计算行业趋势');
         progressNotifier.value = (current: 0, total: 1, stage: '3/4 计算行业趋势...');
+        final trendStopwatch = Stopwatch()..start();
         await trendService.recalculateFromKlineData(
           klineService,
           marketProvider.allData,
           dataVersion: dataVersion,
         );
+        trendStopwatch.stop();
         debugPrint('[DataManagement] 行业趋势计算完成');
+        debugPrint(
+          '[DataManagement][timing] trendMs=${trendStopwatch.elapsedMilliseconds}',
+        );
 
         debugPrint('[DataManagement] 开始计算行业排名');
         progressNotifier.value = (current: 0, total: 1, stage: '4/4 计算行业排名...');
+        final rankStopwatch = Stopwatch()..start();
         await rankService.recalculateFromKlineData(
           klineService,
           marketProvider.allData,
           dataVersion: dataVersion,
         );
+        rankStopwatch.stop();
         debugPrint('[DataManagement] 行业排名计算完成');
+        industryCalcStopwatch.stop();
+        debugPrint(
+          '[DataManagement][timing] rankMs=${rankStopwatch.elapsedMilliseconds}, '
+          'industryCalcTotalMs=${industryCalcStopwatch.elapsedMilliseconds}',
+        );
       }
     } catch (e, stackTrace) {
       debugPrint('[DataManagement] 拉取历史数据失败: $e');
@@ -700,6 +943,353 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         _triggerRefresh();
       }
       progressNotifier.dispose();
+    }
+  }
+
+  DateRange _buildWeeklyDateRange() {
+    final now = DateTime.now();
+    final end = DateTime(now.year, now.month, now.day, 23, 59, 59, 999, 999);
+    final start = end.subtract(const Duration(days: _weeklyRangeDays));
+    return DateRange(start, end);
+  }
+
+  Future<void> _fetchWeeklyKline(
+    BuildContext context, {
+    bool forceRefetch = false,
+  }) async {
+    final marketProvider = context.read<MarketDataProvider>();
+    final repository = context.read<DataRepository>();
+    final macdService = context.read<MacdIndicatorService?>();
+
+    if (marketProvider.allData.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先刷新市场数据')));
+      return;
+    }
+
+    setState(() {
+      _isSyncingWeeklyKline = true;
+    });
+
+    final progressNotifier =
+        ValueNotifier<({int current, int total, String stage})>((
+          current: 0,
+          total: 1,
+          stage: '准备拉取周K数据...',
+        ));
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ProgressDialog(progressNotifier: progressNotifier),
+    );
+
+    await WakelockPlus.enable();
+
+    StreamSubscription<DataStatus>? statusSubscription;
+    String completionMessage = forceRefetch ? '周K数据已强制更新' : '周K数据已更新';
+
+    try {
+      var stocks = marketProvider.allData.map((d) => d.stock).toList();
+      stocks = DebugConfig.limitStocks(stocks);
+      final stockCodes = stocks.map((s) => s.code).toList();
+      final dateRange = _buildWeeklyDateRange();
+
+      final stageDurations = <_WeeklySyncStage, Duration>{
+        _WeeklySyncStage.precheck: Duration.zero,
+        _WeeklySyncStage.fetch: Duration.zero,
+        _WeeklySyncStage.write: Duration.zero,
+      };
+      final stageProgressCurrent = <_WeeklySyncStage, int>{
+        _WeeklySyncStage.precheck: 0,
+        _WeeklySyncStage.fetch: 0,
+        _WeeklySyncStage.write: 0,
+      };
+      final stageProgressTotal = <_WeeklySyncStage, int>{
+        _WeeklySyncStage.precheck: 1,
+        _WeeklySyncStage.fetch: 1,
+        _WeeklySyncStage.write: 1,
+      };
+      _WeeklySyncStage? activeStage;
+      DateTime? activeStageStartedAt;
+      var activeStageStartProgress = 0;
+
+      Duration elapsedForStage(_WeeklySyncStage stage, DateTime now) {
+        final base = stageDurations[stage] ?? Duration.zero;
+        if (activeStage == stage && activeStageStartedAt != null) {
+          return base + now.difference(activeStageStartedAt!);
+        }
+        return base;
+      }
+
+      String formatStageDuration(Duration duration) {
+        final seconds = duration.inMilliseconds / 1000;
+        return '${seconds.toStringAsFixed(1)}s';
+      }
+
+      _WeeklySyncStage resolveStage(String currentStock) {
+        if (currentStock == '__PRECHECK__') {
+          return _WeeklySyncStage.precheck;
+        }
+        if (currentStock == '__WRITE__') {
+          return _WeeklySyncStage.write;
+        }
+        return _WeeklySyncStage.fetch;
+      }
+
+      void switchToStage(_WeeklySyncStage nextStage, int progressCurrent) {
+        final now = DateTime.now();
+        if (activeStage == nextStage) {
+          return;
+        }
+
+        if (activeStage != null && activeStageStartedAt != null) {
+          stageDurations[activeStage!] =
+              (stageDurations[activeStage!] ?? Duration.zero) +
+              now.difference(activeStageStartedAt!);
+        }
+
+        activeStage = nextStage;
+        activeStageStartedAt = now;
+        activeStageStartProgress = progressCurrent;
+      }
+
+      String buildStageMetrics(int current, int total) {
+        final now = DateTime.now();
+        final precheckElapsed = elapsedForStage(_WeeklySyncStage.precheck, now);
+        final fetchElapsed = elapsedForStage(_WeeklySyncStage.fetch, now);
+        final writeElapsed = elapsedForStage(_WeeklySyncStage.write, now);
+
+        String formatStageProgress(_WeeklySyncStage stage) {
+          final progressCurrent = stageProgressCurrent[stage] ?? 0;
+          final progressTotal = stageProgressTotal[stage] ?? 1;
+          return '$progressCurrent/$progressTotal';
+        }
+
+        var speedLabel = '--';
+        if (activeStage != null) {
+          final activeElapsed = elapsedForStage(activeStage!, now);
+          final processedInStage = (current - activeStageStartProgress).clamp(
+            0,
+            total,
+          );
+          final seconds = activeElapsed.inMilliseconds / 1000;
+          if (seconds > 0) {
+            speedLabel =
+                '${(processedInStage / seconds).toStringAsFixed(1)}项/秒';
+          } else {
+            speedLabel = '0.0项/秒';
+          }
+        }
+
+        return '阶段耗时 预检 ${formatStageDuration(precheckElapsed)} · '
+            '拉取 ${formatStageDuration(fetchElapsed)} · '
+            '写入 ${formatStageDuration(writeElapsed)}\n'
+            '阶段进度 预检 ${formatStageProgress(_WeeklySyncStage.precheck)} · '
+            '拉取 ${formatStageProgress(_WeeklySyncStage.fetch)} · '
+            '写入 ${formatStageProgress(_WeeklySyncStage.write)} · '
+            '速率 $speedLabel';
+      }
+
+      statusSubscription = repository.statusStream.listen((status) {
+        if (status is! DataFetching) {
+          return;
+        }
+
+        final safeTotal = status.total <= 0 ? 1 : status.total;
+        final safeCurrent = status.current.clamp(0, safeTotal);
+        final stage = resolveStage(status.currentStock);
+        stageProgressCurrent[stage] = safeCurrent;
+        stageProgressTotal[stage] = safeTotal;
+        switchToStage(stage, safeCurrent);
+        final stageTitle = stage == _WeeklySyncStage.precheck
+            ? '预检查周K覆盖...'
+            : stage == _WeeklySyncStage.write
+            ? '写入周K数据...'
+            : (forceRefetch ? '强制拉取周K数据...' : '拉取周K数据...');
+
+        progressNotifier.value = (
+          current: safeCurrent,
+          total: safeTotal,
+          stage: '$stageTitle\n${buildStageMetrics(safeCurrent, safeTotal)}',
+        );
+      });
+
+      final fetchResult = forceRefetch
+          ? await repository.refetchData(
+              stockCodes: stockCodes,
+              dateRange: dateRange,
+              dataType: KLineDataType.weekly,
+            )
+          : await repository.fetchMissingData(
+              stockCodes: stockCodes,
+              dateRange: dateRange,
+              dataType: KLineDataType.weekly,
+            );
+
+      if (fetchResult.failureCount > 0) {
+        completionMessage =
+            '${forceRefetch ? '周K数据已强制更新' : '周K数据已更新'}（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
+      }
+
+      if (macdService != null) {
+        await macdService.prewarmFromRepository(
+          stockCodes: stockCodes,
+          dataType: KLineDataType.weekly,
+          dateRange: dateRange,
+          onProgress: (current, total) {
+            final safeTotal = total <= 0 ? 1 : total;
+            final safeCurrent = current.clamp(0, safeTotal);
+            progressNotifier.value = (
+              current: safeCurrent,
+              total: safeTotal,
+              stage: '更新周线MACD缓存...',
+            );
+          },
+        );
+      }
+    } catch (e) {
+      completionMessage = '周K数据拉取失败: $e';
+      debugPrint('[DataManagement] 拉取周K数据失败: $e');
+    } finally {
+      await statusSubscription?.cancel();
+      await WakelockPlus.disable();
+
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(completionMessage)));
+        _triggerRefresh();
+      }
+      progressNotifier.dispose();
+
+      if (mounted) {
+        setState(() {
+          _isSyncingWeeklyKline = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _forceRefetchMinuteData(BuildContext context) async {
+    final provider = context.read<MarketDataProvider>();
+    try {
+      await provider.refresh(forceMinuteRefetch: true);
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('分时数据已强制重新拉取')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('分时数据强制拉取失败: $e')));
+      }
+    }
+  }
+
+  Future<void> _forceRefetchDailyData(BuildContext context) async {
+    final provider = context.read<MarketDataProvider>();
+    if (provider.allData.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先刷新市场数据')));
+      return;
+    }
+
+    final progressNotifier =
+        ValueNotifier<({int current, int total, String stage})>((
+          current: 0,
+          total: 1,
+          stage: '准备拉取日K数据...',
+        ));
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ProgressDialog(progressNotifier: progressNotifier),
+    );
+
+    await WakelockPlus.enable();
+
+    DateTime? writeStageStartedAt;
+    var writeStageStartProgress = 0;
+
+    try {
+      await provider.forceRefetchDailyBars(
+        onProgress: (stage, current, total) {
+          final safeTotal = total <= 0 ? 1 : total;
+          final safeCurrent = current.clamp(0, safeTotal);
+          var stageLabel = stage;
+
+          if (stage.startsWith('2/4 写入日K文件')) {
+            final now = DateTime.now();
+            writeStageStartedAt ??= now;
+            if (writeStageStartProgress <= 0) {
+              writeStageStartProgress = safeCurrent;
+            }
+
+            final elapsedMs = now
+                .difference(writeStageStartedAt!)
+                .inMilliseconds;
+            var speedLabel = '--';
+            if (elapsedMs > 0) {
+              final processed = (safeCurrent - writeStageStartProgress + 1)
+                  .clamp(0, safeTotal);
+              final speed = processed / (elapsedMs / 1000);
+              speedLabel = '${speed.toStringAsFixed(1)}股/秒';
+            }
+            stageLabel = '$stage · 速率 $speedLabel';
+          } else {
+            writeStageStartedAt = null;
+            writeStageStartProgress = 0;
+          }
+
+          progressNotifier.value = (
+            current: safeCurrent,
+            total: safeTotal,
+            stage: stageLabel,
+          );
+        },
+      );
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('日K数据已强制重新拉取')));
+        _triggerRefresh();
+      }
+    } catch (e) {
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('日K数据强制拉取失败: $e')));
+      }
+    } finally {
+      await WakelockPlus.disable();
+      progressNotifier.dispose();
+    }
+  }
+
+  Future<void> _forceRefetchIndustryData(BuildContext context) async {
+    final provider = context.read<MarketDataProvider>();
+    try {
+      await provider.forceReloadIndustryData();
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('行业数据已强制重新拉取')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('行业数据强制拉取失败: $e')));
+      }
     }
   }
 
@@ -846,44 +1436,28 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     );
   }
 
-  void _confirmClear(BuildContext context, String title, VoidCallback onClear) {
+  void _confirmForceRefetch(
+    BuildContext context,
+    String title,
+    Future<void> Function() onForceRefetch,
+  ) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('确认清空'),
-        content: Text('确定要清空 $title 吗？'),
+        title: const Text('确认强制拉取'),
+        content: Text('确定要强制重新拉取$title吗？这将覆盖现有缓存。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('取消'),
           ),
           TextButton(
-            onPressed: () {
-              onClear();
+            onPressed: () async {
               Navigator.pop(context);
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmClearAll(BuildContext context, MarketDataProvider provider) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('确认清空'),
-        content: const Text('确定要清空所有缓存吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () {
-              provider.clearAllCache();
-              Navigator.pop(context);
+              await onForceRefetch();
+              if (context.mounted) {
+                _triggerRefresh();
+              }
             },
             child: const Text('确定'),
           ),

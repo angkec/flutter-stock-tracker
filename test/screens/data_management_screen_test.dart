@@ -21,6 +21,7 @@ import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
@@ -42,6 +43,10 @@ class _FakeDataRepository implements DataRepository {
   );
   Map<String, MissingDatesResult> missingMinuteDatesByStock = const {};
   int findMissingMinuteDatesBatchCallCount = 0;
+  int fetchMissingDataCallCount = 0;
+  int refetchDataCallCount = 0;
+  final List<KLineDataType> fetchMissingDataTypes = <KLineDataType>[];
+  final List<KLineDataType> refetchDataTypes = <KLineDataType>[];
   List<DataFetching> statusEventsDuringFetch = const <DataFetching>[];
   Duration fetchMissingDataDelay = Duration.zero;
 
@@ -88,11 +93,13 @@ class _FakeDataRepository implements DataRepository {
     required KLineDataType dataType,
     ProgressCallback? onProgress,
   }) async {
+    fetchMissingDataCallCount++;
+    fetchMissingDataTypes.add(dataType);
     onProgress?.call(stockCodes.length, stockCodes.length);
 
     for (final status in statusEventsDuringFetch) {
       _statusController.add(status);
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
     }
 
     if (fetchMissingDataDelay > Duration.zero) {
@@ -108,8 +115,11 @@ class _FakeDataRepository implements DataRepository {
     required DateRange dateRange,
     required KLineDataType dataType,
     ProgressCallback? onProgress,
-  }) {
-    throw UnimplementedError();
+  }) async {
+    refetchDataCallCount++;
+    refetchDataTypes.add(dataType);
+    onProgress?.call(stockCodes.length, stockCodes.length);
+    return fetchMissingDataResult;
   }
 
   @override
@@ -187,6 +197,12 @@ class _FakeIndustryRankService extends IndustryRankService {
 
 class _FakeMarketDataProvider extends MarketDataProvider {
   final List<StockMonitorData> _testData;
+  int forceMinuteRefetchCount = 0;
+  int forceDailyRefetchCount = 0;
+  int forceIndustryRefetchCount = 0;
+  List<({String stage, int current, int total})> dailyProgressEvents = const [];
+  Duration dailyProgressEventInterval = const Duration(milliseconds: 10);
+  Duration dailyRefetchDelay = Duration.zero;
 
   _FakeMarketDataProvider({required List<StockMonitorData> data})
     : _testData = data,
@@ -200,7 +216,54 @@ class _FakeMarketDataProvider extends MarketDataProvider {
   List<StockMonitorData> get allData => _testData;
 
   @override
-  Future<void> refresh({bool silent = false}) async {}
+  Future<void> refresh({
+    bool silent = false,
+    bool forceMinuteRefetch = false,
+    bool forceDailyRefetch = false,
+  }) async {
+    if (forceMinuteRefetch) {
+      forceMinuteRefetchCount++;
+    }
+    if (forceDailyRefetch) {
+      forceDailyRefetchCount++;
+    }
+  }
+
+  @override
+  Future<void> forceRefetchDailyBars({
+    void Function(String stage, int current, int total)? onProgress,
+  }) async {
+    forceDailyRefetchCount++;
+    for (final event in dailyProgressEvents) {
+      onProgress?.call(event.stage, event.current, event.total);
+      await Future<void>.delayed(dailyProgressEventInterval);
+    }
+    if (dailyRefetchDelay > Duration.zero) {
+      await Future<void>.delayed(dailyRefetchDelay);
+    }
+  }
+
+  @override
+  Future<void> forceReloadIndustryData() async {
+    forceIndustryRefetchCount++;
+  }
+}
+
+class _FakeMacdIndicatorService extends MacdIndicatorService {
+  _FakeMacdIndicatorService({required super.repository});
+
+  int prewarmFromRepositoryCount = 0;
+
+  @override
+  Future<void> prewarmFromRepository({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+    required DateRange dateRange,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    prewarmFromRepositoryCount++;
+    onProgress?.call(stockCodes.length, stockCodes.length);
+  }
 }
 
 List<KLine> _buildBarsForDate(DateTime day, int count) {
@@ -241,7 +304,12 @@ void main() {
     required HistoricalKlineService klineService,
     required IndustryTrendService trendService,
     required IndustryRankService rankService,
+    MacdIndicatorService? macdService,
   }) async {
+    final effectiveMacdService =
+        macdService ?? MacdIndicatorService(repository: repository);
+    await effectiveMacdService.load();
+
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -256,11 +324,25 @@ void main() {
             value: trendService,
           ),
           ChangeNotifierProvider<IndustryRankService>.value(value: rankService),
+          ChangeNotifierProvider<MacdIndicatorService>.value(
+            value: effectiveMacdService,
+          ),
         ],
         child: const MaterialApp(home: DataManagementScreen()),
       ),
     );
     await tester.pumpAndSettle();
+  }
+
+  Future<void> scrollToText(WidgetTester tester, String text) async {
+    final listView = find.byType(ListView);
+    for (var i = 0; i < 8; i++) {
+      if (find.text(text).hitTestable().evaluate().isNotEmpty) {
+        break;
+      }
+      await tester.drag(listView, const Offset(0, -260));
+      await tester.pumpAndSettle();
+    }
   }
 
   setUp(() {
@@ -310,11 +392,19 @@ void main() {
       trendService: trendService,
       rankService: rankService,
     );
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
 
     expect(find.textContaining('最后交易日'), findsOneWidget);
-    expect(find.textContaining('数据完整'), findsOneWidget);
+    expect(find.textContaining('数据完整'), findsWidgets);
     expect(find.textContaining('交易日样本不足'), findsNothing);
-    expect(find.text('拉取缺失'), findsNothing);
+    expect(
+      find.descendant(of: historicalCard, matching: find.text('拉取缺失')),
+      findsNothing,
+    );
 
     provider.dispose();
     klineService.dispose();
@@ -357,10 +447,18 @@ void main() {
       trendService: trendService,
       rankService: rankService,
     );
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
 
     expect(find.textContaining('最后交易日'), findsOneWidget);
     expect(find.textContaining('不完整'), findsOneWidget);
-    expect(find.text('拉取缺失'), findsOneWidget);
+    expect(
+      find.descendant(of: historicalCard, matching: find.text('拉取缺失')),
+      findsOneWidget,
+    );
 
     provider.dispose();
     klineService.dispose();
@@ -397,11 +495,19 @@ void main() {
       trendService: trendService,
       rankService: rankService,
     );
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
 
     expect(find.textContaining('交易日基线不足'), findsOneWidget);
     expect(find.textContaining('数据完整'), findsNothing);
     expect(find.textContaining('缺失20只'), findsOneWidget);
-    expect(find.text('拉取缺失'), findsOneWidget);
+    expect(
+      find.descendant(of: historicalCard, matching: find.text('拉取缺失')),
+      findsOneWidget,
+    );
 
     provider.dispose();
     klineService.dispose();
@@ -444,10 +550,19 @@ void main() {
       trendService: trendService,
       rankService: rankService,
     );
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
+    final historicalFetchButton = find.descendant(
+      of: historicalCard,
+      matching: find.text('拉取缺失'),
+    );
 
-    expect(find.text('拉取缺失'), findsOneWidget);
-
-    await tester.tap(find.text('拉取缺失'));
+    expect(historicalFetchButton, findsOneWidget);
+    await tester.ensureVisible(historicalFetchButton);
+    await tester.tap(historicalFetchButton.hitTestable().first);
     await tester.pumpAndSettle();
 
     expect(repository.findMissingMinuteDatesBatchCallCount, 1);
@@ -493,8 +608,17 @@ void main() {
       trendService: trendService,
       rankService: rankService,
     );
-
-    await tester.tap(find.text('拉取缺失'));
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
+    final historicalFetchButton = find.descendant(
+      of: historicalCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(historicalFetchButton);
+    await tester.tap(historicalFetchButton.hitTestable().first);
     await tester.pumpAndSettle();
 
     expect(repository.findMissingMinuteDatesBatchCallCount, 1);
@@ -544,8 +668,17 @@ void main() {
       trendService: trendService,
       rankService: rankService,
     );
-
-    await tester.tap(find.text('拉取缺失'));
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
+    final historicalFetchButton = find.descendant(
+      of: historicalCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(historicalFetchButton);
+    await tester.tap(historicalFetchButton.hitTestable().first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 20));
 
@@ -558,6 +691,554 @@ void main() {
     klineService.dispose();
     trendService.dispose();
     rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('日K强制拉取应显示分阶段进度', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    provider.dailyProgressEvents =
+        const <({String stage, int current, int total})>[
+          (stage: '1/4 拉取日K数据...', current: 1, total: 3),
+          (stage: '2/4 写入日K文件...', current: 1, total: 3),
+          (stage: '3/4 计算指标...', current: 2, total: 3),
+          (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
+        ];
+    provider.dailyProgressEventInterval = const Duration(milliseconds: 120);
+    provider.dailyRefetchDelay = const Duration(milliseconds: 200);
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '日K数据');
+    final dailyCard = find.ancestor(
+      of: find.text('日K数据'),
+      matching: find.byType(Card),
+    );
+    final dailyForceButton = find.descendant(
+      of: dailyCard,
+      matching: find.text('强制拉取'),
+    );
+
+    await tester.ensureVisible(dailyForceButton);
+    await tester.tap(dailyForceButton);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('确定').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(find.text('拉取历史数据'), findsOneWidget);
+    expect(find.textContaining('1/4 拉取日K数据...'), findsOneWidget);
+    expect(find.text('1 / 3 (33.3%)'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 140));
+    expect(find.textContaining('2/4 写入日K文件...'), findsOneWidget);
+    expect(find.textContaining('速率'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('五类数据强制重拉按钮可触发对应动作', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 1,
+      duration: const Duration(milliseconds: 1),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    expect(find.text('强制拉取'), findsAtLeastNWidgets(2));
+
+    await scrollToText(tester, '日K数据');
+    final dailyCard = find.ancestor(
+      of: find.text('日K数据'),
+      matching: find.byType(Card),
+    );
+    final dailyForceButton = find.descendant(
+      of: dailyCard,
+      matching: find.text('强制拉取'),
+    );
+    await tester.ensureVisible(dailyForceButton);
+    await tester.tap(dailyForceButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(provider.forceDailyRefetchCount, 1);
+
+    await scrollToText(tester, '分时数据');
+    final minuteCard = find.ancestor(
+      of: find.text('分时数据'),
+      matching: find.byType(Card),
+    );
+    final minuteForceButton = find.descendant(
+      of: minuteCard,
+      matching: find.text('强制拉取'),
+    );
+    await tester.ensureVisible(minuteForceButton);
+    await tester.tap(minuteForceButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(provider.forceMinuteRefetchCount, 1);
+
+    await scrollToText(tester, '行业数据');
+    final industryCard = find.ancestor(
+      of: find.text('行业数据'),
+      matching: find.byType(Card),
+    );
+    final industryForceButton = find.descendant(
+      of: industryCard,
+      matching: find.text('强制拉取'),
+    );
+    await tester.ensureVisible(industryForceButton);
+    await tester.tap(industryForceButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(provider.forceIndustryRefetchCount, 1);
+
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
+    final historicalForceButton = find.descendant(
+      of: historicalCard,
+      matching: find.text('强制重拉'),
+    );
+    expect(historicalForceButton, findsOneWidget);
+    await tester.ensureVisible(historicalForceButton);
+    await tester.tap(historicalForceButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(repository.refetchDataCallCount, 1);
+    expect(repository.fetchMissingDataCallCount, 0);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K数据管理行支持拉取缺失', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 100,
+      duration: const Duration(milliseconds: 1),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(repository.fetchMissingDataCallCount, 1);
+    expect(repository.fetchMissingDataTypes, contains(KLineDataType.weekly));
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K拉取时应显示阶段耗时信息', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 100,
+      duration: const Duration(milliseconds: 200),
+    );
+    repository.statusEventsDuringFetch = const <DataFetching>[
+      DataFetching(current: 1, total: 1, currentStock: '__PRECHECK__'),
+      DataFetching(current: 1, total: 1, currentStock: '600000'),
+      DataFetching(current: 1, total: 1, currentStock: '__WRITE__'),
+    ];
+    repository.fetchMissingDataDelay = const Duration(milliseconds: 250);
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 60));
+
+    expect(find.textContaining('阶段耗时'), findsOneWidget);
+    expect(find.textContaining('阶段进度'), findsOneWidget);
+    expect(find.textContaining('拉取 1/1'), findsOneWidget);
+
+    await tester.pumpAndSettle();
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K拉取时应显示写入阶段进度', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 100,
+      duration: const Duration(milliseconds: 200),
+    );
+    repository.statusEventsDuringFetch = const <DataFetching>[
+      DataFetching(current: 1, total: 1, currentStock: '__PRECHECK__'),
+      DataFetching(current: 1, total: 1, currentStock: '__WRITE__'),
+    ];
+    repository.fetchMissingDataDelay = const Duration(milliseconds: 200);
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 30));
+
+    expect(find.textContaining('写入周K数据...'), findsOneWidget);
+
+    await tester.pumpAndSettle();
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K数据管理行支持强制重拉', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+
+    final weeklyForceButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('强制重拉'),
+    );
+    await tester.ensureVisible(weeklyForceButton);
+    await tester.tap(weeklyForceButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('确认强制拉取'), findsOneWidget);
+    await tester.tap(find.text('确定').last);
+    await tester.pumpAndSettle();
+
+    expect(repository.refetchDataCallCount, 1);
+    expect(repository.refetchDataTypes, contains(KLineDataType.weekly));
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('数据管理页不再显示清空按钮', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+    await scrollToText(tester, '刷新数据');
+
+    expect(find.text('清空'), findsNothing);
+    expect(find.text('清空所有缓存'), findsNothing);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('数据管理页应提供MACD参数设置入口并可打开页面', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, 'MACD 参数设置');
+    expect(find.text('MACD 参数设置'), findsOneWidget);
+
+    await tester.tap(find.text('MACD 参数设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('MACD 指标设置'), findsOneWidget);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K拉取缺失后应触发周线MACD预热', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 20,
+      duration: const Duration(milliseconds: 1),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(macdService.prewarmFromRepositoryCount, 1);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
     await repository.dispose();
   });
 }

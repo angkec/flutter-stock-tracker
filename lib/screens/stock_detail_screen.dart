@@ -1,17 +1,22 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
-import 'package:stock_rtwatcher/widgets/kline_chart.dart';
 import 'package:stock_rtwatcher/widgets/minute_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
 import 'package:stock_rtwatcher/widgets/industry_heat_bar.dart';
 import 'package:stock_rtwatcher/widgets/industry_trend_chart.dart';
 import 'package:stock_rtwatcher/widgets/linked_dual_kline_view.dart';
+import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
+import 'package:stock_rtwatcher/widgets/macd_subchart.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/models/breakout_config.dart';
@@ -19,6 +24,7 @@ import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
 
 /// K线图显示模式
 enum ChartMode { minute, daily, weekly, linked }
@@ -32,12 +38,28 @@ class StockDetailScreen extends StatefulWidget {
 
   /// 当前股票在列表中的索引
   final int initialIndex;
+  final ChartMode initialChartMode;
+  final bool showWatchlistToggle;
+  final bool showIndustryHeatSection;
+  final bool skipAutoConnectForTest;
+  final List<KLine>? initialDailyBars;
+  final List<KLine>? initialWeeklyBars;
+  final List<DailyRatio>? initialRatioHistory;
+  final MacdCacheStore? macdCacheStoreForTest;
 
   const StockDetailScreen({
     super.key,
     required this.stock,
     this.stockList,
     this.initialIndex = 0,
+    this.initialChartMode = ChartMode.daily,
+    this.showWatchlistToggle = true,
+    this.showIndustryHeatSection = true,
+    this.skipAutoConnectForTest = false,
+    this.initialDailyBars,
+    this.initialWeeklyBars,
+    this.initialRatioHistory,
+    this.macdCacheStoreForTest,
   });
 
   @override
@@ -45,6 +67,10 @@ class StockDetailScreen extends StatefulWidget {
 }
 
 class _StockDetailScreenState extends State<StockDetailScreen> {
+  static const int _dailyTargetBars = 260;
+  static const int _weeklyTargetBars = 100;
+  static const int _weeklyRangeDays = 760;
+
   // 独立的 TDX 连接，不和全市场数据共用
   TdxClient? _client;
   bool _isConnecting = true;
@@ -60,7 +86,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   String? _klineError;
   String? _ratioError;
 
-  ChartMode _chartMode = ChartMode.daily; // 默认显示日线
+  late ChartMode _chartMode; // 默认显示日线
   bool _isChartScaling = false; // K线图是否正在缩放
 
   // 突破检测结果缓存（用于同步访问异步计算的结果）
@@ -78,10 +104,19 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     super.initState();
     _currentIndex = widget.initialIndex;
     _currentStock = widget.stock;
+    _chartMode = widget.initialChartMode;
 
     // 如果有股票列表，初始化 PageController
     if (widget.stockList != null && widget.stockList!.length > 1) {
       _pageController = PageController(initialPage: _currentIndex);
+    }
+
+    if (widget.skipAutoConnectForTest) {
+      _isConnecting = false;
+      _dailyBars = widget.initialDailyBars ?? const <KLine>[];
+      _weeklyBars = widget.initialWeeklyBars ?? const <KLine>[];
+      _ratioHistory = widget.initialRatioHistory ?? const <DailyRatio>[];
+      return;
     }
 
     _connectAndLoad();
@@ -196,15 +231,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         code: _currentStock.code,
         category: klineTypeDaily,
         start: 0,
-        count: 60,
+        count: _dailyTargetBars,
       );
-      final weekly = await _client!.getSecurityBars(
-        market: _currentStock.market,
-        code: _currentStock.code,
-        category: klineTypeWeekly,
-        start: 0,
-        count: 30,
-      );
+      final weekly = await _loadWeeklyBarsLocalFirst();
 
       if (!mounted) return;
       setState(() {
@@ -222,6 +251,74 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         _isLoadingKLine = false;
       });
     }
+  }
+
+  DateRange _buildWeeklyDateRange() {
+    final now = DateTime.now();
+    final end = DateTime(now.year, now.month, now.day, 23, 59, 59, 999, 999);
+    final start = end.subtract(const Duration(days: _weeklyRangeDays));
+    return DateRange(start, end);
+  }
+
+  Future<List<KLine>> _loadWeeklyBarsLocalFirst() async {
+    final dateRange = _buildWeeklyDateRange();
+
+    try {
+      final repository = context.read<DataRepository>();
+
+      final localResult = await repository.getKlines(
+        stockCodes: [_currentStock.code],
+        dateRange: dateRange,
+        dataType: KLineDataType.weekly,
+      );
+      final localBars = localResult[_currentStock.code] ?? const <KLine>[];
+      if (localBars.length >= _weeklyTargetBars) {
+        return localBars;
+      }
+
+      await repository.fetchMissingData(
+        stockCodes: [_currentStock.code],
+        dateRange: dateRange,
+        dataType: KLineDataType.weekly,
+      );
+
+      final refreshedResult = await repository.getKlines(
+        stockCodes: [_currentStock.code],
+        dateRange: dateRange,
+        dataType: KLineDataType.weekly,
+      );
+      final refreshedBars =
+          refreshedResult[_currentStock.code] ?? const <KLine>[];
+      if (refreshedBars.isNotEmpty) {
+        return refreshedBars;
+      }
+
+      return localBars;
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('[StockDetail] weekly local-first load failed: $error');
+        debugPrint('[StockDetail] weekly local-first stack: $stackTrace');
+      }
+    }
+
+    if (_client != null && _client!.isConnected) {
+      try {
+        return await _client!.getSecurityBars(
+          market: _currentStock.market,
+          code: _currentStock.code,
+          category: klineTypeWeekly,
+          start: 0,
+          count: _weeklyTargetBars,
+        );
+      } catch (error, stackTrace) {
+        if (kDebugMode) {
+          debugPrint('[StockDetail] weekly remote fallback failed: $error');
+          debugPrint('[StockDetail] weekly remote fallback stack: $stackTrace');
+        }
+      }
+    }
+
+    return const <KLine>[];
   }
 
   Future<void> _loadRatioHistory() async {
@@ -408,10 +505,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
               ),
           ],
         ),
-        actions: [
-          // 自选股切换按钮
-          _buildWatchlistToggle(),
-        ],
+        actions: [if (widget.showWatchlistToggle) _buildWatchlistToggle()],
       ),
       body: hasStockList
           ? PageView.builder(
@@ -492,8 +586,10 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildKLineSection(),
-            _buildIndustryHeatBar(),
-            const Divider(),
+            if (widget.showIndustryHeatSection) ...[
+              _buildIndustryHeatBar(),
+              const Divider(),
+            ],
             RatioHistoryList(
               ratios: _ratioHistory,
               isLoading: _isLoadingRatio,
@@ -609,9 +705,11 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       return SizedBox(
         height: 560,
         child: LinkedDualKlineView(
+          stockCode: _currentStock.code,
           weeklyBars: _weeklyBars,
           dailyBars: _dailyBars,
           ratios: _ratioHistory,
+          macdCacheStoreForTest: widget.macdCacheStoreForTest,
         ),
       );
     }
@@ -624,7 +722,8 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         ? _nearMissIndices
         : null;
 
-    return KLineChart(
+    return KLineChartWithSubCharts(
+      stockCode: _currentStock.code,
       bars: _chartMode == ChartMode.daily ? _dailyBars : _weeklyBars,
       ratios: _chartMode == ChartMode.daily ? _ratioHistory : null,
       markedIndices: markedIndices,
@@ -636,6 +735,16 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       onScaling: (isScaling) {
         setState(() => _isChartScaling = isScaling);
       },
+      subCharts: [
+        MacdSubChart(
+          key: ValueKey('stock_detail_macd_${_chartMode.name}'),
+          dataType: _chartMode == ChartMode.daily
+              ? KLineDataType.daily
+              : KLineDataType.weekly,
+          cacheStore: widget.macdCacheStoreForTest,
+          chartKey: ValueKey('stock_detail_macd_paint_${_chartMode.name}'),
+        ),
+      ],
     );
   }
 

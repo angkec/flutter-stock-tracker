@@ -3,7 +3,7 @@
 `stock_rtwatcher` is a Flutter-based market monitoring app focused on A-share workflows:
 
 - watchlist and full-market monitoring
-- minute/daily K-line data management
+- minute/daily/weekly K-line data management
 - strategy helpers (pullback, breakout, backtest)
 - industry-level buildup radar with score/rank trends
 

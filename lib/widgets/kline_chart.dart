@@ -5,6 +5,7 @@ import 'package:stock_rtwatcher/models/breakout_config.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_models.dart';
 import 'package:stock_rtwatcher/widgets/linked_kline_mapper.dart';
+import 'package:stock_rtwatcher/widgets/kline_viewport.dart';
 
 /// K 线图颜色 - use theme colors
 const Color kUpColor = AppColors.stockUp; // 涨 - 红
@@ -25,6 +26,9 @@ class KLineChart extends StatefulWidget {
   final LinkedCrosshairState? externalLinkedState; // 外部联动状态（用于双图同步）
   final int? externalLinkedBarIndex; // 外部指定的联动K线索引
   final bool showWeeklySeparators; // 日线中显示每周区隔（微弱）
+  final ValueChanged<KLineViewport>? onViewportChanged; // 可见窗口变化回调
+  final void Function(int? selectedIndex, bool isSelecting)?
+  onSelectionChanged; // 选中状态变化回调
 
   const KLineChart({
     super.key,
@@ -40,6 +44,8 @@ class KLineChart extends StatefulWidget {
     this.externalLinkedState,
     this.externalLinkedBarIndex,
     this.showWeeklySeparators = false,
+    this.onViewportChanged,
+    this.onSelectionChanged,
   });
 
   @override
@@ -48,6 +54,7 @@ class KLineChart extends StatefulWidget {
 
 class _KLineChartState extends State<KLineChart> {
   int? _selectedIndex;
+  bool _isSelecting = false;
 
   // 缩放相关状态
   late int _visibleCount; // 可见K线数量
@@ -57,6 +64,7 @@ class _KLineChartState extends State<KLineChart> {
   final Map<int, Offset> _pointers = {};
   double? _initialPinchDistance;
   int _initialVisibleCount = 30;
+  KLineViewport? _lastNotifiedViewport;
 
   // 缩放范围
   static const int _minVisibleCount = 10;
@@ -110,9 +118,13 @@ class _KLineChartState extends State<KLineChart> {
         return;
       }
       if (useSetState) {
-        setState(() => _selectedIndex = null);
+        setState(() {
+          _selectedIndex = null;
+          _isSelecting = false;
+        });
       } else {
         _selectedIndex = null;
+        _isSelecting = false;
       }
       return;
     }
@@ -148,15 +160,20 @@ class _KLineChartState extends State<KLineChart> {
       setState(() {
         _startIndex = nextStart;
         _selectedIndex = externalIndex;
+        _isSelecting = true;
       });
     } else {
       _startIndex = nextStart;
       _selectedIndex = externalIndex;
+      _isSelecting = true;
     }
+    widget.onSelectionChanged?.call(externalIndex, true);
   }
 
   @override
   Widget build(BuildContext context) {
+    _scheduleViewportNotification();
+
     if (widget.bars.isEmpty) {
       return SizedBox(
         height: widget.height,
@@ -175,7 +192,12 @@ class _KLineChartState extends State<KLineChart> {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final isDark = Theme.of(context).brightness == Brightness.dark;
-              final crosshairColor = isDark ? Colors.white : Colors.black;
+              final overlayTheme = Theme.of(
+                context,
+              ).extension<ChartOverlayTheme>();
+              final crosshairColor =
+                  overlayTheme?.crosshairColor ??
+                  (isDark ? Colors.white : Colors.black);
               // 计算可见的K线数据
               final endIndex = (_startIndex + _visibleCount).clamp(
                 0,
@@ -391,7 +413,9 @@ class _KLineChartState extends State<KLineChart> {
           widget.bars.length - _visibleCount,
         );
         _selectedIndex = _startIndex;
+        _isSelecting = true;
       });
+      widget.onSelectionChanged?.call(_selectedIndex, true);
       _emitLinkedTouchFromIndex(
         index: _startIndex,
         position: position,
@@ -408,7 +432,9 @@ class _KLineChartState extends State<KLineChart> {
           widget.bars.length - _visibleCount,
         );
         _selectedIndex = _startIndex + _visibleCount - 1;
+        _isSelecting = true;
       });
+      widget.onSelectionChanged?.call(_selectedIndex, true);
       _emitLinkedTouchFromIndex(
         index: _startIndex + _visibleCount - 1,
         position: position,
@@ -426,8 +452,14 @@ class _KLineChartState extends State<KLineChart> {
     // 转换为实际索引
     final actualIndex = _startIndex + visibleIndex;
     if (actualIndex < widget.bars.length) {
-      if (actualIndex != _selectedIndex) {
-        setState(() => _selectedIndex = actualIndex);
+      final selectionChanged =
+          actualIndex != _selectedIndex || _isSelecting != true;
+      if (selectionChanged) {
+        setState(() {
+          _selectedIndex = actualIndex;
+          _isSelecting = true;
+        });
+        widget.onSelectionChanged?.call(actualIndex, true);
       }
       _emitLinkedTouchFromIndex(
         index: actualIndex,
@@ -628,9 +660,47 @@ class _KLineChartState extends State<KLineChart> {
   }
 
   void _clearSelection() {
-    if (_selectedIndex != null) {
-      setState(() => _selectedIndex = null);
+    if (_selectedIndex != null || _isSelecting) {
+      setState(() {
+        _selectedIndex = null;
+        _isSelecting = false;
+      });
+      widget.onSelectionChanged?.call(null, false);
     }
+  }
+
+  void _scheduleViewportNotification() {
+    if (widget.onViewportChanged == null) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final viewport = _currentViewport();
+      if (viewport == _lastNotifiedViewport) {
+        return;
+      }
+      _lastNotifiedViewport = viewport;
+      widget.onViewportChanged!(viewport);
+    });
+  }
+
+  KLineViewport _currentViewport() {
+    final total = widget.bars.length;
+    if (total <= 0) {
+      return const KLineViewport(startIndex: 0, visibleCount: 0, totalCount: 0);
+    }
+
+    final safeVisibleCount = _visibleCount.clamp(1, total);
+    final maxStart = total - safeVisibleCount;
+    final safeStartIndex = _startIndex.clamp(0, maxStart);
+
+    return KLineViewport(
+      startIndex: safeStartIndex,
+      visibleCount: safeVisibleCount,
+      totalCount: total,
+    );
   }
 
   Widget _buildSelectedInfo() {

@@ -6,6 +6,12 @@ import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 
+/// 单次 getDailyVolumes 调用的性能信息
+///
+/// [fromCache] - 是否直接命中内存缓存
+/// [elapsedMs] - 本次调用总耗时（毫秒）
+typedef DailyVolumesProfile = ({bool fromCache, int elapsedMs});
+
 /// 历史分钟K线数据服务
 /// 统一管理原始分钟K线，支持增量拉取
 class HistoricalKlineService extends ChangeNotifier {
@@ -20,14 +26,17 @@ class HistoricalKlineService extends ChangeNotifier {
 
   /// 每日涨跌量缓存
   /// { stockCode: { dateKey: (up, down) } }
-  Map<String, Map<String, ({double up, double down})>> _dailyVolumesCache = {};
+  final Map<String, Map<String, ({double up, double down})>> _dailyVolumesCache = {};
 
   /// 构造函数
-  HistoricalKlineService({required DataRepository repository}) : _repository = repository {
+  HistoricalKlineService({required DataRepository repository})
+    : _repository = repository {
     // 监听数据更新事件，失效缓存
     _dataUpdatedSubscription = _repository.dataUpdatedStream.listen(
       (event) {
-        debugPrint('[HistoricalKline] 收到数据更新事件: version=${event.dataVersion}, stocks=${event.stockCodes.length}');
+        debugPrint(
+          '[HistoricalKline] 收到数据更新事件: version=${event.dataVersion}, stocks=${event.stockCodes.length}',
+        );
         // 失效对应股票的缓存
         for (final stockCode in event.stockCodes) {
           _dailyVolumesCache.remove(stockCode);
@@ -57,12 +66,20 @@ class HistoricalKlineService extends ChangeNotifier {
   /// 解析 "YYYY-MM-DD" 字符串为 DateTime
   static DateTime parseDate(String dateStr) {
     final parts = dateStr.split('-');
-    return DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+    return DateTime(
+      int.parse(parts[0]),
+      int.parse(parts[1]),
+      int.parse(parts[2]),
+    );
   }
 
   /// 获取某只股票所有日期的涨跌量汇总
   /// 返回 { dateKey: (up: upVolume, down: downVolume) }
-  Future<Map<String, ({double up, double down})>> getDailyVolumes(String stockCode) async {
+  Future<Map<String, ({double up, double down})>> getDailyVolumes(
+    String stockCode, {
+    void Function(DailyVolumesProfile profile)? onProfile,
+  }) async {
+    final stopwatch = Stopwatch()..start();
     try {
       // Check cache validity by version
       final repoVersion = await _repository.getCurrentVersion();
@@ -73,6 +90,11 @@ class HistoricalKlineService extends ChangeNotifier {
 
       // Return cached if available
       if (_dailyVolumesCache.containsKey(stockCode)) {
+        stopwatch.stop();
+        onProfile?.call((
+          fromCache: true,
+          elapsedMs: stopwatch.elapsedMilliseconds,
+        ));
         return _dailyVolumesCache[stockCode]!;
       }
 
@@ -91,8 +113,18 @@ class HistoricalKlineService extends ChangeNotifier {
 
       // Cache result
       _dailyVolumesCache[stockCode] = result;
+      stopwatch.stop();
+      onProfile?.call((
+        fromCache: false,
+        elapsedMs: stopwatch.elapsedMilliseconds,
+      ));
       return result;
     } catch (e, stackTrace) {
+      stopwatch.stop();
+      onProfile?.call((
+        fromCache: false,
+        elapsedMs: stopwatch.elapsedMilliseconds,
+      ));
       debugPrint('[HistoricalKline] getDailyVolumes failed for $stockCode: $e');
       if (kDebugMode) {
         debugPrint('Stack trace: $stackTrace');
@@ -102,7 +134,9 @@ class HistoricalKlineService extends ChangeNotifier {
   }
 
   /// 计算每日涨跌量（纯计算，无IO）
-  Map<String, ({double up, double down})> _computeDailyVolumes(List<KLine> bars) {
+  Map<String, ({double up, double down})> _computeDailyVolumes(
+    List<KLine> bars,
+  ) {
     if (bars.isEmpty) return {};
 
     final result = <String, ({double up, double down})>{};
@@ -162,7 +196,8 @@ class HistoricalKlineService extends ChangeNotifier {
       for (final entry in freshness.entries) {
         switch (entry.value) {
           case Missing():
-            missingCount += 30; // Assume 30 days missing for completely missing stock
+            missingCount +=
+                30; // Assume 30 days missing for completely missing stock
           case Stale(:final missingRange):
             missingCount += missingRange.duration.inDays.clamp(1, 30);
           case Fresh():

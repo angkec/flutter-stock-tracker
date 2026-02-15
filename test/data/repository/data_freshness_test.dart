@@ -413,14 +413,18 @@ void main() {
       expect(freshness['000001'], isA<Fresh>());
     });
 
-    test('刚好超过24小时的数据应该是 Stale', () async {
-      final twoDaysAgo = DateTime.now().subtract(const Duration(days: 2));
-      final twoDaysAgoDate = DateTime(twoDaysAgo.year, twoDaysAgo.month, twoDaysAgo.day);
+    test('超过一日且存在交易日窗口的数据应该是 Stale', () async {
+      final staleAnchor = DateTime.now().subtract(const Duration(days: 7));
+      final staleAnchorDate = DateTime(
+        staleAnchor.year,
+        staleAnchor.month,
+        staleAnchor.day,
+      );
 
       // Save daily data to define trading day
       await manager.saveKlineData(
         stockCode: '000001',
-        newBars: [_createKLine(twoDaysAgoDate, 10.0)],
+        newBars: [_createKLine(staleAnchorDate, 10.0)],
         dataType: KLineDataType.daily,
       );
 
@@ -428,7 +432,13 @@ void main() {
       final minuteKlines = <KLine>[];
       for (var i = 0; i < 230; i++) {
         minuteKlines.add(_createKLine(
-          DateTime(twoDaysAgoDate.year, twoDaysAgoDate.month, twoDaysAgoDate.day, 9, 30).add(Duration(minutes: i)),
+          DateTime(
+            staleAnchorDate.year,
+            staleAnchorDate.month,
+            staleAnchorDate.day,
+            9,
+            30,
+          ).add(Duration(minutes: i)),
           10.0 + i * 0.001,
         ));
       }
@@ -441,7 +451,7 @@ void main() {
       // Populate cache via findMissingMinuteDates
       await repository.findMissingMinuteDates(
         stockCode: '000001',
-        dateRange: DateRange(twoDaysAgoDate, twoDaysAgoDate),
+        dateRange: DateRange(staleAnchorDate, staleAnchorDate),
       );
 
       final freshness = await repository.checkFreshness(
@@ -449,7 +459,7 @@ void main() {
         dataType: KLineDataType.oneMinute,
       );
 
-      // Data is 2 days old, there might be new trading days -> Stale
+      // 数据窗口里包含潜在交易日，应该判定为 Stale
       expect(freshness['000001'], isA<Stale>());
     });
   });
@@ -556,13 +566,17 @@ void main() {
 
   group('日线 vs 分钟线差异', () {
     test('日线数据使用相同的缓存机制', () async {
-      final twoDaysAgo = DateTime.now().subtract(const Duration(days: 2));
-      final twoDaysAgoDate = DateTime(twoDaysAgo.year, twoDaysAgo.month, twoDaysAgo.day);
+      final staleAnchor = DateTime.now().subtract(const Duration(days: 7));
+      final staleAnchorDate = DateTime(
+        staleAnchor.year,
+        staleAnchor.month,
+        staleAnchor.day,
+      );
 
       // Save daily data
       await manager.saveKlineData(
         stockCode: '000001',
-        newBars: [_createKLine(twoDaysAgoDate, 10.0)],
+        newBars: [_createKLine(staleAnchorDate, 10.0)],
         dataType: KLineDataType.daily,
       );
 
@@ -572,7 +586,7 @@ void main() {
       await dateCheckStorage.saveCheckStatus(
         stockCode: '000001',
         dataType: KLineDataType.daily,
-        date: twoDaysAgoDate,
+        date: staleAnchorDate,
         status: DayDataStatus.complete,
         barCount: 1,
       );

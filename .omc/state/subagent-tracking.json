@@ -1,0 +1,26 @@
+{
+  "agents": [
+    {
+      "agent_id": "a03ffe4",
+      "agent_type": "oh-my-claudecode:git-master",
+      "started_at": "2026-02-09T16:13:06.930Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-02-09T16:14:25.492Z",
+      "duration_ms": 78562
+    },
+    {
+      "agent_id": "a2df244",
+      "agent_type": "oh-my-claudecode:writer",
+      "started_at": "2026-02-09T16:24:15.767Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-02-09T16:27:00.599Z",
+      "duration_ms": 164832
+    }
+  ],
+  "total_spawned": 2,
+  "total_completed": 2,
+  "total_failed": 0,
+  "last_updated": "2026-02-09T16:27:19.263Z"
+}

@@ -84,5 +84,54 @@ void main() {
       expect(loaded.lastError, 'timeout-again');
       expect(loaded.lastAttemptAt, isNotNull);
     });
+
+    test(
+      'markFetchSuccessBatch should clear failures and update timestamps',
+      () async {
+        await storage.markFetchFailure('000001', 'timeout');
+        await storage.markFetchFailure('000002', 'timeout');
+
+        final tradingDay = DateTime(2026, 2, 13);
+        await storage.markFetchSuccessBatch([
+          '000001',
+          '000002',
+        ], lastCompleteTradingDay: tradingDay);
+
+        final batch = await storage.getBatchByStockCodes(['000001', '000002']);
+        expect(batch.length, 2);
+
+        for (final stockCode in ['000001', '000002']) {
+          final state = batch[stockCode];
+          expect(state, isNotNull);
+          expect(state!.consecutiveFailures, 0);
+          expect(state.lastError, isNull);
+          expect(state.lastSuccessFetchAt, isNotNull);
+          expect(state.lastAttemptAt, isNotNull);
+          expect(state.lastCompleteTradingDay, DateTime(2026, 2, 13));
+        }
+      },
+    );
+
+    test(
+      'getBatchByStockCodes should support large input via chunking',
+      () async {
+        final existingCodes = List.generate(
+          1200,
+          (index) => '6${index.toString().padLeft(5, '0')}',
+        );
+        for (final code in existingCodes) {
+          await storage.upsert(
+            MinuteSyncState(
+              stockCode: code,
+              updatedAt: DateTime(2026, 2, 14, 10, 0),
+            ),
+          );
+        }
+
+        final loaded = await storage.getBatchByStockCodes(existingCodes);
+        expect(loaded.length, existingCodes.length);
+        expect(loaded.keys.first, isNotEmpty);
+      },
+    );
   });
 }

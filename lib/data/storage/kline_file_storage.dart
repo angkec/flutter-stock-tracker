@@ -35,9 +35,13 @@ class KLineFileStorage {
   /// Base directory path (used for testing)
   String? _baseDirPath;
 
+  /// Resolved base directory cache
+  String? _resolvedBaseDirectory;
+
   /// Set base directory path for testing
   void setBaseDirPathForTesting(String path) {
     _baseDirPath = path;
+    _resolvedBaseDirectory = path;
   }
 
   /// Initialize the file storage by creating base directory
@@ -87,11 +91,23 @@ class KLineFileStorage {
 
   /// Get base directory asynchronously
   Future<String> _getBaseDirectory() async {
-    if (_baseDirPath != null) {
-      return _baseDirPath!;
+    if (_resolvedBaseDirectory != null) {
+      return _resolvedBaseDirectory!;
     }
+
+    if (_baseDirPath != null) {
+      _resolvedBaseDirectory = _baseDirPath!;
+      return _resolvedBaseDirectory!;
+    }
+
     final appDocsDir = await getApplicationDocumentsDirectory();
-    return '${appDocsDir.path}/$_baseDir';
+    _resolvedBaseDirectory = '${appDocsDir.path}/$_baseDir';
+    return _resolvedBaseDirectory!;
+  }
+
+  /// Get base directory path for external data-layer helpers.
+  Future<String> getBaseDirectoryPath() async {
+    return _getBaseDirectory();
   }
 
   /// Load a monthly K-line file from disk

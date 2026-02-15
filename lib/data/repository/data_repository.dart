@@ -29,7 +29,7 @@ abstract class DataRepository {
   ///
   /// [stockCodes] 股票代码列表
   /// [dateRange] 日期范围
-  /// [dataType] 数据类型 '1min' 或 'daily'
+  /// [dataType] 数据类型 '1min' / 'daily' / 'weekly'
   Future<Map<String, List<KLine>>> getKlines({
     required List<String> stockCodes,
     required DateRange dateRange,

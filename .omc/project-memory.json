@@ -1,0 +1,350 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1770651367938,
+  "projectRoot": "/Users/ankerc/Projects/stock-rtwatcher-flutter",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "assets",
+      "bin",
+      "docs",
+      "lib",
+      "scripts",
+      "test"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "android": {
+      "path": "android",
+      "purpose": null,
+      "fileCount": 9,
+      "lastAccessed": 1770651367924,
+      "keyFiles": [
+        "build.gradle.kts",
+        "gradle.properties",
+        "gradlew",
+        "gradlew.bat",
+        "local.properties"
+      ]
+    },
+    "assets": {
+      "path": "assets",
+      "purpose": "Static assets",
+      "fileCount": 1,
+      "lastAccessed": 1770651367924,
+      "keyFiles": [
+        "sw_industry.json"
+      ]
+    },
+    "bin": {
+      "path": "bin",
+      "purpose": "Executable scripts",
+      "fileCount": 3,
+      "lastAccessed": 1770651367924,
+      "keyFiles": [
+        "benchmark.dart",
+        "benchmark_parallel.dart",
+        "benchmark_pool.dart"
+      ]
+    },
+    "build": {
+      "path": "build",
+      "purpose": "Build output",
+      "fileCount": 3,
+      "lastAccessed": 1770651367925,
+      "keyFiles": [
+        "6ab642d2d29d49c7c5f5a6d85fcef46b.cache.dill.track.dill",
+        "flutter_driver_commands_0.log"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 5,
+      "lastAccessed": 1770651367925,
+      "keyFiles": [
+        "debug-morning-data-fallback.md",
+        "e2e-testing-guide.md",
+        "stock-dailyk-results.md",
+        "stock-dailyk-spec.md",
+        "ui-design-spec.md"
+      ]
+    },
+    "integration_test": {
+      "path": "integration_test",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1770651367926,
+      "keyFiles": [
+        "bdd_options.dart",
+        "chinese_bdd_runner.dart",
+        "gherkin_test.dart",
+        "integration_test.dart"
+      ]
+    },
+    "ios": {
+      "path": "ios",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1770651367927,
+      "keyFiles": [
+        "Podfile",
+        "Podfile.lock"
+      ]
+    },
+    "lib": {
+      "path": "lib",
+      "purpose": "Library code",
+      "fileCount": 2,
+      "lastAccessed": 1770651367928,
+      "keyFiles": [
+        "main.dart"
+      ]
+    },
+    "linux": {
+      "path": "linux",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1770651367928,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "macos": {
+      "path": "macos",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1770651367929,
+      "keyFiles": [
+        "Podfile",
+        "Podfile.lock"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 1,
+      "lastAccessed": 1770651367929,
+      "keyFiles": [
+        "run_e2e_tests.sh"
+      ]
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1770651367929,
+      "keyFiles": []
+    },
+    "test_driver": {
+      "path": "test_driver",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1770651367929,
+      "keyFiles": [
+        "app.dart",
+        "app_test.dart",
+        "bdd_test.dart"
+      ]
+    },
+    "web": {
+      "path": "web",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1770651367929,
+      "keyFiles": [
+        "favicon.png",
+        "index.html",
+        "manifest.json"
+      ]
+    },
+    "windows": {
+      "path": "windows",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1770651367930,
+      "keyFiles": [
+        "CMakeLists.txt"
+      ]
+    },
+    "android/app": {
+      "path": "android/app",
+      "purpose": "Application code",
+      "fileCount": 2,
+      "lastAccessed": 1770651367932,
+      "keyFiles": [
+        "build.gradle.kts",
+        "proguard-rules.pro"
+      ]
+    },
+    "build/app": {
+      "path": "build/app",
+      "purpose": "Application code",
+      "fileCount": 2,
+      "lastAccessed": 1770651367932,
+      "keyFiles": [
+        "deeplink.json"
+      ]
+    },
+    "lib/config": {
+      "path": "lib/config",
+      "purpose": "Configuration files",
+      "fileCount": 1,
+      "lastAccessed": 1770651367933,
+      "keyFiles": [
+        "debug_config.dart"
+      ]
+    },
+    "lib/data": {
+      "path": "lib/data",
+      "purpose": "Data files",
+      "fileCount": 0,
+      "lastAccessed": 1770651367933,
+      "keyFiles": []
+    },
+    "lib/models": {
+      "path": "lib/models",
+      "purpose": "Data models",
+      "fileCount": 15,
+      "lastAccessed": 1770651367933,
+      "keyFiles": [
+        "adaptive_weekly_config.dart",
+        "ai_recommendation.dart",
+        "backtest_config.dart"
+      ]
+    },
+    "lib/services": {
+      "path": "lib/services",
+      "purpose": "Business logic services",
+      "fileCount": 17,
+      "lastAccessed": 1770651367933,
+      "keyFiles": [
+        "adaptive_topk_calibrator.dart",
+        "ai_analysis_service.dart",
+        "backtest_service.dart"
+      ]
+    },
+    "lib/utils": {
+      "path": "lib/utils",
+      "purpose": "Utility functions",
+      "fileCount": 3,
+      "lastAccessed": 1770651367933,
+      "keyFiles": [
+        "gbk_decoder.dart",
+        "price_decoder.dart",
+        "volume_decoder.dart"
+      ]
+    },
+    "test/data": {
+      "path": "test/data",
+      "purpose": "Data files",
+      "fileCount": 0,
+      "lastAccessed": 1770651367934,
+      "keyFiles": []
+    },
+    "test/models": {
+      "path": "test/models",
+      "purpose": "Data models",
+      "fileCount": 1,
+      "lastAccessed": 1770651367934,
+      "keyFiles": [
+        "industry_stats_test.dart"
+      ]
+    },
+    "test/services": {
+      "path": "test/services",
+      "purpose": "Business logic services",
+      "fileCount": 12,
+      "lastAccessed": 1770651367934,
+      "keyFiles": [
+        "adaptive_topk_calibrator_test.dart",
+        "breakout_service_test.dart",
+        "historical_kline_service_test.dart"
+      ]
+    },
+    "test/utils": {
+      "path": "test/utils",
+      "purpose": "Utility functions",
+      "fileCount": 3,
+      "lastAccessed": 1770651367934,
+      "keyFiles": [
+        "gbk_decoder_test.dart",
+        "price_decoder_test.dart",
+        "volume_decoder_test.dart"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "docs/plans/2026-02-07-industry-score-ema-rank.md",
+      "accessCount": 3,
+      "lastAccessed": 1770654263247,
+      "type": "file"
+    },
+    {
+      "path": ".",
+      "accessCount": 2,
+      "lastAccessed": 1770654264163,
+      "type": "directory"
+    },
+    {
+      "path": "lib/services/industry_score_engine.dart",
+      "accessCount": 2,
+      "lastAccessed": 1770654273664,
+      "type": "file"
+    },
+    {
+      "path": "pubspec.yaml",
+      "accessCount": 2,
+      "lastAccessed": 1770654283649,
+      "type": "file"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 1,
+      "lastAccessed": 1770654263243,
+      "type": "file"
+    },
+    {
+      "path": "lib/data/storage/database_schema.dart",
+      "accessCount": 1,
+      "lastAccessed": 1770654273678,
+      "type": "file"
+    },
+    {
+      "path": "lib/screens/industry_screen.dart",
+      "accessCount": 1,
+      "lastAccessed": 1770654285042,
+      "type": "file"
+    },
+    {
+      "path": "docs/reports/system_status_2026-02-10.md",
+      "accessCount": 1,
+      "lastAccessed": 1770654398332,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

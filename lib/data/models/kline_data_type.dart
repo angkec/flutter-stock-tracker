@@ -2,7 +2,8 @@
 
 enum KLineDataType {
   oneMinute('1min'),
-  daily('daily');
+  daily('daily'),
+  weekly('weekly');
 
   final String name;
   const KLineDataType(this.name);

@@ -122,6 +122,7 @@ class MockTdxClient extends TdxClient {
 class FakeMinuteFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
   int fetchCalls = 0;
   int fetchBarsCalls = 0;
+  int fetchBarsProgressEvents = 0;
   int? lastCategory;
   int? lastStart;
   int? lastCount;
@@ -145,6 +146,9 @@ class FakeMinuteFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
     stockCodesByCall.add(List<String>.from(stockCodes));
 
     for (var i = 0; i < stockCodes.length; i++) {
+      if (onProgress != null) {
+        fetchBarsProgressEvents++;
+      }
       onProgress?.call(i + 1, stockCodes.length);
     }
 
@@ -170,6 +174,9 @@ class FakeMinuteFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
     stockCodesByCall.add(List<String>.from(stockCodes));
 
     for (var i = 0; i < stockCodes.length; i++) {
+      if (onProgress != null) {
+        fetchBarsProgressEvents++;
+      }
       onProgress?.call(i + 1, stockCodes.length);
     }
 
@@ -1523,6 +1530,28 @@ void main() {
 
       expect(mockTdxClient.barRequests.isNotEmpty, isTrue);
       expect(mockTdxClient.barRequests.first.category, equals(4)); // 日线
+
+      mockTdxClient.clearBarRequests();
+
+      // 测试周线数据
+      final weeklyKlines = generateTestKlines(
+        startDate: DateTime(2024, 1, 15),
+        count: 5,
+        isMinuteData: false,
+      );
+
+      mockTdxClient.barsToReturn = {
+        '0_000003_5': weeklyKlines, // category 5 = 周线
+      };
+
+      await repository.fetchMissingData(
+        stockCodes: ['000003'],
+        dateRange: dateRange,
+        dataType: KLineDataType.weekly,
+      );
+
+      expect(mockTdxClient.barRequests.isNotEmpty, isTrue);
+      expect(mockTdxClient.barRequests.first.category, equals(5)); // 周线
     });
 
     test('should invalidate cache for updated stocks', () async {
@@ -3060,6 +3089,7 @@ void main() {
       expect(fakeAdapter.fetchCalls, 1);
       expect(fakeWriter.writeCalls, 1);
       expect(fakePlanner.callCount, 1);
+      expect(mockTdxClient.barRequests, isEmpty);
       expect(result.totalRecords, 1);
     });
 
@@ -3147,6 +3177,172 @@ void main() {
       expect(mockTdxClient.barRequests, isEmpty);
       expect(result.totalRecords, 1);
     });
+
+    test('weekly fetch uses pool kline adapter when available', () async {
+      final day = DateTime(2026, 2, 13);
+      fakeAdapter.barsToReturn = {
+        '000001': [
+          KLine(
+            datetime: day,
+            open: 10,
+            close: 10.2,
+            high: 10.3,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+      };
+
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: DateRange(day, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.weekly,
+      );
+
+      expect(fakeAdapter.fetchBarsCalls, greaterThan(0));
+      expect(fakeAdapter.lastCategory, klineTypeWeekly);
+      expect(mockTdxClient.barRequests, isEmpty);
+      expect(result.totalRecords, 1);
+    });
+
+    test('weekly refetch uses pool kline adapter when available', () async {
+      final day = DateTime(2026, 2, 13);
+      fakeAdapter.barsToReturn = {
+        '000001': [
+          KLine(
+            datetime: day,
+            open: 10,
+            close: 10.2,
+            high: 10.3,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+      };
+
+      final result = await repository.refetchData(
+        stockCodes: ['000001'],
+        dateRange: DateRange(day, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.weekly,
+      );
+
+      expect(fakeAdapter.fetchBarsCalls, greaterThan(0));
+      expect(fakeAdapter.lastCategory, klineTypeWeekly);
+      expect(mockTdxClient.barRequests, isEmpty);
+      expect(result.totalRecords, 1);
+    });
+
+    test(
+      'weekly fetch wires adapter progress callback for fetch stage',
+      () async {
+        final day = DateTime(2026, 2, 13);
+        fakeAdapter.barsToReturn = {
+          '000001': [
+            KLine(
+              datetime: day,
+              open: 10,
+              close: 10.2,
+              high: 10.3,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+        };
+
+        await repository.fetchMissingData(
+          stockCodes: ['000001'],
+          dateRange: DateRange(day, DateTime(2026, 2, 13, 23, 59, 59)),
+          dataType: KLineDataType.weekly,
+        );
+
+        expect(fakeAdapter.fetchBarsProgressEvents, greaterThan(0));
+      },
+    );
+
+    test('weekly fetch emits precheck progress before fetching', () async {
+      final day = DateTime(2026, 2, 13);
+      fakeAdapter.barsToReturn = {
+        '000001': [
+          KLine(
+            datetime: day,
+            open: 10,
+            close: 10.2,
+            high: 10.3,
+            low: 9.9,
+            volume: 1000,
+            amount: 10000,
+          ),
+        ],
+      };
+
+      final statuses = <DataFetching>[];
+      final subscription = repository.statusStream.listen((status) {
+        if (status is DataFetching) {
+          statuses.add(status);
+        }
+      });
+
+      await repository.fetchMissingData(
+        stockCodes: ['000001'],
+        dateRange: DateRange(day, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.weekly,
+      );
+
+      await Future<void>.delayed(Duration.zero);
+      await subscription.cancel();
+
+      expect(
+        statuses.any((status) => status.currentStock == '__PRECHECK__'),
+        isTrue,
+      );
+    });
+
+    test(
+      'weekly pool pipeline emits write-phase DataFetching status',
+      () async {
+        final day = DateTime(2026, 2, 13);
+        fakeAdapter.barsToReturn = {
+          '000001': [
+            KLine(
+              datetime: day,
+              open: 10,
+              close: 10.2,
+              high: 10.3,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+        };
+
+        final statuses = <DataFetching>[];
+        final subscription = repository.statusStream.listen((status) {
+          if (status is DataFetching) {
+            statuses.add(status);
+          }
+        });
+
+        await repository.fetchMissingData(
+          stockCodes: ['000001'],
+          dateRange: DateRange(day, DateTime(2026, 2, 13, 23, 59, 59)),
+          dataType: KLineDataType.weekly,
+        );
+
+        await Future<void>.delayed(Duration.zero);
+        await subscription.cancel();
+
+        final writeStatuses = statuses
+            .where((status) => status.currentStock == '__WRITE__')
+            .toList(growable: false);
+
+        expect(writeStatuses, isNotEmpty);
+        expect(writeStatuses.last.current, greaterThanOrEqualTo(1));
+        expect(writeStatuses.last.total, greaterThanOrEqualTo(1));
+      },
+    );
 
     test('incremental plan only fetches stocks with datesToFetch', () async {
       final tradingDay = DateTime(2026, 2, 13);

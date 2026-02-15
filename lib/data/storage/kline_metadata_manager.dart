@@ -77,6 +77,8 @@ class KLineFileMetadata {
 
 /// Manages K-line data storage with coordinated file and database updates
 class KLineMetadataManager {
+  static const int _inClauseChunkSize = 800;
+
   final MarketDatabase _db;
   final KLineFileStorage _fileStorage;
 
@@ -239,6 +241,62 @@ class KLineMetadataManager {
     );
 
     return rows.map((row) => KLineFileMetadata.fromMap(row)).toList();
+  }
+
+  /// 批量获取股票在指定数据类型下的起止覆盖范围
+  ///
+  /// 返回: {stockCode: (startDate, endDate)}
+  Future<Map<String, ({DateTime? startDate, DateTime? endDate})>>
+  getCoverageRanges({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+  }) async {
+    final result = <String, ({DateTime? startDate, DateTime? endDate})>{};
+    if (stockCodes.isEmpty) {
+      return result;
+    }
+
+    final database = await _db.database;
+
+    for (var start = 0; start < stockCodes.length; start += _inClauseChunkSize) {
+      final end =
+          (start + _inClauseChunkSize).clamp(0, stockCodes.length);
+      final chunk = stockCodes.sublist(start, end);
+      if (chunk.isEmpty) {
+        continue;
+      }
+
+      final placeholders = List.filled(chunk.length, '?').join(', ');
+      final rows = await database.rawQuery(
+        '''
+        SELECT
+          stock_code,
+          MIN(start_date) AS min_start_date,
+          MAX(end_date) AS max_end_date
+        FROM kline_files
+        WHERE data_type = ? AND stock_code IN ($placeholders)
+        GROUP BY stock_code
+        ''',
+        [dataType.name, ...chunk],
+      );
+
+      for (final row in rows) {
+        final stockCode = row['stock_code'] as String;
+        final startMs = row['min_start_date'] as int?;
+        final endMs = row['max_end_date'] as int?;
+
+        result[stockCode] = (
+          startDate: startMs == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(startMs),
+          endDate: endMs == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(endMs),
+        );
+      }
+    }
+
+    return result;
   }
 
   /// Get the most recent data date for a stock and data type

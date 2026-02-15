@@ -122,6 +122,29 @@ const _embeddedFeatures = <String, String>{
       | 股票代码 |
       | 000001 |
 ''',
+  'macd': '''
+# language: zh-CN
+功能: 个股详情MACD附图
+  作为用户
+  我希望在个股详情中看到MACD缓存附图
+  以便结合日线和周线判断趋势
+
+  场景: 日线模式显示MACD缓存附图
+    假如 测试股票"600000"的MACD缓存已写入
+    假如 已打开MACD测试详情页并切换到"日线"模式
+    那么 应该看到日线MACD缓存图
+
+  场景: 周线模式显示MACD缓存附图
+    假如 测试股票"600000"的MACD缓存已写入
+    假如 已打开MACD测试详情页并切换到"周线"模式
+    那么 应该看到周线MACD缓存图
+
+  场景: 联动模式同时显示周线和日线MACD缓存附图
+    假如 测试股票"600000"的MACD缓存已写入
+    假如 已打开MACD测试详情页并切换到"联动"模式
+    那么 应该看到联动周线MACD缓存图
+    并且 应该看到联动日线MACD缓存图
+''',
 };
 
 // ============================================================================
@@ -185,8 +208,8 @@ class StepDefinitionWrapper {
   final List<String> _parameterTypes;
 
   StepDefinitionWrapper(this.patternString, this.definition)
-      : _regex = _buildRegex(patternString),
-        _parameterTypes = _extractParameterTypes(patternString);
+    : _regex = _buildRegex(patternString),
+      _parameterTypes = _extractParameterTypes(patternString);
 
   /// Extract parameter types from pattern
   static List<String> _extractParameterTypes(String pattern) {
@@ -243,7 +266,8 @@ class StepDefinitionWrapper {
       if (value != null) {
         // Check parameter type from pattern to determine if it should be int
         final paramIndex = params.length;
-        if (paramIndex < _parameterTypes.length && _parameterTypes[paramIndex] == 'int') {
+        if (paramIndex < _parameterTypes.length &&
+            _parameterTypes[paramIndex] == 'int') {
           params.add(int.parse(value));
         } else {
           // Keep as string for {string} parameters
@@ -484,12 +508,14 @@ void _saveCurrentScenario(
   List<ParsedScenario> scenarios,
 ) {
   if (name != null && steps.isNotEmpty) {
-    scenarios.add(ParsedScenario(
-      name,
-      List.from(steps),
-      isOutline: isOutline,
-      examples: List.from(examples),
-    ));
+    scenarios.add(
+      ParsedScenario(
+        name,
+        List.from(steps),
+        isOutline: isOutline,
+        examples: List.from(examples),
+      ),
+    );
   }
 }
 
@@ -512,8 +538,15 @@ List<StepDefinitionWrapper> buildStepWrappers() {
     // Extract pattern from the step definition
     // pattern is a Pattern, we need to convert to String
     final pattern = def.pattern;
-    final patternString = pattern is RegExp ? pattern.pattern : pattern.toString();
-    wrappers.add(StepDefinitionWrapper(patternString, def as StepDefinitionGeneric<WidgetTesterWorld>));
+    final patternString = pattern is RegExp
+        ? pattern.pattern
+        : pattern.toString();
+    wrappers.add(
+      StepDefinitionWrapper(
+        patternString,
+        def as StepDefinitionGeneric<WidgetTesterWorld>,
+      ),
+    );
   }
 
   return wrappers;
@@ -539,13 +572,19 @@ Future<void> executeStep(
 
       // Check if the step failed
       if (result.result == StepExecutionResult.fail) {
-        throw Exception('Step failed: ${result.resultReason ?? "Unknown reason"}');
+        throw Exception(
+          'Step failed: ${result.resultReason ?? "Unknown reason"}',
+        );
       } else if (result.result == StepExecutionResult.error) {
         // Get more detailed error info from ErroredStepResult if available
         if (result is ErroredStepResult) {
-          throw Exception('Step error executing "$stepText": ${result.exception}\n${result.stackTrace}');
+          throw Exception(
+            'Step error executing "$stepText": ${result.exception}\n${result.stackTrace}',
+          );
         }
-        throw Exception('Step error: ${result.resultReason ?? "Unknown error"}');
+        throw Exception(
+          'Step error: ${result.resultReason ?? "Unknown error"}',
+        );
       } else if (result.result == StepExecutionResult.timeout) {
         throw Exception('Step timed out');
       }

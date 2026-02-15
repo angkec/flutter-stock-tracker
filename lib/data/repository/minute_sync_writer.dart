@@ -77,7 +77,6 @@ class MinuteSyncWriter {
             stockCode: entry.key,
             bars: entry.value,
             dataType: dataType,
-            fetchedTradingDay: fetchedTradingDay,
           );
           completed++;
           onProgress?.call(completed, nonEmptyEntries.length);
@@ -87,6 +86,18 @@ class MinuteSyncWriter {
       await Future.wait(
         List.generate(workerCount, (_) => runWorker(), growable: false),
       );
+
+      final succeededStockCodes = outcomes
+          .whereType<_StockPersistOutcome>()
+          .where((outcome) => outcome.updated)
+          .map((outcome) => outcome.stockCode)
+          .toList(growable: false);
+      if (succeededStockCodes.isNotEmpty) {
+        await _syncStateStorage.markFetchSuccessBatch(
+          succeededStockCodes,
+          lastCompleteTradingDay: fetchedTradingDay,
+        );
+      }
     }
 
     persistStopwatch.stop();
@@ -127,7 +138,6 @@ class MinuteSyncWriter {
     required String stockCode,
     required List<KLine> bars,
     required KLineDataType dataType,
-    required DateTime? fetchedTradingDay,
   }) async {
     try {
       await _metadataManager.saveKlineData(
@@ -135,11 +145,6 @@ class MinuteSyncWriter {
         newBars: bars,
         dataType: dataType,
         bumpVersion: false,
-      );
-
-      await _syncStateStorage.markFetchSuccess(
-        stockCode,
-        lastCompleteTradingDay: fetchedTradingDay,
       );
 
       return _StockPersistOutcome(

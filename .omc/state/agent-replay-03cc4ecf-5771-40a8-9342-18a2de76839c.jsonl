@@ -1,0 +1,8 @@
+{"t":0,"agent":"system","event":"skill_invoked","skill_name":"superpowers:using-superpowers"}
+{"t":0,"agent":"system","event":"skill_invoked","skill_name":"oh-my-claudecode:git-master"}
+{"t":0,"agent":"a03ffe4","agent_type":"git-master","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a03ffe4","agent_type":"git-master","event":"agent_stop","success":true,"duration_ms":78562}
+{"t":0,"agent":"acb97c5","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"a2df244","agent_type":"writer","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a2df244","agent_type":"writer","event":"agent_stop","success":true,"duration_ms":164832}
+{"t":0,"agent":"ab19590","agent_type":"unknown","event":"agent_stop","success":true}
