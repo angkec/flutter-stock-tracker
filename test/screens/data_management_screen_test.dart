@@ -253,15 +253,18 @@ class _FakeMacdIndicatorService extends MacdIndicatorService {
   _FakeMacdIndicatorService({required super.repository});
 
   int prewarmFromRepositoryCount = 0;
+  final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
 
   @override
   Future<void> prewarmFromRepository({
     required List<String> stockCodes,
     required KLineDataType dataType,
     required DateRange dateRange,
+    bool forceRecompute = false,
     void Function(int current, int total)? onProgress,
   }) async {
     prewarmFromRepositoryCount++;
+    prewarmDataTypes.add(dataType);
     onProgress?.call(stockCodes.length, stockCodes.length);
   }
 }
@@ -336,11 +339,19 @@ void main() {
 
   Future<void> scrollToText(WidgetTester tester, String text) async {
     final listView = find.byType(ListView);
-    for (var i = 0; i < 8; i++) {
-      if (find.text(text).hitTestable().evaluate().isNotEmpty) {
-        break;
+    final target = find.text(text);
+    for (var i = 0; i < 14; i++) {
+      if (target.evaluate().isNotEmpty) {
+        await tester.ensureVisible(target.first);
+        await tester.pumpAndSettle();
+        return;
       }
-      await tester.drag(listView, const Offset(0, -260));
+      await tester.drag(listView, const Offset(0, -320));
+      await tester.pumpAndSettle();
+    }
+
+    if (target.evaluate().isNotEmpty) {
+      await tester.ensureVisible(target.first);
       await tester.pumpAndSettle();
     }
   }
@@ -1145,7 +1156,7 @@ void main() {
     await repository.dispose();
   });
 
-  testWidgets('数据管理页应提供MACD参数设置入口并可打开页面', (tester) async {
+  testWidgets('数据管理页应提供日线和周线MACD参数入口并可分别打开页面', (tester) async {
     final repository = _FakeDataRepository();
     final klineService = HistoricalKlineService(repository: repository);
     final trendService = _FakeIndustryTrendService();
@@ -1169,17 +1180,124 @@ void main() {
       rankService: rankService,
     );
 
-    await scrollToText(tester, 'MACD 参数设置');
-    expect(find.text('MACD 参数设置'), findsOneWidget);
+    await scrollToText(tester, '日线MACD参数设置');
+    expect(find.text('日线MACD参数设置'), findsOneWidget);
+    expect(find.text('周线MACD参数设置'), findsOneWidget);
 
-    await tester.tap(find.text('MACD 参数设置'));
+    await tester.tap(find.text('日线MACD参数设置'));
     await tester.pumpAndSettle();
-    expect(find.text('MACD 指标设置'), findsOneWidget);
+    expect(find.text('日线MACD设置'), findsOneWidget);
 
     provider.dispose();
     klineService.dispose();
     trendService.dispose();
     rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('日线MACD设置页应支持触发日线重算', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+    );
+
+    await scrollToText(tester, '日线MACD参数设置');
+    await tester.tap(find.text('日线MACD参数设置').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('日线MACD设置'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('重算日线MACD'),
+      220,
+      scrollable: find.byType(Scrollable).last,
+    );
+    final dailyRecomputeButton = find.byKey(
+      const ValueKey('macd_recompute_daily'),
+    );
+    expect(dailyRecomputeButton, findsOneWidget);
+    await tester.ensureVisible(dailyRecomputeButton);
+    await tester.tap(dailyRecomputeButton, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(macdService.prewarmDataTypes, contains(KLineDataType.daily));
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周线MACD设置页应支持触发周线重算', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+    );
+
+    await scrollToText(tester, '周线MACD参数设置');
+    await tester.tap(find.text('周线MACD参数设置').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('周线MACD设置'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('重算周线MACD'),
+      220,
+      scrollable: find.byType(Scrollable).last,
+    );
+    final weeklyRecomputeButton = find.byKey(
+      const ValueKey('macd_recompute_weekly'),
+    );
+    expect(weeklyRecomputeButton, findsOneWidget);
+    await tester.ensureVisible(weeklyRecomputeButton);
+    await tester.tap(weeklyRecomputeButton, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(macdService.prewarmDataTypes, contains(KLineDataType.weekly));
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
     await repository.dispose();
   });
 
@@ -1233,6 +1351,65 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(macdService.prewarmFromRepositoryCount, 1);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K拉取缺失无新增记录时应跳过周线MACD预热', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 0,
+      duration: const Duration(milliseconds: 1),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(macdService.prewarmFromRepositoryCount, 0);
 
     provider.dispose();
     klineService.dispose();

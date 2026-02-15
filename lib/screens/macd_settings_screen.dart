@@ -1,10 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/models/macd_config.dart';
+import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 
 class MacdSettingsScreen extends StatefulWidget {
-  const MacdSettingsScreen({super.key});
+  const MacdSettingsScreen({super.key, this.dataType = KLineDataType.daily});
+
+  final KLineDataType dataType;
 
   @override
   State<MacdSettingsScreen> createState() => _MacdSettingsScreenState();
@@ -16,11 +21,17 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
   late int _signalPeriod;
   late int _windowMonths;
   bool _isSaving = false;
+  bool _isRecomputing = false;
+
+  bool get _isWeekly => widget.dataType == KLineDataType.weekly;
+  String get _scopeLabel => _isWeekly ? '周线' : '日线';
 
   @override
   void initState() {
     super.initState();
-    final config = context.read<MacdIndicatorService>().config;
+    final config = context.read<MacdIndicatorService>().configFor(
+      widget.dataType,
+    );
     _fastPeriod = config.fastPeriod;
     _slowPeriod = config.slowPeriod;
     _signalPeriod = config.signalPeriod;
@@ -53,8 +64,9 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
       _isSaving = true;
     });
     try {
-      await context.read<MacdIndicatorService>().updateConfig(
-        MacdConfig(
+      await context.read<MacdIndicatorService>().updateConfigFor(
+        dataType: widget.dataType,
+        newConfig: MacdConfig(
           fastPeriod: _fastPeriod,
           slowPeriod: _slowPeriod,
           signalPeriod: _signalPeriod,
@@ -65,7 +77,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('MACD 参数已保存')));
+      ).showSnackBar(SnackBar(content: Text('$_scopeLabel MACD参数已保存')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -91,6 +103,86 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
     await _save();
   }
 
+  DateRange _buildRecomputeDateRange() {
+    const weeklyRangeDays = 760;
+    const dailyRangeDays = 400;
+    final end = DateTime.now();
+    final start = end.subtract(
+      Duration(days: _isWeekly ? weeklyRangeDays : dailyRangeDays),
+    );
+    return DateRange(start, end);
+  }
+
+  Future<void> _recompute() async {
+    if (_isRecomputing) {
+      return;
+    }
+
+    final provider = context.read<MarketDataProvider>();
+    final stockCodes = provider.allData
+        .map((item) => item.stock.code)
+        .where((code) => code.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (stockCodes.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先刷新市场数据')));
+      return;
+    }
+
+    setState(() {
+      _isRecomputing = true;
+    });
+
+    final progressNotifier = ValueNotifier<({int current, int total})>((
+      current: 0,
+      total: 1,
+    ));
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _MacdRecomputeProgressDialog(
+        scopeLabel: _scopeLabel,
+        progressNotifier: progressNotifier,
+      ),
+    );
+
+    try {
+      await context.read<MacdIndicatorService>().prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: widget.dataType,
+        dateRange: _buildRecomputeDateRange(),
+        forceRecompute: true,
+        onProgress: (current, total) {
+          progressNotifier.value = (
+            current: current.clamp(0, total <= 0 ? 1 : total),
+            total: total <= 0 ? 1 : total,
+          );
+        },
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$_scopeLabel MACD重算完成')));
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$_scopeLabel MACD重算失败: $e')));
+    } finally {
+      progressNotifier.dispose();
+      if (mounted) {
+        setState(() {
+          _isRecomputing = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -98,7 +190,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
     final validation = _validate();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('MACD 指标设置')),
+      appBar: AppBar(title: Text('${_scopeLabel}MACD设置')),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
         children: [
@@ -126,7 +218,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'MACD 参数工作台',
+                  '$_scopeLabel MACD 参数工作台',
                   style: theme.textTheme.titleMedium?.copyWith(
                     color: colorScheme.onPrimary,
                     fontWeight: FontWeight.w800,
@@ -135,7 +227,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '仅保存轻量参数到本地设置；指标序列走文件缓存，避免 SharedPreferences 体积膨胀。',
+                  '仅保存$_scopeLabel轻量参数到本地设置；指标序列走文件缓存，避免 SharedPreferences 体积膨胀。',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: colorScheme.onPrimary.withValues(alpha: 0.92),
                     height: 1.4,
@@ -225,7 +317,9 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: _isSaving ? null : _resetDefaults,
+                  onPressed: _isSaving || _isRecomputing
+                      ? null
+                      : _resetDefaults,
                   icon: const Icon(Icons.restart_alt_rounded),
                   label: const Text('恢复默认'),
                 ),
@@ -233,7 +327,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: _isSaving ? null : _save,
+                  onPressed: _isSaving || _isRecomputing ? null : _save,
                   icon: _isSaving
                       ? const SizedBox(
                           width: 16,
@@ -246,7 +340,57 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.tonalIcon(
+              key: ValueKey('macd_recompute_${widget.dataType.name}'),
+              onPressed: _isSaving || _isRecomputing ? null : _recompute,
+              icon: _isRecomputing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded),
+              label: Text(_isRecomputing ? '重算中...' : '重算${_scopeLabel}MACD'),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _MacdRecomputeProgressDialog extends StatelessWidget {
+  const _MacdRecomputeProgressDialog({
+    required this.scopeLabel,
+    required this.progressNotifier,
+  });
+
+  final String scopeLabel;
+  final ValueNotifier<({int current, int total})> progressNotifier;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('重算$scopeLabel MACD'),
+      content: ValueListenableBuilder<({int current, int total})>(
+        valueListenable: progressNotifier,
+        builder: (context, progress, _) {
+          final ratio = progress.total <= 0
+              ? 0.0
+              : (progress.current / progress.total).clamp(0.0, 1.0);
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LinearProgressIndicator(value: ratio),
+              const SizedBox(height: 10),
+              Text('已处理 ${progress.current}/${progress.total}'),
+            ],
+          );
+        },
       ),
     );
   }
@@ -353,7 +497,9 @@ class _InfoChip extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         color: colorScheme.onPrimary.withValues(alpha: 0.14),
-        border: Border.all(color: colorScheme.onPrimary.withValues(alpha: 0.26)),
+        border: Border.all(
+          color: colorScheme.onPrimary.withValues(alpha: 0.26),
+        ),
       ),
       child: Text(
         label,

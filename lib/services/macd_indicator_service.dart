@@ -25,6 +25,8 @@ class _MacdMemoryEntry {
 
 class MacdIndicatorService extends ChangeNotifier {
   static const String configStorageKey = 'macd_indicator_config_v1';
+  static const String weeklyConfigStorageKey =
+      'macd_indicator_weekly_config_v1';
   static const int _defaultMaxConcurrentPrewarm = 6;
   static const int _defaultPersistBatchSize = 120;
 
@@ -33,7 +35,8 @@ class MacdIndicatorService extends ChangeNotifier {
   final Map<String, _MacdMemoryEntry> _memoryCache =
       <String, _MacdMemoryEntry>{};
 
-  MacdConfig _config = MacdConfig.defaults;
+  MacdConfig _dailyConfig = MacdConfig.defaults;
+  MacdConfig _weeklyConfig = MacdConfig.defaults;
 
   MacdIndicatorService({
     required DataRepository repository,
@@ -41,37 +44,63 @@ class MacdIndicatorService extends ChangeNotifier {
   }) : _repository = repository,
        _cacheStore = cacheStore ?? MacdCacheStore();
 
-  MacdConfig get config => _config;
+  MacdConfig get config => _dailyConfig;
+  MacdConfig get dailyConfig => _dailyConfig;
+  MacdConfig get weeklyConfig => _weeklyConfig;
+
+  MacdConfig configFor(KLineDataType dataType) {
+    return dataType == KLineDataType.weekly ? _weeklyConfig : _dailyConfig;
+  }
 
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(configStorageKey);
-      if (raw == null || raw.isEmpty) {
-        _config = MacdConfig.defaults;
-        return;
-      }
-      final json = jsonDecode(raw) as Map<String, dynamic>;
-      _config = MacdConfig.fromJson(json);
+      _dailyConfig = _decodeConfig(
+        prefs.getString(configStorageKey),
+        fallback: MacdConfig.defaults,
+      );
+      _weeklyConfig = _decodeConfig(
+        prefs.getString(weeklyConfigStorageKey),
+        fallback: _dailyConfig,
+      );
     } catch (_) {
-      _config = MacdConfig.defaults;
+      _dailyConfig = MacdConfig.defaults;
+      _weeklyConfig = MacdConfig.defaults;
     }
   }
 
   Future<void> updateConfig(MacdConfig newConfig) async {
+    await updateConfigFor(dataType: KLineDataType.daily, newConfig: newConfig);
+  }
+
+  Future<void> updateConfigFor({
+    required KLineDataType dataType,
+    required MacdConfig newConfig,
+  }) async {
     if (!newConfig.isValid) {
       throw ArgumentError('Invalid MACD config');
     }
-    _config = newConfig;
-    _memoryCache.clear();
+    if (dataType == KLineDataType.weekly) {
+      _weeklyConfig = newConfig;
+    } else {
+      _dailyConfig = newConfig;
+    }
+    _clearMemoryForDataType(dataType);
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(configStorageKey, jsonEncode(_config.toJson()));
+    await prefs.setString(
+      _configStorageKeyFor(dataType),
+      jsonEncode(newConfig.toJson()),
+    );
     notifyListeners();
   }
 
   Future<void> resetConfig() async {
-    await updateConfig(MacdConfig.defaults);
+    await resetConfigFor(KLineDataType.daily);
+  }
+
+  Future<void> resetConfigFor(KLineDataType dataType) async {
+    await updateConfigFor(dataType: dataType, newConfig: MacdConfig.defaults);
   }
 
   Future<List<MacdPoint>> getOrComputeFromRepository({
@@ -95,6 +124,7 @@ class MacdIndicatorService extends ChangeNotifier {
     required String stockCode,
     required KLineDataType dataType,
     required List<KLine> bars,
+    bool forceRecompute = false,
     bool persistToDisk = true,
     void Function(MacdCacheSeries series)? onSeriesComputed,
   }) async {
@@ -102,38 +132,41 @@ class MacdIndicatorService extends ChangeNotifier {
       return const <MacdPoint>[];
     }
 
+    final config = configFor(dataType);
     final sortedBars = _normalizeBarsOrder(bars);
-    final signature = _buildSourceSignature(sortedBars);
+    final signature = _buildSourceSignature(sortedBars, config);
     final cacheKey = _seriesKey(stockCode, dataType);
 
-    final memory = _memoryCache[cacheKey];
-    if (memory != null &&
-        memory.sourceSignature == signature &&
-        memory.config == _config) {
-      return memory.points;
-    }
+    if (!forceRecompute) {
+      final memory = _memoryCache[cacheKey];
+      if (memory != null &&
+          memory.sourceSignature == signature &&
+          memory.config == config) {
+        return memory.points;
+      }
 
-    final disk = await _cacheStore.loadSeries(
-      stockCode: stockCode,
-      dataType: dataType,
-    );
-
-    if (disk != null &&
-        disk.sourceSignature == signature &&
-        disk.config == _config) {
-      _memoryCache[cacheKey] = _MacdMemoryEntry(
-        config: disk.config,
-        sourceSignature: disk.sourceSignature,
-        points: disk.points,
+      final disk = await _cacheStore.loadSeries(
+        stockCode: stockCode,
+        dataType: dataType,
       );
-      return disk.points;
+
+      if (disk != null &&
+          disk.sourceSignature == signature &&
+          disk.config == config) {
+        _memoryCache[cacheKey] = _MacdMemoryEntry(
+          config: disk.config,
+          sourceSignature: disk.sourceSignature,
+          points: disk.points,
+        );
+        return disk.points;
+      }
     }
 
-    final computed = _computeMacdSeries(sortedBars, _config);
+    final computed = _computeMacdSeries(sortedBars, config);
     final computedSeries = MacdCacheSeries(
       stockCode: stockCode,
       dataType: dataType,
-      config: _config,
+      config: config,
       sourceSignature: signature,
       points: computed,
     );
@@ -142,7 +175,7 @@ class MacdIndicatorService extends ChangeNotifier {
       await _cacheStore.saveSeries(
         stockCode: stockCode,
         dataType: dataType,
-        config: _config,
+        config: config,
         sourceSignature: signature,
         points: computed,
       );
@@ -151,7 +184,7 @@ class MacdIndicatorService extends ChangeNotifier {
     }
 
     _memoryCache[cacheKey] = _MacdMemoryEntry(
-      config: _config,
+      config: config,
       sourceSignature: signature,
       points: computed,
     );
@@ -161,6 +194,7 @@ class MacdIndicatorService extends ChangeNotifier {
   Future<void> prewarmFromBars({
     required KLineDataType dataType,
     required Map<String, List<KLine>> barsByStockCode,
+    bool forceRecompute = false,
     int? maxConcurrentTasks,
     int? persistBatchSize,
     void Function(int current, int total)? onProgress,
@@ -217,6 +251,7 @@ class MacdIndicatorService extends ChangeNotifier {
           stockCode: entry.key,
           dataType: dataType,
           bars: entry.value,
+          forceRecompute: forceRecompute,
           persistToDisk: false,
           onSeriesComputed: (series) {
             computedSeries = series;
@@ -247,6 +282,7 @@ class MacdIndicatorService extends ChangeNotifier {
     required List<String> stockCodes,
     required KLineDataType dataType,
     required DateRange dateRange,
+    bool forceRecompute = false,
     void Function(int current, int total)? onProgress,
   }) async {
     if (stockCodes.isEmpty) {
@@ -263,6 +299,7 @@ class MacdIndicatorService extends ChangeNotifier {
     await prewarmFromBars(
       dataType: dataType,
       barsByStockCode: barsByStock,
+      forceRecompute: forceRecompute,
       onProgress: onProgress,
     );
   }
@@ -355,7 +392,7 @@ class MacdIndicatorService extends ChangeNotifier {
     return bars;
   }
 
-  String _buildSourceSignature(List<KLine> bars) {
+  String _buildSourceSignature(List<KLine> bars, MacdConfig config) {
     var rolling = 17;
     for (final bar in bars) {
       final ts = bar.datetime.millisecondsSinceEpoch;
@@ -369,9 +406,28 @@ class MacdIndicatorService extends ChangeNotifier {
     final firstTs = bars.first.datetime.millisecondsSinceEpoch;
     final lastBar = bars.last;
     final lastTs = lastBar.datetime.millisecondsSinceEpoch;
-    return '${_config.fastPeriod}|${_config.slowPeriod}|'
-        '${_config.signalPeriod}|${_config.windowMonths}|'
+    return '${config.fastPeriod}|${config.slowPeriod}|'
+        '${config.signalPeriod}|${config.windowMonths}|'
         '$length|$firstTs|$lastTs|$rolling';
+  }
+
+  MacdConfig _decodeConfig(String? raw, {required MacdConfig fallback}) {
+    if (raw == null || raw.isEmpty) {
+      return fallback;
+    }
+    final json = jsonDecode(raw) as Map<String, dynamic>;
+    return MacdConfig.fromJson(json);
+  }
+
+  String _configStorageKeyFor(KLineDataType dataType) {
+    return dataType == KLineDataType.weekly
+        ? weeklyConfigStorageKey
+        : configStorageKey;
+  }
+
+  void _clearMemoryForDataType(KLineDataType dataType) {
+    final suffix = '_${dataType.name}';
+    _memoryCache.removeWhere((key, _) => key.endsWith(suffix));
   }
 
   int _mixInt(int seed, int value) {

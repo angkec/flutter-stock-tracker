@@ -137,7 +137,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               const SizedBox(height: 10),
               _buildSectionTitle(context, '技术指标'),
               const SizedBox(height: 6),
-              _buildMacdSettingsItem(context),
+              _buildMacdSettingsItem(context, dataType: KLineDataType.daily),
+              _buildMacdSettingsItem(context, dataType: KLineDataType.weekly),
 
               const SizedBox(height: 10),
               _buildSectionTitle(context, '历史分钟K线'),
@@ -287,9 +288,14 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     );
   }
 
-  Widget _buildMacdSettingsItem(BuildContext context) {
+  Widget _buildMacdSettingsItem(
+    BuildContext context, {
+    required KLineDataType dataType,
+  }) {
     final macdService = context.watch<MacdIndicatorService?>();
-    final config = macdService?.config;
+    final config = macdService?.configFor(dataType);
+    final isWeekly = dataType == KLineDataType.weekly;
+    final title = isWeekly ? '周线MACD参数设置' : '日线MACD参数设置';
     final summary = config == null
         ? '服务未初始化'
         : '快线${config.fastPeriod} · 慢线${config.slowPeriod} · 信号${config.signalPeriod} · ${config.windowMonths}个月';
@@ -303,7 +309,9 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       }
 
       await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const MacdSettingsScreen()),
+        MaterialPageRoute(
+          builder: (_) => MacdSettingsScreen(dataType: dataType),
+        ),
       );
       _triggerRefresh();
     }
@@ -312,7 +320,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: const Icon(Icons.auto_graph_rounded),
-        title: const Text('MACD 参数设置'),
+        title: Text(title),
         subtitle: Text(summary),
         trailing: FilledButton.tonal(
           onPressed: navigateToSettings,
@@ -1133,7 +1141,14 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
             '${forceRefetch ? '周K数据已强制更新' : '周K数据已更新'}（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
       }
 
-      if (macdService != null) {
+      final shouldPrewarmWeeklyMacd =
+          macdService != null && (forceRefetch || fetchResult.totalRecords > 0);
+      if (shouldPrewarmWeeklyMacd) {
+        progressNotifier.value = (
+          current: 0,
+          total: 1,
+          stage: '准备更新周线MACD缓存...',
+        );
         await macdService.prewarmFromRepository(
           stockCodes: stockCodes,
           dataType: KLineDataType.weekly,

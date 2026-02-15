@@ -202,6 +202,7 @@ class _ConcurrencyProbeMacdService extends MacdIndicatorService {
     required String stockCode,
     required KLineDataType dataType,
     required List<KLine> bars,
+    bool forceRecompute = false,
     bool persistToDisk = true,
     void Function(MacdCacheSeries series)? onSeriesComputed,
   }) async {
@@ -477,5 +478,44 @@ void main() {
     expect(spyStore.saveAllCallCount, greaterThan(1));
     expect(spyStore.maxSavedBatchSize, lessThanOrEqualTo(5));
     expect(spyStore.totalSavedItems, payload.length);
+  });
+
+  test('should persist daily and weekly configs independently', () async {
+    final service = MacdIndicatorService(
+      repository: repository,
+      cacheStore: cacheStore,
+    );
+    await service.load();
+
+    const dailyConfig = MacdConfig(
+      fastPeriod: 8,
+      slowPeriod: 21,
+      signalPeriod: 5,
+      windowMonths: 4,
+    );
+    const weeklyConfig = MacdConfig(
+      fastPeriod: 10,
+      slowPeriod: 30,
+      signalPeriod: 7,
+      windowMonths: 6,
+    );
+
+    await service.updateConfigFor(
+      dataType: KLineDataType.daily,
+      newConfig: dailyConfig,
+    );
+    await service.updateConfigFor(
+      dataType: KLineDataType.weekly,
+      newConfig: weeklyConfig,
+    );
+
+    final reloaded = MacdIndicatorService(
+      repository: repository,
+      cacheStore: cacheStore,
+    );
+    await reloaded.load();
+
+    expect(reloaded.configFor(KLineDataType.daily), dailyConfig);
+    expect(reloaded.configFor(KLineDataType.weekly), weeklyConfig);
   });
 }
