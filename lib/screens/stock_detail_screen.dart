@@ -11,6 +11,7 @@ import 'package:stock_rtwatcher/widgets/minute_chart.dart';
 import 'package:stock_rtwatcher/widgets/ratio_history_list.dart';
 import 'package:stock_rtwatcher/widgets/industry_heat_bar.dart';
 import 'package:stock_rtwatcher/widgets/industry_trend_chart.dart';
+import 'package:stock_rtwatcher/widgets/linked_dual_kline_view.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/models/breakout_config.dart';
@@ -20,7 +21,7 @@ import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:provider/provider.dart';
 
 /// K线图显示模式
-enum ChartMode { minute, daily, weekly }
+enum ChartMode { minute, daily, weekly, linked }
 
 /// 股票详情页
 class StockDetailScreen extends StatefulWidget {
@@ -161,10 +162,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     });
 
     // 并行加载数据
-    await Future.wait([
-      _loadKLines(),
-      _loadRatioHistory(),
-    ]);
+    await Future.wait([_loadKLines(), _loadRatioHistory()]);
   }
 
   Future<TdxClient?> _tryConnect(String host, int port) async {
@@ -181,10 +179,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       return;
     }
 
-    await Future.wait([
-      _loadKLines(),
-      _loadRatioHistory(),
-    ]);
+    await Future.wait([_loadKLines(), _loadRatioHistory()]);
   }
 
   Future<void> _loadKLines() async {
@@ -280,11 +275,16 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         final dayBars = grouped[dateKey]!;
         final ratio = StockService.calculateRatio(dayBars);
         final parts = dateKey.split('-');
-        results.add(DailyRatio(
-          date: DateTime(
-              int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2])),
-          ratio: ratio,
-        ));
+        results.add(
+          DailyRatio(
+            date: DateTime(
+              int.parse(parts[0]),
+              int.parse(parts[1]),
+              int.parse(parts[2]),
+            ),
+            ratio: ratio,
+          ),
+        );
       }
 
       if (!mounted) return;
@@ -307,7 +307,8 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   Future<void> _preloadDetectionResults() async {
     if (_dailyBars.isEmpty) return;
 
-    final stockCode = _currentStock.code; // Capture at start to detect stock switches
+    final stockCode =
+        _currentStock.code; // Capture at start to detect stock switches
     final breakoutService = context.read<BreakoutService>();
 
     // 计算突破日标记（异步）
@@ -326,14 +327,16 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     final futures = <Future<MapEntry<int, BreakoutDetectionResult?>>>[];
     for (int i = 5; i < _dailyBars.length; i++) {
       futures.add(
-        breakoutService.getDetectionResult(_dailyBars, i, stockCode: stockCode)
-            .then((result) => MapEntry(i, result))
+        breakoutService
+            .getDetectionResult(_dailyBars, i, stockCode: stockCode)
+            .then((result) => MapEntry(i, result)),
       );
     }
     final entries = await Future.wait(futures);
     final newCache = Map.fromEntries(entries);
 
-    if (mounted && _currentStock.code == stockCode) { // Verify still same stock
+    if (mounted && _currentStock.code == stockCode) {
+      // Verify still same stock
       setState(() {
         _breakoutIndices = breakouts;
         _nearMissIndices = nearMisses;
@@ -383,7 +386,8 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final hasStockList = widget.stockList != null && widget.stockList!.length > 1;
+    final hasStockList =
+        widget.stockList != null && widget.stockList!.length > 1;
 
     return Scaffold(
       appBar: AppBar(
@@ -397,7 +401,10 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
             if (hasStockList)
               Text(
                 '${_currentIndex + 1} / ${widget.stockList!.length}',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.normal,
+                ),
               ),
           ],
         ),
@@ -458,16 +465,18 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.error_outline,
-                size: 48, color: Theme.of(context).colorScheme.error),
-            const SizedBox(height: 16),
-            Text(_connectError!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _connectAndLoad,
-              child: const Text('重试'),
+            Icon(
+              Icons.error_outline,
+              size: 48,
+              color: Theme.of(context).colorScheme.error,
             ),
+            const SizedBox(height: 16),
+            Text(
+              _connectError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(onPressed: _connectAndLoad, child: const Text('重试')),
           ],
         ),
       );
@@ -510,15 +519,14 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
                 ButtonSegment(value: ChartMode.minute, label: Text('分时')),
                 ButtonSegment(value: ChartMode.daily, label: Text('日线')),
                 ButtonSegment(value: ChartMode.weekly, label: Text('周线')),
+                ButtonSegment(value: ChartMode.linked, label: Text('联动')),
               ],
               selected: {_chartMode},
               onSelectionChanged: (selected) {
                 setState(() => _chartMode = selected.first);
               },
               showSelectedIcon: false,
-              style: const ButtonStyle(
-                visualDensity: VisualDensity.compact,
-              ),
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
             ),
           ),
           const SizedBox(height: 12),
@@ -544,12 +552,15 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.error_outline,
-                    color: Theme.of(context).colorScheme.error),
+                Icon(
+                  Icons.error_outline,
+                  color: Theme.of(context).colorScheme.error,
+                ),
                 const SizedBox(height: 8),
-                Text(_ratioError!,
-                    style: TextStyle(
-                        color: Theme.of(context).colorScheme.error)),
+                Text(
+                  _ratioError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: _loadRatioHistory,
@@ -560,10 +571,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           ),
         );
       }
-      return MinuteChart(
-        bars: _todayBars,
-        preClose: _currentStock.preClose,
-      );
+      return MinuteChart(bars: _todayBars, preClose: _currentStock.preClose);
     }
 
     // 日线/周线使用 K 线数据的加载状态
@@ -580,31 +588,48 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline,
-                  color: Theme.of(context).colorScheme.error),
-              const SizedBox(height: 8),
-              Text(_klineError!,
-                  style: TextStyle(
-                      color: Theme.of(context).colorScheme.error)),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: _loadKLines,
-                child: const Text('重试'),
+              Icon(
+                Icons.error_outline,
+                color: Theme.of(context).colorScheme.error,
               ),
+              const SizedBox(height: 8),
+              Text(
+                _klineError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+              const SizedBox(height: 8),
+              TextButton(onPressed: _loadKLines, child: const Text('重试')),
             ],
           ),
         ),
       );
     }
+
+    if (_chartMode == ChartMode.linked) {
+      return SizedBox(
+        height: 560,
+        child: LinkedDualKlineView(
+          weeklyBars: _weeklyBars,
+          dailyBars: _dailyBars,
+          ratios: _ratioHistory,
+        ),
+      );
+    }
+
     // 使用预加载的突破日标记和近似命中（仅日K）
-    final markedIndices = _chartMode == ChartMode.daily ? _breakoutIndices : null;
-    final nearMissIndices = _chartMode == ChartMode.daily ? _nearMissIndices : null;
+    final markedIndices = _chartMode == ChartMode.daily
+        ? _breakoutIndices
+        : null;
+    final nearMissIndices = _chartMode == ChartMode.daily
+        ? _nearMissIndices
+        : null;
 
     return KLineChart(
       bars: _chartMode == ChartMode.daily ? _dailyBars : _weeklyBars,
       ratios: _chartMode == ChartMode.daily ? _ratioHistory : null,
       markedIndices: markedIndices,
       nearMissIndices: nearMissIndices,
+      showWeeklySeparators: _chartMode == ChartMode.daily,
       getDetectionResult: _chartMode == ChartMode.daily
           ? (index) => _detectionResultsCache[index]
           : null,
@@ -629,9 +654,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Text(
           '板块: $industry (暂无热度数据)',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Colors.grey,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: Colors.grey),
         ),
       );
     }
@@ -659,10 +684,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: IndustryTrendChart(
-              data: trendData,
-              height: 100,
-            ),
+            child: IndustryTrendChart(data: trendData, height: 100),
           ),
       ],
     );
@@ -691,5 +713,4 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
 
     return points;
   }
-
 }
