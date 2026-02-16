@@ -71,6 +71,56 @@ void main() {
       expect(context.marketProvider.dailyForceRefetchCount, 1);
     });
 
+    testWidgets('new trading day intraday partial path remains computable', (
+      tester,
+    ) async {
+      final context = await launchDataManagementWithFixture(
+        tester,
+        preset: DataManagementFixturePreset.newTradingDayIntradayPartial,
+      );
+      final driver = DataManagementDriver(tester);
+
+      await driver.tapDailyForceRefetch();
+      await driver.expectProgressDialogVisible();
+      await driver.waitForProgressDialogTextContains('日内增量计算');
+      await driver.waitForProgressDialogClosedWithWatchdog(
+        context.createWatchdog(),
+      );
+
+      await driver.expectSnackBarContains('日K数据已强制重新拉取');
+      expect(
+        context.marketProvider.lastDailyForceRefetchStages.any(
+          (stage) => stage.contains('日内增量计算'),
+        ),
+        isTrue,
+      );
+    });
+
+    testWidgets('post-close final snapshot path performs override recompute', (
+      tester,
+    ) async {
+      final context = await launchDataManagementWithFixture(
+        tester,
+        preset: DataManagementFixturePreset.newTradingDayFinalOverride,
+      );
+      final driver = DataManagementDriver(tester);
+
+      await driver.tapDailyForceRefetch();
+      await driver.expectProgressDialogVisible();
+      await driver.waitForProgressDialogTextContains('终盘覆盖增量重算');
+      await driver.waitForProgressDialogClosedWithWatchdog(
+        context.createWatchdog(),
+      );
+
+      await driver.expectSnackBarContains('日K数据已强制重新拉取');
+      expect(
+        context.marketProvider.lastDailyForceRefetchStages.any(
+          (stage) => stage.contains('终盘覆盖增量重算'),
+        ),
+        isTrue,
+      );
+    });
+
     testWidgets('recheck freshness completes and shows result message', (
       tester,
     ) async {

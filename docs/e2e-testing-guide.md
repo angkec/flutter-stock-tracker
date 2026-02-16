@@ -89,6 +89,9 @@ flutter test integration_test/features/data_management_real_network_test.dart \
 - `[DataManagement Real E2E] historical_fetch_missing_elapsed_ms=...`
 - `[DataManagement Real E2E] weekly_fetch_missing_elapsed_ms=...`
 - `[DataManagement Real E2E] daily_force_refetch_elapsed_ms=...`
+- `[DataManagement Real E2E] daily_force_refetch_progress_hint=speed:true/false,eta:true/false,indicator_stage:true/false`
+- `[DataManagement Real E2E] daily_intraday_or_final_state=intraday_partial/final_override/unknown`
+- `[DataManagement Real E2E] daily_incremental_recompute_elapsed_ms=...`
 - `[DataManagement Real E2E] historical_recheck_elapsed_ms=...`
 - `[DataManagement Real E2E] weekly_force_refetch_elapsed_ms=...`
 - `[DataManagement Real E2E] weekly_macd_recompute_elapsed_ms=...`
@@ -96,6 +99,7 @@ flutter test integration_test/features/data_management_real_network_test.dart \
 - `[DataManagement Real E2E] weekly_macd_recompute_progress_hint=dialog:true/false,speed:true/false,eta:true/false`
 
 判定规则：
+- 日K强制重拉：当任务总耗时超过 5 秒时，必须观测到 `speed:true` 或 `indicator_stage:true`；否则测试失败。
 - 周K强制重拉：当任务总耗时超过 5 秒时，必须观测到 `speed:true`；否则测试失败。
 - 周线 MACD 重算：仅当重算对话框出现且总耗时超过 5 秒时，必须观测到 `speed:true`；否则测试失败。
 

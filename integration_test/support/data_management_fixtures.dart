@@ -28,7 +28,13 @@ import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 import 'package:stock_rtwatcher/testing/progress_watchdog.dart';
 
-enum DataManagementFixturePreset { normal, stalledProgress, failedFetch }
+enum DataManagementFixturePreset {
+  normal,
+  stalledProgress,
+  failedFetch,
+  newTradingDayIntradayPartial,
+  newTradingDayFinalOverride,
+}
 
 class DataManagementFixtureContext {
   DataManagementFixtureContext({
@@ -56,7 +62,7 @@ Future<DataManagementFixtureContext> launchDataManagementWithFixture(
 
   final stocks = _buildStockData();
   final repository = FakeDataRepository(preset: preset);
-  final marketProvider = FakeMarketDataProvider(data: stocks);
+  final marketProvider = FakeMarketDataProvider(data: stocks, preset: preset);
   final macdService = FakeMacdIndicatorService(repository: repository);
 
   final app = MultiProvider(
@@ -324,8 +330,11 @@ class FakeDataRepository implements DataRepository {
 }
 
 class FakeMarketDataProvider extends MarketDataProvider {
-  FakeMarketDataProvider({required List<StockMonitorData> data})
-    : _data = data,
+  FakeMarketDataProvider({
+    required List<StockMonitorData> data,
+    required DataManagementFixturePreset preset,
+  }) : _preset = preset,
+      _data = data,
       super(
         pool: TdxPool(poolSize: 1),
         stockService: StockService(TdxPool(poolSize: 1)),
@@ -333,10 +342,12 @@ class FakeMarketDataProvider extends MarketDataProvider {
       );
 
   final List<StockMonitorData> _data;
+  final DataManagementFixturePreset _preset;
 
   int dailyForceRefetchCount = 0;
   int minuteForceRefetchCount = 0;
   int industryForceRefetchCount = 0;
+  final List<String> lastDailyForceRefetchStages = <String>[];
 
   @override
   List<StockMonitorData> get allData => _data;
@@ -388,19 +399,40 @@ class FakeMarketDataProvider extends MarketDataProvider {
   @override
   Future<void> forceRefetchDailyBars({
     void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
   }) async {
     dailyForceRefetchCount++;
+    lastDailyForceRefetchStages.clear();
 
-    final events = <({String stage, int current, int total})>[
-      (stage: '1/4 准备日K拉取', current: 1, total: 4),
-      (stage: '2/4 写入日K文件', current: 20, total: 100),
-      (stage: '2/4 写入日K文件', current: 60, total: 100),
-      (stage: '2/4 写入日K文件', current: 100, total: 100),
-      (stage: '3/4 更新版本', current: 1, total: 1),
-      (stage: '4/4 完成', current: 1, total: 1),
-    ];
+    final events = switch (_preset) {
+      DataManagementFixturePreset.newTradingDayIntradayPartial =>
+        <({String stage, int current, int total})>[
+          (stage: '1/4 拉取日K数据...', current: 1, total: 3),
+          (stage: '2/4 写入日K文件...', current: 1, total: 3),
+          (stage: '2/4 写入日K文件...', current: 3, total: 3),
+          (stage: '3/4 日内增量计算...', current: 1, total: 1),
+          (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
+        ],
+      DataManagementFixturePreset.newTradingDayFinalOverride =>
+        <({String stage, int current, int total})>[
+          (stage: '1/4 拉取日K数据...', current: 1, total: 3),
+          (stage: '2/4 写入日K文件...', current: 1, total: 3),
+          (stage: '2/4 写入日K文件...', current: 3, total: 3),
+          (stage: '3/4 终盘覆盖增量重算...', current: 1, total: 1),
+          (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
+        ],
+      _ => <({String stage, int current, int total})>[
+        (stage: '1/4 准备日K拉取', current: 1, total: 4),
+        (stage: '2/4 写入日K文件', current: 20, total: 100),
+        (stage: '2/4 写入日K文件', current: 60, total: 100),
+        (stage: '2/4 写入日K文件', current: 100, total: 100),
+        (stage: '3/4 更新版本', current: 1, total: 1),
+        (stage: '4/4 完成', current: 1, total: 1),
+      ],
+    };
 
     for (final event in events) {
+      lastDailyForceRefetchStages.add(event.stage);
       onProgress?.call(event.stage, event.current, event.total);
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }

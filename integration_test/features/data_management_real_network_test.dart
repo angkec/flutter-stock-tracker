@@ -50,15 +50,77 @@ void main() {
         ),
       );
 
-      await _runTimedOperation(
-        tester,
-        operationName: 'daily_force_refetch',
-        action: driver.tapDailyForceRefetch,
-        driver: driver,
-        watchdog: ProgressWatchdog(
+      final dailyForceRefetchStopwatch = Stopwatch()..start();
+      await driver.tapDailyForceRefetch();
+      final dailyForceRefetchSawSpeed = await driver
+          .waitForProgressDialogTextContainsOrClosed(
+            '速率',
+            timeout: const Duration(seconds: 60),
+          );
+      var dailyForceRefetchSawEta = false;
+      if (dailyForceRefetchSawSpeed) {
+        dailyForceRefetchSawEta = await driver
+            .waitForProgressDialogTextContainsOrClosed(
+              '预计剩余',
+              timeout: const Duration(seconds: 20),
+            );
+      }
+      final dailySawIndicatorStage = await driver
+          .waitForProgressDialogTextContainsOrClosed(
+            '3/4 计算指标',
+            timeout: const Duration(minutes: 3),
+            waitAppearTimeout: Duration.zero,
+          );
+      final dailySawIntradayHint = await driver
+          .waitForProgressDialogTextContainsOrClosed(
+            '日内增量计算',
+            timeout: const Duration(seconds: 5),
+            waitAppearTimeout: Duration.zero,
+          );
+      final dailySawFinalOverrideHint = await driver
+          .waitForProgressDialogTextContainsOrClosed(
+            '终盘覆盖增量重算',
+            timeout: const Duration(seconds: 5),
+            waitAppearTimeout: Duration.zero,
+          );
+
+      await driver.waitForProgressDialogClosedWithWatchdog(
+        ProgressWatchdog(
           stallThreshold: const Duration(seconds: 5),
           now: DateTime.now,
         ),
+        hardTimeout: const Duration(minutes: 15),
+      );
+      dailyForceRefetchStopwatch.stop();
+
+      if (dailyForceRefetchStopwatch.elapsed > const Duration(seconds: 5)) {
+        expect(
+          dailyForceRefetchSawSpeed || dailySawIndicatorStage,
+          isTrue,
+          reason:
+              'daily force refetch exceeded 5s without visible progress hint',
+        );
+      }
+
+      final dailyState = dailySawFinalOverrideHint
+          ? 'final_override'
+          : (dailySawIntradayHint ? 'intraday_partial' : 'unknown');
+      expect(dailyState, isNotEmpty);
+      debugPrint(
+        '[DataManagement Real E2E] daily_force_refetch_elapsed_ms='
+        '${dailyForceRefetchStopwatch.elapsedMilliseconds}',
+      );
+      debugPrint(
+        '[DataManagement Real E2E] daily_force_refetch_progress_hint='
+        'speed:$dailyForceRefetchSawSpeed,eta:$dailyForceRefetchSawEta,indicator_stage:$dailySawIndicatorStage',
+      );
+      debugPrint(
+        '[DataManagement Real E2E] daily_intraday_or_final_state='
+        '$dailyState',
+      );
+      debugPrint(
+        '[DataManagement Real E2E] daily_incremental_recompute_elapsed_ms='
+        '${dailyForceRefetchStopwatch.elapsedMilliseconds}',
       );
 
       await _runTimedOperation(
