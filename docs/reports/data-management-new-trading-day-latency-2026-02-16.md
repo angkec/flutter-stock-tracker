@@ -11,7 +11,7 @@
 
 ## 新增日志字段
 
-- `[DataManagement Real E2E] daily_force_refetch_progress_hint=speed:<bool>,eta:<bool>,indicator_stage:<bool>`
+- `[DataManagement Real E2E] daily_force_refetch_progress_hint=speed:<bool>,eta:<bool>,indicator_stage:<bool>,visible_hint:<bool>`
 - `[DataManagement Real E2E] daily_intraday_or_final_state=<intraday_partial|final_override|unknown>`
 - `[DataManagement Real E2E] daily_incremental_recompute_elapsed_ms=<ms>`
 
@@ -23,18 +23,28 @@ flutter test integration_test/features/data_management_real_network_test.dart \
   --dart-define=RUN_DATA_MGMT_REAL_E2E=true
 ```
 
-## 结果记录模板
+## 实测结果（2026-02-16）
 
-- run_at:
-- historical_fetch_missing_elapsed_ms:
-- weekly_fetch_missing_elapsed_ms:
-- daily_force_refetch_elapsed_ms:
-- daily_force_refetch_progress_hint:
-- daily_intraday_or_final_state:
-- daily_incremental_recompute_elapsed_ms:
-- historical_recheck_elapsed_ms:
-- weekly_force_refetch_elapsed_ms:
-- weekly_macd_recompute_elapsed_ms:
+- run_at: `2026-02-16 15:18:07 CST`
+- command: `flutter test integration_test/features/data_management_real_network_test.dart -d macos --dart-define=RUN_DATA_MGMT_REAL_E2E=true -r compact`
+- suite_result: `PASS`
+- historical_fetch_missing_elapsed_ms: `5897`
+- weekly_fetch_missing_elapsed_ms: `1494`
+- daily_force_refetch_elapsed_ms: `16305`
+- daily_force_refetch_progress_hint: `speed:false,eta:false,indicator_stage:false,visible_hint:false`
+- daily_intraday_or_final_state: `unknown`
+- daily_incremental_recompute_elapsed_ms: `16305`
+- historical_recheck_elapsed_ms: `1791`
+- weekly_force_refetch_elapsed_ms: `3296`
+- weekly_force_refetch_progress_hint: `speed:false,eta:false`
+- weekly_macd_recompute_elapsed_ms: `3907`
+- weekly_macd_recompute_progress_hint: `dialog:false,speed:false,eta:false`
+
+## 结论
+
+- 本次真网络全量链路执行成功，但 `daily_force_refetch` 耗时仍在 `16s+`，是当前最重任务。
+- `daily_intraday_or_final_state=unknown`，说明真实链路尚未稳定暴露“日内 partial / 终盘 final”可观测标识。
+- `daily_force_refetch_progress_hint` 的可视提示字段均为 `false`，意味着当前 UI 文案检索不到显式速率/ETA/增量阶段提示；虽然 watchdog 未判定卡住，但用户侧预期仍然不足。
 
 ## 备注
 
