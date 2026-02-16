@@ -1,7 +1,7 @@
 // lib/data/storage/database_schema.dart
 
 class DatabaseSchema {
-  static const int version = 5;
+  static const int version = 6;
   static const String databaseName = 'market_data.db';
 
   // 股票基本信息表
@@ -128,5 +128,21 @@ class DatabaseSchema {
   static const String createMinuteSyncStateUpdatedAtIndex = '''
     CREATE INDEX idx_minute_sync_state_updated_at
     ON minute_sync_state(updated_at)
+  ''';
+
+  // 日线同步状态表
+  static const String createDailySyncStateTable = '''
+    CREATE TABLE daily_sync_state (
+      stock_code TEXT PRIMARY KEY,
+      last_intraday_date INTEGER,
+      last_finalized_date INTEGER,
+      last_fingerprint TEXT,
+      updated_at INTEGER NOT NULL
+    )
+  ''';
+
+  static const String createDailySyncStateUpdatedAtIndex = '''
+    CREATE INDEX idx_daily_sync_state_updated_at
+    ON daily_sync_state(updated_at)
   ''';
 }
