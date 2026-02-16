@@ -1351,6 +1351,8 @@ void main() {
     final rankService = _FakeIndustryRankService();
     final macdService = _FakeMacdIndicatorService(repository: repository);
     await macdService.load();
+    macdService.prewarmProgressSteps = 3;
+    macdService.prewarmProgressStepDelay = const Duration(milliseconds: 150);
     final provider = _FakeMarketDataProvider(
       data: [
         StockMonitorData(
@@ -1386,6 +1388,11 @@ void main() {
     expect(weeklyRecomputeButton, findsOneWidget);
     await tester.ensureVisible(weeklyRecomputeButton);
     await tester.tap(weeklyRecomputeButton, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(find.text('重算周线 MACD'), findsOneWidget);
+    expect(find.textContaining('速率'), findsOneWidget);
+    expect(find.textContaining('预计剩余'), findsOneWidget);
     await tester.pumpAndSettle();
     expect(macdService.prewarmDataTypes, contains(KLineDataType.weekly));
 

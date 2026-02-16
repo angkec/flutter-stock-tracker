@@ -138,10 +138,12 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
       _isRecomputing = true;
     });
 
-    final progressNotifier = ValueNotifier<({int current, int total})>((
-      current: 0,
-      total: 1,
-    ));
+    final progressNotifier =
+        ValueNotifier<({int current, int total, String stage})>((
+          current: 0,
+          total: 1,
+          stage: '准备重算$_scopeLabel MACD...',
+        ));
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -152,6 +154,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
     );
 
     try {
+      final prewarmStopwatch = Stopwatch()..start();
       await context.read<MacdIndicatorService>().prewarmFromRepository(
         stockCodes: stockCodes,
         dataType: widget.dataType,
@@ -162,9 +165,26 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
             ? _weeklyRecomputePersistConcurrency
             : null,
         onProgress: (current, total) {
+          final safeTotal = total <= 0 ? 1 : total;
+          final safeCurrent = current.clamp(0, safeTotal);
+          final elapsedSeconds = prewarmStopwatch.elapsedMilliseconds / 1000;
+          final speed = elapsedSeconds <= 0
+              ? 0.0
+              : safeCurrent / elapsedSeconds;
+          final remaining = safeTotal - safeCurrent;
+          final etaLabel = speed <= 0
+              ? '--'
+              : _formatEtaSeconds((remaining / speed).ceil());
+          final elapsedLabel = _formatEtaSeconds(
+            prewarmStopwatch.elapsed.inSeconds,
+          );
+
           progressNotifier.value = (
-            current: current.clamp(0, total <= 0 ? 1 : total),
-            total: total <= 0 ? 1 : total,
+            current: safeCurrent,
+            total: safeTotal,
+            stage:
+                '速率 ${speed.toStringAsFixed(1)}只/秒 · 预计剩余 $etaLabel · '
+                '已耗时 $elapsedLabel',
           );
         },
       );
@@ -188,6 +208,18 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
         });
       }
     }
+  }
+
+  String _formatEtaSeconds(int seconds) {
+    if (seconds <= 0) {
+      return '0s';
+    }
+    if (seconds < 60) {
+      return '${seconds}s';
+    }
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+    return '${minutes}m${remainingSeconds.toString().padLeft(2, '0')}s';
   }
 
   @override
@@ -376,13 +408,14 @@ class _MacdRecomputeProgressDialog extends StatelessWidget {
   });
 
   final String scopeLabel;
-  final ValueNotifier<({int current, int total})> progressNotifier;
+  final ValueNotifier<({int current, int total, String stage})>
+  progressNotifier;
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text('重算$scopeLabel MACD'),
-      content: ValueListenableBuilder<({int current, int total})>(
+      content: ValueListenableBuilder<({int current, int total, String stage})>(
         valueListenable: progressNotifier,
         builder: (context, progress, _) {
           final ratio = progress.total <= 0
@@ -395,6 +428,11 @@ class _MacdRecomputeProgressDialog extends StatelessWidget {
               LinearProgressIndicator(value: ratio),
               const SizedBox(height: 10),
               Text('已处理 ${progress.current}/${progress.total}'),
+              const SizedBox(height: 8),
+              Text(
+                progress.stage,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ],
           );
         },

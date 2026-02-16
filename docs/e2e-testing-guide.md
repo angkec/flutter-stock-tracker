@@ -81,6 +81,20 @@ flutter test integration_test/features/data_management_real_network_test.dart \
 
 说明：不传 `RUN_DATA_MGMT_REAL_E2E=true` 时，真网络场景会主动跳过。
 
+真网络场景中，以下长任务会额外校验“可预期进度”文本（`速率`、`预计剩余`）：
+- 周K强制重拉（含周线 MACD 预热阶段）
+- 周线 MACD 重算
+
+并输出耗时统计日志，便于对比优化前后性能：
+- `[DataManagement Real E2E] weekly_force_refetch_elapsed_ms=...`
+- `[DataManagement Real E2E] weekly_macd_recompute_elapsed_ms=...`
+- `[DataManagement Real E2E] weekly_force_refetch_progress_hint=speed:true/false,eta:true/false`
+- `[DataManagement Real E2E] weekly_macd_recompute_progress_hint=dialog:true/false,speed:true/false,eta:true/false`
+
+判定规则：
+- 周K强制重拉：当任务总耗时超过 5 秒时，必须观测到 `speed:true`；否则测试失败。
+- 周线 MACD 重算：仅当重算对话框出现且总耗时超过 5 秒时，必须观测到 `speed:true`；否则测试失败。
+
 ---
 
 ## 周线 MACD 重算压测（模拟器）

@@ -68,25 +68,96 @@ void main() {
         ),
       );
 
-      await _runOperation(
-        tester,
-        action: driver.tapWeeklyForceRefetch,
-        driver: driver,
-        watchdog: ProgressWatchdog(
-          stallThreshold: const Duration(seconds: 5),
-          now: DateTime.now,
-        ),
-      );
-
-      await driver.tapWeeklyMacdSettings();
-      await driver.tapWeeklyMacdRecompute();
-      await driver.waitForMacdRecomputeCompletionWithWatchdog(
+      final weeklyForceRefetchStopwatch = Stopwatch()..start();
+      await driver.tapWeeklyForceRefetch();
+      final weeklyForceRefetchSawSpeed = await driver
+          .waitForProgressDialogTextContainsOrClosed(
+            '速率',
+            timeout: const Duration(seconds: 60),
+          );
+      var weeklyForceRefetchSawEta = false;
+      if (weeklyForceRefetchSawSpeed) {
+        weeklyForceRefetchSawEta = await driver
+            .waitForProgressDialogTextContainsOrClosed(
+              '预计剩余',
+              timeout: const Duration(seconds: 20),
+            );
+      }
+      await driver.waitForProgressDialogClosedWithWatchdog(
         ProgressWatchdog(
           stallThreshold: const Duration(seconds: 5),
           now: DateTime.now,
         ),
-        scopeLabel: '周线',
-        hardTimeout: const Duration(minutes: 20),
+        hardTimeout: const Duration(minutes: 15),
+      );
+      weeklyForceRefetchStopwatch.stop();
+      if (weeklyForceRefetchStopwatch.elapsed > const Duration(seconds: 5)) {
+        expect(
+          weeklyForceRefetchSawSpeed,
+          isTrue,
+          reason:
+              'weekly force refetch exceeded 5s without visible progress hint',
+        );
+      }
+      debugPrint(
+        '[DataManagement Real E2E] weekly_force_refetch_elapsed_ms='
+        '${weeklyForceRefetchStopwatch.elapsedMilliseconds}',
+      );
+      debugPrint(
+        '[DataManagement Real E2E] weekly_force_refetch_progress_hint='
+        'speed:$weeklyForceRefetchSawSpeed,eta:$weeklyForceRefetchSawEta',
+      );
+
+      await driver.tapWeeklyMacdSettings();
+      final weeklyMacdStopwatch = Stopwatch()..start();
+      await driver.tapWeeklyMacdRecompute();
+      final weeklyMacdDialogAppeared = await driver
+          .waitForMacdRecomputeDialogVisible(
+            timeout: const Duration(seconds: 3),
+          );
+      var weeklyMacdSawSpeed = false;
+      var weeklyMacdSawEta = false;
+      if (weeklyMacdDialogAppeared) {
+        weeklyMacdSawSpeed = await driver
+            .waitForMacdRecomputeDialogTextContainsOrClosed(
+              '速率',
+              timeout: const Duration(seconds: 60),
+              waitAppearTimeout: Duration.zero,
+            );
+        if (weeklyMacdSawSpeed) {
+          weeklyMacdSawEta = await driver
+              .waitForMacdRecomputeDialogTextContainsOrClosed(
+                '预计剩余',
+                timeout: const Duration(seconds: 20),
+                waitAppearTimeout: Duration.zero,
+              );
+        }
+        await driver.waitForMacdRecomputeCompletionWithWatchdog(
+          ProgressWatchdog(
+            stallThreshold: const Duration(seconds: 5),
+            now: DateTime.now,
+          ),
+          scopeLabel: '周线',
+          waitAppearTimeout: Duration.zero,
+          hardTimeout: const Duration(minutes: 20),
+        );
+      }
+      weeklyMacdStopwatch.stop();
+      if (weeklyMacdDialogAppeared &&
+          weeklyMacdStopwatch.elapsed > const Duration(seconds: 5)) {
+        expect(
+          weeklyMacdSawSpeed,
+          isTrue,
+          reason: 'weekly MACD recompute exceeded 5s without progress hint',
+        );
+      }
+      debugPrint(
+        '[DataManagement Real E2E] weekly_macd_recompute_elapsed_ms='
+        '${weeklyMacdStopwatch.elapsedMilliseconds}',
+      );
+      debugPrint(
+        '[DataManagement Real E2E] weekly_macd_recompute_progress_hint='
+        'dialog:$weeklyMacdDialogAppeared,speed:$weeklyMacdSawSpeed,eta:$weeklyMacdSawEta',
       );
     });
   });

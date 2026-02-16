@@ -179,6 +179,166 @@ class DataManagementDriver {
     }
   }
 
+  Future<void> waitForProgressDialogTextContains(
+    String keyword, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    await waitForDialogTextContains(
+      dialogTitle: '拉取历史数据',
+      keyword: keyword,
+      timeout: timeout,
+    );
+  }
+
+  Future<bool> waitForProgressDialogTextContainsOrClosed(
+    String keyword, {
+    Duration timeout = const Duration(seconds: 30),
+    Duration waitAppearTimeout = const Duration(seconds: 3),
+  }) async {
+    return waitForDialogTextContainsOrClosed(
+      dialogTitle: '拉取历史数据',
+      keyword: keyword,
+      timeout: timeout,
+      waitAppearTimeout: waitAppearTimeout,
+    );
+  }
+
+  Future<bool> waitForDialogVisible(
+    String dialogTitle, {
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await tester.pump(const Duration(milliseconds: 200));
+      if (_resolveDialogByTitle(dialogTitle) != null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<bool> waitForMacdRecomputeDialogVisible({
+    String scopeLabel = '周线',
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    return waitForDialogVisible('重算$scopeLabel MACD', timeout: timeout);
+  }
+
+  Future<void> waitForMacdRecomputeDialogTextContains(
+    String keyword, {
+    String scopeLabel = '周线',
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    await waitForDialogTextContains(
+      dialogTitle: '重算$scopeLabel MACD',
+      keyword: keyword,
+      timeout: timeout,
+    );
+  }
+
+  Future<bool> waitForMacdRecomputeDialogTextContainsOrClosed(
+    String keyword, {
+    String scopeLabel = '周线',
+    Duration timeout = const Duration(seconds: 30),
+    Duration waitAppearTimeout = const Duration(seconds: 3),
+  }) async {
+    return waitForDialogTextContainsOrClosed(
+      dialogTitle: '重算$scopeLabel MACD',
+      keyword: keyword,
+      timeout: timeout,
+      waitAppearTimeout: waitAppearTimeout,
+    );
+  }
+
+  Future<void> waitForDialogTextContains({
+    required String dialogTitle,
+    required String keyword,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+
+    while (DateTime.now().isBefore(deadline)) {
+      await tester.pump(const Duration(milliseconds: 200));
+      final titleFinder = find.text(dialogTitle);
+      if (titleFinder.evaluate().isEmpty) {
+        continue;
+      }
+
+      final dialog = find.ancestor(
+        of: titleFinder.first,
+        matching: find.byType(AlertDialog),
+      );
+      if (dialog.evaluate().isEmpty) {
+        continue;
+      }
+
+      final keywordFinder = find.descendant(
+        of: dialog.first,
+        matching: find.textContaining(keyword),
+      );
+      if (keywordFinder.evaluate().isNotEmpty) {
+        return;
+      }
+    }
+
+    throw TimeoutException(
+      'Did not observe dialog text in time: dialogTitle=$dialogTitle, keyword=$keyword',
+    );
+  }
+
+  Future<bool> waitForDialogTextContainsOrClosed({
+    required String dialogTitle,
+    required String keyword,
+    Duration timeout = const Duration(seconds: 30),
+    Duration waitAppearTimeout = const Duration(seconds: 3),
+  }) async {
+    final appearDeadline = DateTime.now().add(waitAppearTimeout);
+    Finder? dialog;
+    while (DateTime.now().isBefore(appearDeadline)) {
+      await tester.pump(const Duration(milliseconds: 200));
+      dialog = _resolveDialogByTitle(dialogTitle);
+      if (dialog != null) {
+        break;
+      }
+    }
+    if (dialog == null) {
+      return false;
+    }
+
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final activeDialog = _resolveDialogByTitle(dialogTitle);
+      if (activeDialog == null) {
+        return false;
+      }
+      final keywordFinder = find.descendant(
+        of: activeDialog,
+        matching: find.textContaining(keyword),
+      );
+      if (keywordFinder.evaluate().isNotEmpty) {
+        return true;
+      }
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    return false;
+  }
+
+  Finder? _resolveDialogByTitle(String dialogTitle) {
+    final titleFinder = find.text(dialogTitle);
+    if (titleFinder.evaluate().isEmpty) {
+      return null;
+    }
+    final dialog = find.ancestor(
+      of: titleFinder.first,
+      matching: find.byType(AlertDialog),
+    );
+    if (dialog.evaluate().isEmpty) {
+      return null;
+    }
+    return dialog.first;
+  }
+
   Future<void> waitForDialogClosedWithWatchdog(
     ProgressWatchdog watchdog, {
     required String dialogTitle,

@@ -97,6 +97,8 @@ void main() {
         await driver.tapWeeklyMacdSettings();
         await driver.tapWeeklyMacdRecompute();
         await driver.expectMacdRecomputeDialogVisible('周线');
+        await driver.waitForMacdRecomputeDialogTextContains('速率');
+        await driver.waitForMacdRecomputeDialogTextContains('预计剩余');
         await driver.waitForMacdRecomputeDialogClosedWithWatchdog(
           context.createWatchdog(),
           scopeLabel: '周线',
