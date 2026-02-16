@@ -259,6 +259,7 @@ class _FakeMarketDataProvider extends MarketDataProvider {
   @override
   Future<void> forceRefetchDailyBars({
     void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
   }) async {
     forceDailyRefetchCount++;
     for (final event in dailyProgressEvents) {
