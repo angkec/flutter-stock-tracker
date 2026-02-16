@@ -179,6 +179,42 @@ class _DelayedFalseBreakoutService extends BreakoutService {
   }
 }
 
+class _RecordingBreakoutService extends BreakoutService {
+  final List<String> touchedStockCodes = <String>[];
+
+  @override
+  Future<bool> isBreakoutPullback(
+    List<KLine> dailyBars, {
+    String? stockCode,
+  }) async {
+    if (stockCode != null) {
+      touchedStockCodes.add(stockCode);
+    }
+    return false;
+  }
+}
+
+class _RecordingMacdIndicatorService extends MacdIndicatorService {
+  _RecordingMacdIndicatorService({required super.repository});
+
+  final List<Set<String>> prewarmPayloadStockCodes = <Set<String>>[];
+
+  @override
+  Future<void> prewarmFromBars({
+    required KLineDataType dataType,
+    required Map<String, List<KLine>> barsByStockCode,
+    bool forceRecompute = false,
+    int? maxConcurrentTasks,
+    int? maxConcurrentPersistWrites,
+    int? persistBatchSize,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    prewarmPayloadStockCodes.add(barsByStockCode.keys.toSet());
+    final total = barsByStockCode.isEmpty ? 1 : barsByStockCode.length;
+    onProgress?.call(total, total);
+  }
+}
+
 DailyKlineCacheStore _buildStorageForPath(String basePath) {
   final storage = KLineFileStorage();
   storage.setBaseDirPathForTesting(basePath);
@@ -447,6 +483,65 @@ void main() {
 
       expect(breakoutService.callCount, monitorData.length);
       expect(stopwatch.elapsed, lessThan(const Duration(milliseconds: 1200)));
+    },
+  );
+
+  test(
+    'forceRefetchDailyBars should recompute indicators only for impacted stocks',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'daily-bars-incremental-indicator-',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final monitorData = List<StockMonitorData>.generate(3, (index) {
+        final code = (600000 + index).toString();
+        return StockMonitorData(
+          stock: Stock(code: code, name: '股票$code', market: 1),
+          ratio: 1.1,
+          changePercent: 0.3,
+        );
+      });
+
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode(
+          monitorData.map((e) => e.toJson()).toList(growable: false),
+        ),
+        'market_data_date': DateTime(2026, 2, 14).toIso8601String(),
+      });
+
+      final barsByCode = <String, List<KLine>>{
+        for (final item in monitorData) item.stock.code: _buildDailyBars(260),
+      };
+      final pool = _ReconnectableFakePool(dailyBarsByCode: barsByCode);
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: StockService(pool),
+        industryService: IndustryService(),
+        dailyBarsFileStorage: _buildStorageForPath(tempDir.path),
+      );
+      provider.setPullbackService(PullbackService());
+
+      final breakoutService = _RecordingBreakoutService();
+      provider.setBreakoutService(breakoutService);
+
+      final macdService = _RecordingMacdIndicatorService(
+        repository: _FakeDataRepository(),
+      );
+      provider.setMacdService(macdService);
+
+      await provider.loadFromCache();
+
+      await provider.forceRefetchDailyBars(
+        indicatorTargetStockCodes: const {'600000'},
+      );
+
+      expect(breakoutService.touchedStockCodes.toSet(), {'600000'});
+      expect(macdService.prewarmPayloadStockCodes.last, {'600000'});
     },
   );
 

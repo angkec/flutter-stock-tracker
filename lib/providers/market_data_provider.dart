@@ -598,6 +598,7 @@ class MarketDataProvider extends ChangeNotifier {
 
   Future<void> forceRefetchDailyBars({
     void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
   }) async {
     if (_allData.isEmpty) return;
 
@@ -639,19 +640,35 @@ class MarketDataProvider extends ChangeNotifier {
     stageStopwatch.stop();
     final fetchAndPersistMs = stageStopwatch.elapsedMilliseconds;
 
+    final normalizedIndicatorTargets =
+        indicatorTargetStockCodes == null
+        ? null
+        : indicatorTargetStockCodes
+              .where((code) => _dailyBarsCache.containsKey(code))
+              .toSet();
+    final indicatorTotal = normalizedIndicatorTargets == null
+        ? totalStocks
+        : normalizedIndicatorTargets.length;
+
     resetStageTimer();
-    onProgress?.call('3/4 计算指标...', 0, totalStocks);
+    onProgress?.call('3/4 计算指标...', 0, indicatorTotal <= 0 ? 1 : indicatorTotal);
     await _detectBreakouts(
+      targetStockCodes: normalizedIndicatorTargets,
       onProgress: (current, total) {
-        final safeTotal = total <= 0 ? totalStocks : total;
+        final safeTotal = total <= 0
+            ? (indicatorTotal <= 0 ? 1 : indicatorTotal)
+            : total;
         final safeCurrent = current.clamp(0, safeTotal);
         onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
       },
     );
 
     await _prewarmDailyMacd(
+      stockCodes: normalizedIndicatorTargets,
       onProgress: (current, total) {
-        final safeTotal = total <= 0 ? totalStocks : total;
+        final safeTotal = total <= 0
+            ? (indicatorTotal <= 0 ? 1 : indicatorTotal)
+            : total;
         final safeCurrent = current.clamp(0, safeTotal);
         onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
       },
@@ -834,6 +851,7 @@ class MarketDataProvider extends ChangeNotifier {
   }
 
   Future<void> _prewarmDailyMacd({
+    Set<String>? stockCodes,
     void Function(int current, int total)? onProgress,
   }) async {
     if (_macdService == null || _dailyBarsCache.isEmpty) {
@@ -842,6 +860,9 @@ class MarketDataProvider extends ChangeNotifier {
 
     final payload = <String, List<KLine>>{};
     for (final entry in _dailyBarsCache.entries) {
+      if (stockCodes != null && !stockCodes.contains(entry.key)) {
+        continue;
+      }
       if (entry.value.isNotEmpty) {
         payload[entry.key] = entry.value;
       }
@@ -920,6 +941,7 @@ class MarketDataProvider extends ChangeNotifier {
 
   /// 检测突破回踩
   Future<void> _detectBreakouts({
+    Set<String>? targetStockCodes,
     void Function(int current, int total)? onProgress,
   }) async {
     if (_breakoutService == null ||
@@ -927,13 +949,17 @@ class MarketDataProvider extends ChangeNotifier {
         _dailyBarsCache.isEmpty) {
       return;
     }
-    await _applyBreakoutDetection(onProgress: onProgress);
+    await _applyBreakoutDetection(
+      targetStockCodes: targetStockCodes,
+      onProgress: onProgress,
+    );
   }
 
   /// 重算突破回踩（使用缓存的日K数据，不重新下载）
   /// 返回 null 表示成功，否则返回缺失数据的描述
   /// [onProgress] 进度回调，参数为 (当前进度, 总数)
   Future<String?> recalculateBreakouts({
+    Set<String>? targetStockCodes,
     void Function(int current, int total)? onProgress,
   }) async {
     if (_breakoutService == null) {
@@ -945,21 +971,38 @@ class MarketDataProvider extends ChangeNotifier {
     if (_dailyBarsCache.isEmpty) {
       return '缺失日K数据，请先刷新';
     }
-    await _applyBreakoutDetection(onProgress: onProgress);
+    await _applyBreakoutDetection(
+      targetStockCodes: targetStockCodes,
+      onProgress: onProgress,
+    );
     return null;
   }
 
   /// 应用突破回踩检测逻辑
   /// [onProgress] 进度回调，参数为 (当前进度, 总数)
   Future<void> _applyBreakoutDetection({
+    Set<String>? targetStockCodes,
     void Function(int current, int total)? onProgress,
   }) async {
     if (_breakoutService == null) return;
 
-    final total = _allData.length;
+    final selectedIndexes = <int>[];
+    if (targetStockCodes == null) {
+      for (var index = 0; index < _allData.length; index++) {
+        selectedIndexes.add(index);
+      }
+    } else {
+      for (var index = 0; index < _allData.length; index++) {
+        if (targetStockCodes.contains(_allData[index].stock.code)) {
+          selectedIndexes.add(index);
+        }
+      }
+    }
+
+    final total = selectedIndexes.length;
     if (total <= 0) return;
 
-    final updatedData = List<StockMonitorData?>.filled(total, null);
+    final updatedData = List<StockMonitorData>.from(_allData, growable: false);
     var nextIndex = 0;
     var completed = 0;
     final workerCount = math.min(_breakoutDetectMaxConcurrency, total);
@@ -972,7 +1015,8 @@ class MarketDataProvider extends ChangeNotifier {
         }
         nextIndex++;
 
-        final data = _allData[index];
+        final dataIndex = selectedIndexes[index];
+        final data = _allData[dataIndex];
         final dailyBars = _dailyBarsCache[data.stock.code];
 
         var isBreakout = false;
@@ -996,7 +1040,7 @@ class MarketDataProvider extends ChangeNotifier {
           }
         }
 
-        updatedData[index] = data.copyWith(
+        updatedData[dataIndex] = data.copyWith(
           isPullback: data.isPullback,
           isBreakout: isBreakout,
         );
@@ -1009,7 +1053,7 @@ class MarketDataProvider extends ChangeNotifier {
       List<Future<void>>.generate(workerCount, (_) => runWorker()),
     );
 
-    _allData = updatedData.cast<StockMonitorData>();
+    _allData = updatedData;
     notifyListeners();
   }
 
