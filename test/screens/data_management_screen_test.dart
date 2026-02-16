@@ -15,6 +15,9 @@ import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/audit/services/audit_export_service.dart';
+import 'package:stock_rtwatcher/audit/services/audit_operation_runner.dart';
+import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/data_management_screen.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
@@ -52,6 +55,7 @@ class _FakeDataRepository implements DataRepository {
   List<DataUpdatedEvent> dataUpdatedEventsDuringFetch =
       const <DataUpdatedEvent>[];
   Duration fetchMissingDataDelay = Duration.zero;
+  Object? fetchMissingDataError;
 
   @override
   Stream<DataStatus> get statusStream => _statusController.stream;
@@ -111,6 +115,9 @@ class _FakeDataRepository implements DataRepository {
 
     if (fetchMissingDataDelay > Duration.zero) {
       await Future<void>.delayed(fetchMissingDataDelay);
+    }
+    if (fetchMissingDataError != null) {
+      throw fetchMissingDataError!;
     }
 
     if (missingMinuteDatesAfterFetch != null) {
@@ -357,9 +364,23 @@ void main() {
     required IndustryTrendService trendService,
     required IndustryRankService rankService,
     MacdIndicatorService? macdService,
+    AuditService? auditService,
   }) async {
     final effectiveMacdService =
         macdService ?? MacdIndicatorService(repository: repository);
+    final effectiveAuditService =
+        auditService ??
+        (() {
+          final sink = MemoryAuditSink();
+          return AuditService.forTest(
+            runner: AuditOperationRunner(sink: sink, nowProvider: DateTime.now),
+            readLatest: () async => sink.latestSummary,
+            exporter: AuditExportService(
+              auditRootProvider: () async => throw UnimplementedError(),
+              outputDirectoryProvider: () async => throw UnimplementedError(),
+            ),
+          );
+        })();
     await effectiveMacdService.load();
 
     await tester.pumpWidget(
@@ -378,6 +399,9 @@ void main() {
           ChangeNotifierProvider<IndustryRankService>.value(value: rankService),
           ChangeNotifierProvider<MacdIndicatorService>.value(
             value: effectiveMacdService,
+          ),
+          ChangeNotifierProvider<AuditService>.value(
+            value: effectiveAuditService,
           ),
         ],
         child: const MaterialApp(home: DataManagementScreen()),
@@ -1018,6 +1042,122 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 700));
     await tester.pumpAndSettle();
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('daily force refetch should write latest audit summary', (
+    tester,
+  ) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+    provider.dailyProgressEvents =
+        const <({String stage, int current, int total})>[
+          (stage: '1/4 拉取日K数据...', current: 1, total: 3),
+          (stage: '日内增量计算', current: 2, total: 3),
+          (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
+        ];
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '日K数据');
+    final dailyCard = find.ancestor(
+      of: find.text('日K数据'),
+      matching: find.byType(Card),
+    );
+    final dailyForceButton = find.descendant(
+      of: dailyCard,
+      matching: find.text('强制拉取'),
+    );
+    await tester.tap(dailyForceButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Latest Audit'), findsOneWidget);
+    expect(find.text('PASS'), findsWidgets);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('failed historical fetch should produce FAIL latest audit', (
+    tester,
+  ) async {
+    final repository = _FakeDataRepository();
+    repository.fetchMissingDataError = StateError('mock historical failure');
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+    final sink = MemoryAuditSink();
+    final auditService = AuditService.forTest(
+      runner: AuditOperationRunner(sink: sink, nowProvider: DateTime.now),
+      readLatest: () async => sink.latestSummary,
+      exporter: AuditExportService(
+        auditRootProvider: () async => throw UnimplementedError(),
+        outputDirectoryProvider: () async => throw UnimplementedError(),
+      ),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      auditService: auditService,
+    );
+
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
+    final historicalFetchButton = find.descendant(
+      of: historicalCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.tap(historicalFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(sink.latestSummary, isNotNull);
+    expect(sink.latestSummary!.verdict.name, 'fail');
+    expect(sink.latestSummary!.reasonCodes, contains('runtime_error'));
 
     provider.dispose();
     klineService.dispose();

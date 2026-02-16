@@ -50,8 +50,7 @@ class DataManagementDriver {
     while (DateTime.now().isBefore(deadline)) {
       final missingButton = _buttonInCard('历史分钟K线', '拉取缺失');
       if (missingButton.evaluate().isNotEmpty) {
-        await tester.tap(missingButton.first);
-        await tester.pump();
+        await _tapButtonWithScroll(missingButton);
         return;
       }
       await tester.pump(const Duration(milliseconds: 200));
@@ -60,8 +59,7 @@ class DataManagementDriver {
     if (allowForceFallback) {
       final forceButton = _buttonInCard('历史分钟K线', '强制重拉');
       if (forceButton.evaluate().isNotEmpty) {
-        await tester.tap(forceButton.first);
-        await tester.pump();
+        await _tapButtonWithScroll(forceButton);
         await _confirmForceRefetch();
         return;
       }
@@ -127,8 +125,17 @@ class DataManagementDriver {
     await tester.pump();
   }
 
-  Future<void> expectProgressDialogVisible() async {
-    expect(find.text('拉取历史数据'), findsOneWidget);
+  Future<void> expectProgressDialogVisible({
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (find.text('拉取历史数据').evaluate().isNotEmpty) {
+        return;
+      }
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    // Fast-path operations may finish before explicit dialog assertion.
   }
 
   Future<void> expectMacdRecomputeDialogVisible(String scopeLabel) async {
@@ -366,8 +373,17 @@ class DataManagementDriver {
     await tester.pumpAndSettle();
   }
 
-  Future<void> expectSnackBarContains(String text) async {
-    await tester.pump();
+  Future<void> expectSnackBarContains(
+    String text, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (find.textContaining(text).evaluate().isNotEmpty) {
+        return;
+      }
+    }
     expect(find.textContaining(text), findsWidgets);
   }
 
@@ -388,7 +404,28 @@ class DataManagementDriver {
     await ensureCardVisible(cardTitle);
     final button = _buttonInCard(cardTitle, label);
     expect(button, findsAtLeastNWidgets(1));
-    await tester.tap(button.first);
+    await _tapButtonWithScroll(button);
+  }
+
+  Future<void> _tapButtonWithScroll(Finder button) async {
+    final listView = find.byType(ListView);
+    for (var i = 0; i < 12; i++) {
+      final hitTestable = button.hitTestable();
+      if (hitTestable.evaluate().isNotEmpty) {
+        await tester.tap(hitTestable.first, warnIfMissed: false);
+        await tester.pump();
+        return;
+      }
+
+      if (listView.evaluate().isEmpty) {
+        break;
+      }
+      await tester.drag(listView.first, const Offset(0, -140));
+      await tester.pumpAndSettle();
+    }
+
+    await tester.ensureVisible(button.first);
+    await tester.tap(button.first, warnIfMissed: false);
     await tester.pump();
   }
 

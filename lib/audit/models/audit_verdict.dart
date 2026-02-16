@@ -1,0 +1,1 @@
+enum AuditVerdict { pass, fail }

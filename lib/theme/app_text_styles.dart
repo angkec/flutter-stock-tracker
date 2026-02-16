@@ -47,7 +47,43 @@ class AppTextStyles {
     fontWeight: FontWeight.bold,
   );
 
-  static const TextStyle tableCell = TextStyle(
-    fontSize: 13,
+  static const TextStyle tableCell = TextStyle(fontSize: 13);
+
+  // === Audit Console Styles ===
+  static const TextStyle auditRailCaption = TextStyle(
+    fontSize: 10,
+    fontWeight: FontWeight.w600,
+    letterSpacing: 0.3,
+  );
+
+  static const TextStyle auditRailVerdict = TextStyle(
+    fontFamily: 'monospace',
+    fontSize: 16,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.1,
+  );
+
+  static const TextStyle auditOperation = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w700,
+    height: 1.2,
+  );
+
+  static const TextStyle auditTimestamp = TextStyle(
+    fontFamily: 'monospace',
+    fontSize: 11,
+    fontWeight: FontWeight.w500,
+  );
+
+  static const TextStyle auditChip = TextStyle(
+    fontFamily: 'monospace',
+    fontSize: 10,
+    fontWeight: FontWeight.w600,
+  );
+
+  static const TextStyle auditMetrics = TextStyle(
+    fontFamily: 'monospace',
+    fontSize: 11,
+    fontWeight: FontWeight.w500,
   );
 }

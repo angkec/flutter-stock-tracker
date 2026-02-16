@@ -3,6 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:stock_rtwatcher/audit/models/audit_event.dart';
+import 'package:stock_rtwatcher/audit/models/audit_operation_type.dart';
+import 'package:stock_rtwatcher/audit/models/audit_run_summary.dart';
+import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/config/debug_config.dart';
 import 'package:stock_rtwatcher/data/models/data_status.dart';
 import 'package:stock_rtwatcher/data/models/data_updated_event.dart';
@@ -15,6 +19,7 @@ import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
+import 'package:stock_rtwatcher/widgets/data_management_audit_console.dart';
 
 enum _WeeklySyncStage { precheck, fetch, write }
 
@@ -58,12 +63,14 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
       ),
-      body: Consumer<MarketDataProvider>(
-        builder: (_, provider, __) {
+      body: Consumer2<MarketDataProvider, AuditService>(
+        builder: (_, provider, auditService, __) {
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
             children: [
               _buildSummaryCard(context, provider),
+              const SizedBox(height: 12),
+              _buildAuditConsole(context, auditService),
               const SizedBox(height: 12),
 
               _buildSectionTitle(context, '基础数据'),
@@ -233,6 +240,156 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
         ),
       ),
+    );
+  }
+
+  Widget _buildAuditConsole(BuildContext context, AuditService auditService) {
+    final latest = auditService.latest;
+    if (latest == null) {
+      return Card(
+        margin: EdgeInsets.zero,
+        child: ListTile(
+          leading: const Icon(Icons.fact_check_outlined),
+          title: const Text('Latest Audit'),
+          subtitle: const Text('暂无审计记录，执行一次数据管理操作后生成'),
+          trailing: TextButton(
+            onPressed: () => _exportRecentAudits(context, auditService),
+            child: const Text('导出7天'),
+          ),
+        ),
+      );
+    }
+
+    final reasonCodes = latest.reasonCodes;
+    final verdict = latest.verdict.name.toUpperCase();
+    final metrics =
+        'errors ${latest.errorCount} · missing ${latest.missingCount} · '
+        'incomplete ${latest.incompleteCount} · unknown ${latest.unknownStateCount} · '
+        'elapsed ${latest.elapsedMs}ms';
+
+    return DataManagementAuditConsole(
+      title: 'Latest Audit',
+      verdictLabel: verdict,
+      operationLabel: latest.operation.wireName,
+      completedAtLabel: _formatDateTime(latest.completedAt),
+      reasonCodes: reasonCodes,
+      metricsLabel: metrics,
+      onViewDetails: () => _showAuditDetails(context, latest),
+      onExportLatest: () => _exportLatestAudit(context, auditService),
+      onExportRecent: () => _exportRecentAudits(context, auditService),
+    );
+  }
+
+  Future<void> _exportLatestAudit(
+    BuildContext context,
+    AuditService auditService,
+  ) async {
+    final latest = auditService.latest;
+    if (latest == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('暂无可导出的审计记录')));
+      }
+      return;
+    }
+
+    try {
+      final file = await auditService.exporter.exportLatestRun(
+        runId: latest.runId,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('审计日志已导出: ${file.path}')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导出审计日志失败: $e')));
+      }
+    }
+  }
+
+  Future<void> _exportRecentAudits(
+    BuildContext context,
+    AuditService auditService,
+  ) async {
+    try {
+      final file = await auditService.exporter.exportRecentDays(days: 7);
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('近7天审计日志已导出: ${file.path}')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('导出近7天审计日志失败: $e')));
+      }
+    }
+  }
+
+  Future<void> _showAuditDetails(
+    BuildContext context,
+    AuditRunSummary summary,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '审计详情',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              Text('Run: ${summary.runId}'),
+              Text('操作: ${summary.operation.wireName}'),
+              Text('完成: ${_formatDateTime(summary.completedAt)}'),
+              Text('结论: ${summary.verdict.name.toUpperCase()}'),
+              const SizedBox(height: 12),
+              Text(
+                '失败原因',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              if (summary.reasonCodes.isEmpty)
+                const Text('无')
+              else
+                ...summary.reasonCodes.map((code) => Text('• $code')),
+              const SizedBox(height: 12),
+              Text(
+                '指标',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'errors ${summary.errorCount}, missing ${summary.missingCount}, '
+                'incomplete ${summary.incompleteCount}, unknown ${summary.unknownStateCount}',
+              ),
+              Text(
+                'updated ${summary.updatedStockCount}, records ${summary.totalRecords}, '
+                'elapsed ${summary.elapsedMs}ms',
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -721,6 +878,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     final repository = context.read<DataRepository>();
     final trendService = context.read<IndustryTrendService>();
     final rankService = context.read<IndustryRankService>();
+    final auditService = context.read<AuditService>();
 
     if (marketProvider.allData.isEmpty) {
       ScaffoldMessenger.of(
@@ -751,210 +909,283 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     var hasVerifiedNoMissingAfterFetch = false;
     StreamSubscription<DataStatus>? statusSubscription;
     try {
-      var stocks = marketProvider.allData.map((d) => d.stock).toList();
-
-      // Debug 模式下限制股票数量
-      stocks = DebugConfig.limitStocks(stocks);
-
-      final stockCodes = stocks.map((s) => s.code).toList();
-      final dateRange = DateRange(
-        DateTime.now().subtract(const Duration(days: 30)),
-        DateTime.now(),
-      );
-
-      statusSubscription = repository.statusStream.listen((status) {
-        if (status is! DataFetching) {
-          return;
-        }
-
-        final safeTotal = status.total <= 0 ? 1 : status.total;
-        final safeCurrent = status.current.clamp(0, safeTotal);
-
-        if (status.currentStock == '__WRITE__') {
-          progressNotifier.value = (
-            current: safeCurrent,
-            total: safeTotal,
-            stage: '2/4 写入K线数据',
+      await auditService.runner.run(
+        operation: AuditOperationType.historicalFetchMissing,
+        body: (audit) async {
+          audit.stageStarted(
+            forceRefetch
+                ? 'historical_force_refetch'
+                : 'historical_fetch_missing',
           );
-          return;
-        }
+          var stocks = marketProvider.allData.map((d) => d.stock).toList();
 
-        progressNotifier.value = (
-          current: safeCurrent,
-          total: safeTotal,
-          stage: forceRefetch ? '1/4 强制拉取K线数据' : '1/4 拉取K线数据',
-        );
-      });
+          // Debug 模式下限制股票数量
+          stocks = DebugConfig.limitStocks(stocks);
 
-      debugPrint(
-        '[DataManagement] 开始${forceRefetch ? '强制' : ''}拉取历史数据, ${stockCodes.length} 只股票',
-      );
-      final fetchResult = forceRefetch
-          ? await repository.refetchData(
-              stockCodes: stockCodes,
-              dateRange: dateRange,
-              dataType: KLineDataType.oneMinute,
-              onProgress: (current, total) {
-                final safeTotal = total <= 0 ? 1 : total;
-                final safeCurrent = current.clamp(0, safeTotal);
-                progressNotifier.value = (
-                  current: safeCurrent,
-                  total: safeTotal,
-                  stage: '1/4 强制拉取K线数据',
-                );
-              },
-            )
-          : await repository.fetchMissingData(
-              stockCodes: stockCodes,
-              dateRange: dateRange,
-              dataType: KLineDataType.oneMinute,
-              onProgress: (current, total) {
-                final safeTotal = total <= 0 ? 1 : total;
-                final safeCurrent = current.clamp(0, safeTotal);
-                progressNotifier.value = (
-                  current: safeCurrent,
-                  total: safeTotal,
-                  stage: '1/4 拉取K线数据',
-                );
-              },
-            );
-      debugPrint('[DataManagement] K线数据已保存');
-
-      // 0 条新增时，强制复检是否仍有缺失，防止“看起来成功但实际没拉到数据”。
-      if (!forceRefetch && fetchResult.totalRecords == 0) {
-        final tradingDays = await repository.getTradingDates(dateRange);
-        if (!_hasReliableTradingDateCoverage(tradingDays, dateRange)) {
-          final sampleCodes = _buildBaselineFallbackCheckCodes(stockCodes);
-          final lastTradingStatus = await _evaluateLatestTradingDayStatus(
-            repository: repository,
-            stockCodes: sampleCodes,
+          final stockCodes = stocks.map((s) => s.code).toList();
+          final dateRange = DateRange(
+            DateTime.now().subtract(const Duration(days: 30)),
+            DateTime.now(),
           );
-          final lastTradingDate = lastTradingStatus.lastTradingDate;
 
-          if (lastTradingDate == null) {
-            baselineVerificationWarning = '交易日基线不足，最近分钟K交易日暂不可验证，建议交易日复检';
-            debugPrint('[DataManagement] $baselineVerificationWarning');
-          }
-
-          if (lastTradingDate != null) {
-            final issueCount =
-                lastTradingStatus.missingStocks +
-                lastTradingStatus.incompleteStocks;
-            if (issueCount > 0) {
-              final issueParts = <String>[];
-              if (lastTradingStatus.missingStocks > 0) {
-                issueParts.add('缺失${lastTradingStatus.missingStocks}只');
-              }
-              if (lastTradingStatus.incompleteStocks > 0) {
-                issueParts.add('不完整${lastTradingStatus.incompleteStocks}只');
-              }
-              throw Exception(
-                '交易日基线不足，最近交易日(${_formatDate(lastTradingDate)})仍有问题：${issueParts.join('，')}',
-              );
+          statusSubscription = repository.statusStream.listen((status) {
+            if (status is! DataFetching) {
+              return;
             }
-          }
-        }
 
-        progressNotifier.value = (
-          current: 0,
-          total: stockCodes.length,
-          stage: '2/4 复检缺失状态',
-        );
+            final safeTotal = status.total <= 0 ? 1 : status.total;
+            final safeCurrent = status.current.clamp(0, safeTotal);
 
-        final verifyResults = await repository.findMissingMinuteDatesBatch(
-          stockCodes: stockCodes,
-          dateRange: dateRange,
-          onProgress: (current, total) {
-            final safeTotal = total <= 0 ? 1 : total;
-            final safeCurrent = current.clamp(0, safeTotal);
+            if (status.currentStock == '__WRITE__') {
+              progressNotifier.value = (
+                current: safeCurrent,
+                total: safeTotal,
+                stage: '2/4 写入K线数据',
+              );
+              audit.stageProgress(
+                'write_kline',
+                current: safeCurrent,
+                total: safeTotal,
+              );
+              return;
+            }
+
             progressNotifier.value = (
               current: safeCurrent,
               total: safeTotal,
+              stage: forceRefetch ? '1/4 强制拉取K线数据' : '1/4 拉取K线数据',
+            );
+            audit.stageProgress(
+              'fetch_kline',
+              current: safeCurrent,
+              total: safeTotal,
+            );
+          });
+
+          debugPrint(
+            '[DataManagement] 开始${forceRefetch ? '强制' : ''}拉取历史数据, ${stockCodes.length} 只股票',
+          );
+          final fetchResult = forceRefetch
+              ? await repository.refetchData(
+                  stockCodes: stockCodes,
+                  dateRange: dateRange,
+                  dataType: KLineDataType.oneMinute,
+                  onProgress: (current, total) {
+                    final safeTotal = total <= 0 ? 1 : total;
+                    final safeCurrent = current.clamp(0, safeTotal);
+                    progressNotifier.value = (
+                      current: safeCurrent,
+                      total: safeTotal,
+                      stage: '1/4 强制拉取K线数据',
+                    );
+                    audit.stageProgress(
+                      'fetch_kline',
+                      current: safeCurrent,
+                      total: safeTotal,
+                    );
+                  },
+                )
+              : await repository.fetchMissingData(
+                  stockCodes: stockCodes,
+                  dateRange: dateRange,
+                  dataType: KLineDataType.oneMinute,
+                  onProgress: (current, total) {
+                    final safeTotal = total <= 0 ? 1 : total;
+                    final safeCurrent = current.clamp(0, safeTotal);
+                    progressNotifier.value = (
+                      current: safeCurrent,
+                      total: safeTotal,
+                      stage: '1/4 拉取K线数据',
+                    );
+                    audit.stageProgress(
+                      'fetch_kline',
+                      current: safeCurrent,
+                      total: safeTotal,
+                    );
+                  },
+                );
+          debugPrint('[DataManagement] K线数据已保存');
+          audit.record(AuditEventType.fetchResult, {
+            'updated_stock_count': fetchResult.successCount,
+            'total_records': fetchResult.totalRecords,
+            'failure_count': fetchResult.failureCount,
+          });
+
+          // 0 条新增时，强制复检是否仍有缺失，防止“看起来成功但实际没拉到数据”。
+          if (!forceRefetch && fetchResult.totalRecords == 0) {
+            final tradingDays = await repository.getTradingDates(dateRange);
+            if (!_hasReliableTradingDateCoverage(tradingDays, dateRange)) {
+              final sampleCodes = _buildBaselineFallbackCheckCodes(stockCodes);
+              final lastTradingStatus = await _evaluateLatestTradingDayStatus(
+                repository: repository,
+                stockCodes: sampleCodes,
+              );
+              final lastTradingDate = lastTradingStatus.lastTradingDate;
+
+              if (lastTradingDate == null) {
+                baselineVerificationWarning = '交易日基线不足，最近分钟K交易日暂不可验证，建议交易日复检';
+                debugPrint('[DataManagement] $baselineVerificationWarning');
+              }
+
+              if (lastTradingDate != null) {
+                final issueCount =
+                    lastTradingStatus.missingStocks +
+                    lastTradingStatus.incompleteStocks;
+                if (issueCount > 0) {
+                  final issueParts = <String>[];
+                  if (lastTradingStatus.missingStocks > 0) {
+                    issueParts.add('缺失${lastTradingStatus.missingStocks}只');
+                  }
+                  if (lastTradingStatus.incompleteStocks > 0) {
+                    issueParts.add('不完整${lastTradingStatus.incompleteStocks}只');
+                  }
+                  throw Exception(
+                    '交易日基线不足，最近交易日(${_formatDate(lastTradingDate)})仍有问题：${issueParts.join('，')}',
+                  );
+                }
+              }
+            }
+
+            progressNotifier.value = (
+              current: 0,
+              total: stockCodes.length,
               stage: '2/4 复检缺失状态',
             );
-          },
-        );
 
-        final stillMissingStocks = verifyResults.values.where((result) {
-          return result.missingDates.isNotEmpty ||
-              result.incompleteDates.isNotEmpty;
-        }).length;
+            final verifyResults = await repository.findMissingMinuteDatesBatch(
+              stockCodes: stockCodes,
+              dateRange: dateRange,
+              onProgress: (current, total) {
+                final safeTotal = total <= 0 ? 1 : total;
+                final safeCurrent = current.clamp(0, safeTotal);
+                progressNotifier.value = (
+                  current: safeCurrent,
+                  total: safeTotal,
+                  stage: '2/4 复检缺失状态',
+                );
+                audit.stageProgress(
+                  'verify_missing',
+                  current: safeCurrent,
+                  total: safeTotal,
+                );
+              },
+            );
 
-        if (stillMissingStocks > 0) {
-          throw Exception('拉取后仍有 $stillMissingStocks 只股票分钟K线缺失');
-        }
+            final stillMissingStocks = verifyResults.values.where((result) {
+              return result.missingDates.isNotEmpty ||
+                  result.incompleteDates.isNotEmpty;
+            }).length;
+            final stillIncompleteStocks = verifyResults.values.where((result) {
+              return result.incompleteDates.isNotEmpty;
+            }).length;
 
-        hasVerifiedNoMissingAfterFetch = true;
-      }
+            audit.record(AuditEventType.verificationResult, {
+              'missing_count': stillMissingStocks,
+              'incomplete_count': stillIncompleteStocks,
+            });
 
-      if (fetchResult.failureCount > 0) {
-        completionMessage =
-            '${forceRefetch ? '历史数据已强制更新' : '历史数据已更新'}（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
-      } else {
-        completionMessage = forceRefetch ? '历史数据已强制更新' : '历史数据已更新';
-      }
-      if (baselineVerificationWarning != null &&
-          !hasVerifiedNoMissingAfterFetch) {
-        completionMessage = '$completionMessage；$baselineVerificationWarning';
-      }
+            if (stillMissingStocks > 0) {
+              throw Exception('拉取后仍有 $stillMissingStocks 只股票分钟K线缺失');
+            }
 
-      final shouldRecalculateIndustry =
-          forceRefetch || fetchResult.totalRecords > 0;
-      if (shouldRecalculateIndustry) {
-        // Get current data version for cache validation
-        final dataVersion = await repository.getCurrentVersion();
+            hasVerifiedNoMissingAfterFetch = true;
+          }
 
-        // 计算行业趋势和排名（数据来自 DataRepository）
-        if (context.mounted) {
-          final industryCalcStopwatch = Stopwatch()..start();
+          if (fetchResult.failureCount > 0) {
+            completionMessage =
+                '${forceRefetch ? '历史数据已强制更新' : '历史数据已更新'}（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
+          } else {
+            completionMessage = forceRefetch ? '历史数据已强制更新' : '历史数据已更新';
+          }
+          if (baselineVerificationWarning != null &&
+              !hasVerifiedNoMissingAfterFetch) {
+            completionMessage =
+                '$completionMessage；$baselineVerificationWarning';
+          }
 
-          debugPrint('[DataManagement] 开始计算行业趋势');
-          progressNotifier.value = (
-            current: 0,
-            total: 1,
-            stage: '3/4 计算行业趋势...',
+          final shouldRecalculateIndustry =
+              forceRefetch || fetchResult.totalRecords > 0;
+          if (shouldRecalculateIndustry) {
+            // Get current data version for cache validation
+            final dataVersion = await repository.getCurrentVersion();
+            audit.record(AuditEventType.indicatorRecomputeResult, {
+              'data_changed': true,
+              'scope_count': stockCodes.length,
+            });
+
+            // 计算行业趋势和排名（数据来自 DataRepository）
+            if (context.mounted) {
+              final industryCalcStopwatch = Stopwatch()..start();
+
+              debugPrint('[DataManagement] 开始计算行业趋势');
+              progressNotifier.value = (
+                current: 0,
+                total: 1,
+                stage: '3/4 计算行业趋势...',
+              );
+              audit.stageStarted('recompute_industry_trend');
+              final trendStopwatch = Stopwatch()..start();
+              await trendService.recalculateFromKlineData(
+                klineService,
+                marketProvider.allData,
+                dataVersion: dataVersion,
+              );
+              trendStopwatch.stop();
+              audit.stageCompleted(
+                'recompute_industry_trend',
+                durationMs: trendStopwatch.elapsedMilliseconds,
+              );
+              debugPrint('[DataManagement] 行业趋势计算完成');
+              debugPrint(
+                '[DataManagement][timing] trendMs=${trendStopwatch.elapsedMilliseconds}',
+              );
+
+              debugPrint('[DataManagement] 开始计算行业排名');
+              progressNotifier.value = (
+                current: 0,
+                total: 1,
+                stage: '4/4 计算行业排名...',
+              );
+              audit.stageStarted('recompute_industry_rank');
+              final rankStopwatch = Stopwatch()..start();
+              await rankService.recalculateFromKlineData(
+                klineService,
+                marketProvider.allData,
+                dataVersion: dataVersion,
+              );
+              rankStopwatch.stop();
+              audit.stageCompleted(
+                'recompute_industry_rank',
+                durationMs: rankStopwatch.elapsedMilliseconds,
+              );
+              debugPrint('[DataManagement] 行业排名计算完成');
+              industryCalcStopwatch.stop();
+              debugPrint(
+                '[DataManagement][timing] rankMs=${rankStopwatch.elapsedMilliseconds}, '
+                'industryCalcTotalMs=${industryCalcStopwatch.elapsedMilliseconds}',
+              );
+            }
+          } else {
+            debugPrint('[DataManagement] 历史分钟K无新增记录，跳过行业趋势/排名重算以缩短等待时间');
+            audit.record(AuditEventType.indicatorRecomputeResult, {
+              'data_changed': false,
+              'scope_count': 0,
+            });
+          }
+          audit.stageCompleted(
+            forceRefetch
+                ? 'historical_force_refetch'
+                : 'historical_fetch_missing',
           );
-          final trendStopwatch = Stopwatch()..start();
-          await trendService.recalculateFromKlineData(
-            klineService,
-            marketProvider.allData,
-            dataVersion: dataVersion,
-          );
-          trendStopwatch.stop();
-          debugPrint('[DataManagement] 行业趋势计算完成');
-          debugPrint(
-            '[DataManagement][timing] trendMs=${trendStopwatch.elapsedMilliseconds}',
-          );
-
-          debugPrint('[DataManagement] 开始计算行业排名');
-          progressNotifier.value = (
-            current: 0,
-            total: 1,
-            stage: '4/4 计算行业排名...',
-          );
-          final rankStopwatch = Stopwatch()..start();
-          await rankService.recalculateFromKlineData(
-            klineService,
-            marketProvider.allData,
-            dataVersion: dataVersion,
-          );
-          rankStopwatch.stop();
-          debugPrint('[DataManagement] 行业排名计算完成');
-          industryCalcStopwatch.stop();
-          debugPrint(
-            '[DataManagement][timing] rankMs=${rankStopwatch.elapsedMilliseconds}, '
-            'industryCalcTotalMs=${industryCalcStopwatch.elapsedMilliseconds}',
-          );
-        }
-      } else {
-        debugPrint('[DataManagement] 历史分钟K无新增记录，跳过行业趋势/排名重算以缩短等待时间');
-      }
+        },
+      );
     } catch (e, stackTrace) {
       debugPrint('[DataManagement] 拉取历史数据失败: $e');
       debugPrint('$stackTrace');
       completionMessage = '历史数据拉取失败: $e';
     } finally {
       await statusSubscription?.cancel();
+      await _refreshAuditLatestSafely(auditService);
 
       // 恢复锁屏
       await WakelockPlus.disable();
@@ -985,6 +1216,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     final marketProvider = context.read<MarketDataProvider>();
     final repository = context.read<DataRepository>();
     final macdService = context.read<MacdIndicatorService?>();
+    final auditService = context.read<AuditService>();
 
     if (marketProvider.allData.isEmpty) {
       ScaffoldMessenger.of(
@@ -1017,206 +1249,248 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     String completionMessage = forceRefetch ? '周K数据已强制更新' : '周K数据已更新';
 
     try {
-      var stocks = marketProvider.allData.map((d) => d.stock).toList();
-      stocks = DebugConfig.limitStocks(stocks);
-      final stockCodes = stocks.map((s) => s.code).toList();
-      final dateRange = _buildWeeklyDateRange();
-
-      final stageDurations = <_WeeklySyncStage, Duration>{
-        _WeeklySyncStage.precheck: Duration.zero,
-        _WeeklySyncStage.fetch: Duration.zero,
-        _WeeklySyncStage.write: Duration.zero,
-      };
-      final stageProgressCurrent = <_WeeklySyncStage, int>{
-        _WeeklySyncStage.precheck: 0,
-        _WeeklySyncStage.fetch: 0,
-        _WeeklySyncStage.write: 0,
-      };
-      final stageProgressTotal = <_WeeklySyncStage, int>{
-        _WeeklySyncStage.precheck: 1,
-        _WeeklySyncStage.fetch: 1,
-        _WeeklySyncStage.write: 1,
-      };
-      _WeeklySyncStage? activeStage;
-      DateTime? activeStageStartedAt;
-      var activeStageStartProgress = 0;
-      final updatedWeeklyStockCodes = <String>{};
-
-      Duration elapsedForStage(_WeeklySyncStage stage, DateTime now) {
-        final base = stageDurations[stage] ?? Duration.zero;
-        if (activeStage == stage && activeStageStartedAt != null) {
-          return base + now.difference(activeStageStartedAt!);
-        }
-        return base;
-      }
-
-      String formatStageDuration(Duration duration) {
-        final seconds = duration.inMilliseconds / 1000;
-        return '${seconds.toStringAsFixed(1)}s';
-      }
-
-      _WeeklySyncStage resolveStage(String currentStock) {
-        if (currentStock == '__PRECHECK__') {
-          return _WeeklySyncStage.precheck;
-        }
-        if (currentStock == '__WRITE__') {
-          return _WeeklySyncStage.write;
-        }
-        return _WeeklySyncStage.fetch;
-      }
-
-      void switchToStage(_WeeklySyncStage nextStage, int progressCurrent) {
-        final now = DateTime.now();
-        if (activeStage == nextStage) {
-          return;
-        }
-
-        if (activeStage != null && activeStageStartedAt != null) {
-          stageDurations[activeStage!] =
-              (stageDurations[activeStage!] ?? Duration.zero) +
-              now.difference(activeStageStartedAt!);
-        }
-
-        activeStage = nextStage;
-        activeStageStartedAt = now;
-        activeStageStartProgress = progressCurrent;
-      }
-
-      String buildStageMetrics(int current, int total) {
-        final now = DateTime.now();
-        final precheckElapsed = elapsedForStage(_WeeklySyncStage.precheck, now);
-        final fetchElapsed = elapsedForStage(_WeeklySyncStage.fetch, now);
-        final writeElapsed = elapsedForStage(_WeeklySyncStage.write, now);
-
-        String formatStageProgress(_WeeklySyncStage stage) {
-          final progressCurrent = stageProgressCurrent[stage] ?? 0;
-          final progressTotal = stageProgressTotal[stage] ?? 1;
-          return '$progressCurrent/$progressTotal';
-        }
-
-        var speedLabel = '--';
-        if (activeStage != null) {
-          final activeElapsed = elapsedForStage(activeStage!, now);
-          final processedInStage = (current - activeStageStartProgress).clamp(
-            0,
-            total,
+      await auditService.runner.run(
+        operation: forceRefetch
+            ? AuditOperationType.weeklyForceRefetch
+            : AuditOperationType.weeklyFetchMissing,
+        body: (audit) async {
+          audit.stageStarted(
+            forceRefetch ? 'weekly_force_refetch' : 'weekly_fetch_missing',
           );
-          final seconds = activeElapsed.inMilliseconds / 1000;
-          if (seconds > 0) {
-            speedLabel =
-                '${(processedInStage / seconds).toStringAsFixed(1)}项/秒';
-          } else {
-            speedLabel = '0.0项/秒';
+          var stocks = marketProvider.allData.map((d) => d.stock).toList();
+          stocks = DebugConfig.limitStocks(stocks);
+          final stockCodes = stocks.map((s) => s.code).toList();
+          final dateRange = _buildWeeklyDateRange();
+
+          final stageDurations = <_WeeklySyncStage, Duration>{
+            _WeeklySyncStage.precheck: Duration.zero,
+            _WeeklySyncStage.fetch: Duration.zero,
+            _WeeklySyncStage.write: Duration.zero,
+          };
+          final stageProgressCurrent = <_WeeklySyncStage, int>{
+            _WeeklySyncStage.precheck: 0,
+            _WeeklySyncStage.fetch: 0,
+            _WeeklySyncStage.write: 0,
+          };
+          final stageProgressTotal = <_WeeklySyncStage, int>{
+            _WeeklySyncStage.precheck: 1,
+            _WeeklySyncStage.fetch: 1,
+            _WeeklySyncStage.write: 1,
+          };
+          _WeeklySyncStage? activeStage;
+          DateTime? activeStageStartedAt;
+          var activeStageStartProgress = 0;
+          final updatedWeeklyStockCodes = <String>{};
+
+          Duration elapsedForStage(_WeeklySyncStage stage, DateTime now) {
+            final base = stageDurations[stage] ?? Duration.zero;
+            if (activeStage == stage && activeStageStartedAt != null) {
+              return base + now.difference(activeStageStartedAt!);
+            }
+            return base;
           }
-        }
 
-        return '阶段耗时 预检 ${formatStageDuration(precheckElapsed)} · '
-            '拉取 ${formatStageDuration(fetchElapsed)} · '
-            '写入 ${formatStageDuration(writeElapsed)}\n'
-            '阶段进度 预检 ${formatStageProgress(_WeeklySyncStage.precheck)} · '
-            '拉取 ${formatStageProgress(_WeeklySyncStage.fetch)} · '
-            '写入 ${formatStageProgress(_WeeklySyncStage.write)} · '
-            '速率 $speedLabel';
-      }
+          String formatStageDuration(Duration duration) {
+            final seconds = duration.inMilliseconds / 1000;
+            return '${seconds.toStringAsFixed(1)}s';
+          }
 
-      statusSubscription = repository.statusStream.listen((status) {
-        if (status is! DataFetching) {
-          return;
-        }
+          _WeeklySyncStage resolveStage(String currentStock) {
+            if (currentStock == '__PRECHECK__') {
+              return _WeeklySyncStage.precheck;
+            }
+            if (currentStock == '__WRITE__') {
+              return _WeeklySyncStage.write;
+            }
+            return _WeeklySyncStage.fetch;
+          }
 
-        final safeTotal = status.total <= 0 ? 1 : status.total;
-        final safeCurrent = status.current.clamp(0, safeTotal);
-        final stage = resolveStage(status.currentStock);
-        stageProgressCurrent[stage] = safeCurrent;
-        stageProgressTotal[stage] = safeTotal;
-        switchToStage(stage, safeCurrent);
-        final stageTitle = stage == _WeeklySyncStage.precheck
-            ? '预检查周K覆盖...'
-            : stage == _WeeklySyncStage.write
-            ? '写入周K数据...'
-            : (forceRefetch ? '强制拉取周K数据...' : '拉取周K数据...');
+          void switchToStage(_WeeklySyncStage nextStage, int progressCurrent) {
+            final now = DateTime.now();
+            if (activeStage == nextStage) {
+              return;
+            }
 
-        progressNotifier.value = (
-          current: safeCurrent,
-          total: safeTotal,
-          stage: '$stageTitle\n${buildStageMetrics(safeCurrent, safeTotal)}',
-        );
-      });
-      updatedSubscription = repository.dataUpdatedStream.listen((event) {
-        if (event.dataType == KLineDataType.weekly) {
-          updatedWeeklyStockCodes.addAll(event.stockCodes);
-        }
-      });
+            if (activeStage != null && activeStageStartedAt != null) {
+              stageDurations[activeStage!] =
+                  (stageDurations[activeStage!] ?? Duration.zero) +
+                  now.difference(activeStageStartedAt!);
+            }
 
-      final fetchResult = forceRefetch
-          ? await repository.refetchData(
-              stockCodes: stockCodes,
-              dateRange: dateRange,
-              dataType: KLineDataType.weekly,
-            )
-          : await repository.fetchMissingData(
-              stockCodes: stockCodes,
-              dateRange: dateRange,
-              dataType: KLineDataType.weekly,
+            activeStage = nextStage;
+            activeStageStartedAt = now;
+            activeStageStartProgress = progressCurrent;
+          }
+
+          String buildStageMetrics(int current, int total) {
+            final now = DateTime.now();
+            final precheckElapsed = elapsedForStage(
+              _WeeklySyncStage.precheck,
+              now,
             );
+            final fetchElapsed = elapsedForStage(_WeeklySyncStage.fetch, now);
+            final writeElapsed = elapsedForStage(_WeeklySyncStage.write, now);
 
-      if (fetchResult.failureCount > 0) {
-        completionMessage =
-            '${forceRefetch ? '周K数据已强制更新' : '周K数据已更新'}（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
-      }
+            String formatStageProgress(_WeeklySyncStage stage) {
+              final progressCurrent = stageProgressCurrent[stage] ?? 0;
+              final progressTotal = stageProgressTotal[stage] ?? 1;
+              return '$progressCurrent/$progressTotal';
+            }
 
-      final shouldPrewarmWeeklyMacd =
-          macdService != null && (forceRefetch || fetchResult.totalRecords > 0);
-      if (shouldPrewarmWeeklyMacd) {
-        final prewarmStockCodes = forceRefetch
-            ? stockCodes
-            : stockCodes
-                  .where((code) => updatedWeeklyStockCodes.contains(code))
-                  .toList(growable: false);
-        final effectivePrewarmStockCodes = prewarmStockCodes.isNotEmpty
-            ? prewarmStockCodes
-            : stockCodes;
+            var speedLabel = '--';
+            if (activeStage != null) {
+              final activeElapsed = elapsedForStage(activeStage!, now);
+              final processedInStage = (current - activeStageStartProgress)
+                  .clamp(0, total);
+              final seconds = activeElapsed.inMilliseconds / 1000;
+              if (seconds > 0) {
+                speedLabel =
+                    '${(processedInStage / seconds).toStringAsFixed(1)}项/秒';
+              } else {
+                speedLabel = '0.0项/秒';
+              }
+            }
 
-        progressNotifier.value = (
-          current: 0,
-          total: 1,
-          stage: '准备更新周线MACD缓存（${effectivePrewarmStockCodes.length}只）...',
-        );
-        final prewarmStopwatch = Stopwatch()..start();
-        await macdService.prewarmFromRepository(
-          stockCodes: effectivePrewarmStockCodes,
-          dataType: KLineDataType.weekly,
-          dateRange: dateRange,
-          fetchBatchSize: _weeklyMacdFetchBatchSize,
-          maxConcurrentPersistWrites: _weeklyMacdPersistConcurrency,
-          onProgress: (current, total) {
-            final safeTotal = total <= 0 ? 1 : total;
-            final safeCurrent = current.clamp(0, safeTotal);
-            final elapsedSeconds = prewarmStopwatch.elapsedMilliseconds / 1000;
-            final speed = elapsedSeconds <= 0
-                ? 0.0
-                : safeCurrent / elapsedSeconds;
-            final remaining = safeTotal - safeCurrent;
-            final etaLabel = speed <= 0
-                ? '--'
-                : _formatEtaSeconds((remaining / speed).ceil());
+            return '阶段耗时 预检 ${formatStageDuration(precheckElapsed)} · '
+                '拉取 ${formatStageDuration(fetchElapsed)} · '
+                '写入 ${formatStageDuration(writeElapsed)}\n'
+                '阶段进度 预检 ${formatStageProgress(_WeeklySyncStage.precheck)} · '
+                '拉取 ${formatStageProgress(_WeeklySyncStage.fetch)} · '
+                '写入 ${formatStageProgress(_WeeklySyncStage.write)} · '
+                '速率 $speedLabel';
+          }
+
+          statusSubscription = repository.statusStream.listen((status) {
+            if (status is! DataFetching) {
+              return;
+            }
+
+            final safeTotal = status.total <= 0 ? 1 : status.total;
+            final safeCurrent = status.current.clamp(0, safeTotal);
+            final stage = resolveStage(status.currentStock);
+            stageProgressCurrent[stage] = safeCurrent;
+            stageProgressTotal[stage] = safeTotal;
+            switchToStage(stage, safeCurrent);
+            final stageTitle = stage == _WeeklySyncStage.precheck
+                ? '预检查周K覆盖...'
+                : stage == _WeeklySyncStage.write
+                ? '写入周K数据...'
+                : (forceRefetch ? '强制拉取周K数据...' : '拉取周K数据...');
 
             progressNotifier.value = (
               current: safeCurrent,
               total: safeTotal,
               stage:
-                  '更新周线MACD缓存...\n'
-                  '速率 ${speed.toStringAsFixed(1)}只/秒 · 预计剩余 $etaLabel',
+                  '$stageTitle\n${buildStageMetrics(safeCurrent, safeTotal)}',
             );
-          },
-        );
-      }
+            audit.stageProgress(
+              stageTitle,
+              current: safeCurrent,
+              total: safeTotal,
+            );
+          });
+          updatedSubscription = repository.dataUpdatedStream.listen((event) {
+            if (event.dataType == KLineDataType.weekly) {
+              updatedWeeklyStockCodes.addAll(event.stockCodes);
+            }
+          });
+
+          final fetchResult = forceRefetch
+              ? await repository.refetchData(
+                  stockCodes: stockCodes,
+                  dateRange: dateRange,
+                  dataType: KLineDataType.weekly,
+                )
+              : await repository.fetchMissingData(
+                  stockCodes: stockCodes,
+                  dateRange: dateRange,
+                  dataType: KLineDataType.weekly,
+                );
+          audit.record(AuditEventType.fetchResult, {
+            'updated_stock_count': fetchResult.successCount,
+            'total_records': fetchResult.totalRecords,
+            'failure_count': fetchResult.failureCount,
+          });
+
+          if (fetchResult.failureCount > 0) {
+            completionMessage =
+                '${forceRefetch ? '周K数据已强制更新' : '周K数据已更新'}（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
+          }
+
+          final shouldPrewarmWeeklyMacd =
+              macdService != null &&
+              (forceRefetch || fetchResult.totalRecords > 0);
+          if (shouldPrewarmWeeklyMacd) {
+            final prewarmStockCodes = forceRefetch
+                ? stockCodes
+                : stockCodes
+                      .where((code) => updatedWeeklyStockCodes.contains(code))
+                      .toList(growable: false);
+            final effectivePrewarmStockCodes = prewarmStockCodes.isNotEmpty
+                ? prewarmStockCodes
+                : stockCodes;
+            audit.record(AuditEventType.indicatorRecomputeResult, {
+              'data_changed': true,
+              'scope_count': effectivePrewarmStockCodes.length,
+            });
+
+            progressNotifier.value = (
+              current: 0,
+              total: 1,
+              stage: '准备更新周线MACD缓存（${effectivePrewarmStockCodes.length}只）...',
+            );
+            final prewarmStopwatch = Stopwatch()..start();
+            await macdService.prewarmFromRepository(
+              stockCodes: effectivePrewarmStockCodes,
+              dataType: KLineDataType.weekly,
+              dateRange: dateRange,
+              fetchBatchSize: _weeklyMacdFetchBatchSize,
+              maxConcurrentPersistWrites: _weeklyMacdPersistConcurrency,
+              onProgress: (current, total) {
+                final safeTotal = total <= 0 ? 1 : total;
+                final safeCurrent = current.clamp(0, safeTotal);
+                final elapsedSeconds =
+                    prewarmStopwatch.elapsedMilliseconds / 1000;
+                final speed = elapsedSeconds <= 0
+                    ? 0.0
+                    : safeCurrent / elapsedSeconds;
+                final remaining = safeTotal - safeCurrent;
+                final etaLabel = speed <= 0
+                    ? '--'
+                    : _formatEtaSeconds((remaining / speed).ceil());
+
+                progressNotifier.value = (
+                  current: safeCurrent,
+                  total: safeTotal,
+                  stage:
+                      '更新周线MACD缓存...\n'
+                      '速率 ${speed.toStringAsFixed(1)}只/秒 · 预计剩余 $etaLabel',
+                );
+                audit.stageProgress(
+                  'weekly_macd_prewarm',
+                  current: safeCurrent,
+                  total: safeTotal,
+                );
+              },
+            );
+          } else {
+            audit.record(AuditEventType.indicatorRecomputeResult, {
+              'data_changed': false,
+              'scope_count': 0,
+            });
+          }
+          audit.stageCompleted(
+            forceRefetch ? 'weekly_force_refetch' : 'weekly_fetch_missing',
+          );
+        },
+      );
     } catch (e) {
       completionMessage = '周K数据拉取失败: $e';
       debugPrint('[DataManagement] 拉取周K数据失败: $e');
     } finally {
       await statusSubscription?.cancel();
       await updatedSubscription?.cancel();
+      await _refreshAuditLatestSafely(auditService);
       await WakelockPlus.disable();
 
       if (context.mounted) {
@@ -1268,6 +1542,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
   Future<void> _forceRefetchDailyData(BuildContext context) async {
     final provider = context.read<MarketDataProvider>();
+    final auditService = context.read<AuditService>();
     if (provider.allData.isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -1292,42 +1567,85 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
     DateTime? writeStageStartedAt;
     var writeStageStartProgress = 0;
+    var sawIntradayStage = false;
+    var sawFinalOverrideStage = false;
 
     try {
-      await provider.forceRefetchDailyBars(
-        onProgress: (stage, current, total) {
-          final safeTotal = total <= 0 ? 1 : total;
-          final safeCurrent = current.clamp(0, safeTotal);
-          var stageLabel = stage;
+      await auditService.runner.run(
+        operation: AuditOperationType.dailyForceRefetch,
+        body: (audit) async {
+          audit.stageStarted('daily_force_refetch');
+          await provider.forceRefetchDailyBars(
+            onProgress: (stage, current, total) {
+              final safeTotal = total <= 0 ? 1 : total;
+              final safeCurrent = current.clamp(0, safeTotal);
+              var stageLabel = stage;
 
-          if (stage.startsWith('2/4 写入日K文件')) {
-            final now = DateTime.now();
-            writeStageStartedAt ??= now;
-            if (writeStageStartProgress <= 0) {
-              writeStageStartProgress = safeCurrent;
-            }
+              if (stage.contains('日内增量计算')) {
+                sawIntradayStage = true;
+              }
+              if (stage.contains('终盘覆盖增量重算')) {
+                sawFinalOverrideStage = true;
+              }
 
-            final elapsedMs = now
-                .difference(writeStageStartedAt!)
-                .inMilliseconds;
-            var speedLabel = '--';
-            if (elapsedMs > 0) {
-              final processed = (safeCurrent - writeStageStartProgress + 1)
-                  .clamp(0, safeTotal);
-              final speed = processed / (elapsedMs / 1000);
-              speedLabel = '${speed.toStringAsFixed(1)}股/秒';
-            }
-            stageLabel = '$stage · 速率 $speedLabel';
-          } else {
-            writeStageStartedAt = null;
-            writeStageStartProgress = 0;
-          }
+              if (stage.startsWith('2/4 写入日K文件')) {
+                final now = DateTime.now();
+                writeStageStartedAt ??= now;
+                if (writeStageStartProgress <= 0) {
+                  writeStageStartProgress = safeCurrent;
+                }
 
-          progressNotifier.value = (
-            current: safeCurrent,
-            total: safeTotal,
-            stage: stageLabel,
+                final elapsedMs = now
+                    .difference(writeStageStartedAt!)
+                    .inMilliseconds;
+                var speedLabel = '--';
+                if (elapsedMs > 0) {
+                  final processed = (safeCurrent - writeStageStartProgress + 1)
+                      .clamp(0, safeTotal);
+                  final speed = processed / (elapsedMs / 1000);
+                  speedLabel = '${speed.toStringAsFixed(1)}股/秒';
+                }
+                stageLabel = '$stage · 速率 $speedLabel';
+              } else {
+                writeStageStartedAt = null;
+                writeStageStartProgress = 0;
+              }
+
+              progressNotifier.value = (
+                current: safeCurrent,
+                total: safeTotal,
+                stage: stageLabel,
+              );
+              audit.stageProgress(
+                stage,
+                current: safeCurrent,
+                total: safeTotal,
+              );
+            },
           );
+          audit.record(AuditEventType.fetchResult, {
+            'updated_stock_count': provider.dailyBarsCacheCount,
+            'total_records': 0,
+            'failure_count': 0,
+          });
+          audit.record(AuditEventType.indicatorRecomputeResult, {
+            'data_changed': true,
+            'scope_count': provider.allData.length,
+          });
+          if (sawFinalOverrideStage) {
+            audit.record(AuditEventType.completenessState, {
+              'state': 'finalized',
+            });
+          } else if (sawIntradayStage) {
+            audit.record(AuditEventType.completenessState, {
+              'state': 'partial',
+            });
+          } else {
+            audit.record(AuditEventType.completenessState, {
+              'state': 'unknown',
+            });
+          }
+          audit.stageCompleted('daily_force_refetch');
         },
       );
       if (context.mounted) {
@@ -1345,8 +1663,17 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         ).showSnackBar(SnackBar(content: Text('日K数据强制拉取失败: $e')));
       }
     } finally {
+      await _refreshAuditLatestSafely(auditService);
       await WakelockPlus.disable();
       progressNotifier.dispose();
+    }
+  }
+
+  Future<void> _refreshAuditLatestSafely(AuditService auditService) async {
+    try {
+      await auditService.refreshLatest();
+    } catch (error) {
+      debugPrint('[DataManagement] refresh latest audit failed: $error');
     }
   }
 
@@ -1396,6 +1723,13 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     return '${date.year.toString().padLeft(4, '0')}-'
         '${date.month.toString().padLeft(2, '0')}-'
         '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  String _formatDateTime(DateTime dateTime) {
+    return '${_formatDate(dateTime)} '
+        '${dateTime.hour.toString().padLeft(2, '0')}:'
+        '${dateTime.minute.toString().padLeft(2, '0')}:'
+        '${dateTime.second.toString().padLeft(2, '0')}';
   }
 
   DateTime _normalizeDate(DateTime dateTime) {

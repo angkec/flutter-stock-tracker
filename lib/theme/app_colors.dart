@@ -58,4 +58,12 @@ class AppColors {
   // 回踩 - 青色/蓝绿色
   static const Color tabBreakout = Color(0xFF0D9488);
   static const Color tabBreakoutDark = Color(0xFF2DD4BF);
+
+  // === Audit Console Colors ===
+  static const Color auditPass = Color(0xFF0C7F4B);
+  static const Color auditFail = Color(0xFFB1261D);
+  static const Color auditPassOnColor = Color(0xFFF2FFF8);
+  static const Color auditFailOnColor = Color(0xFFFFF5F3);
+  static const Color auditFrame = Color(0xFFCFD3D8);
+  static const Color auditReasonBackground = Color(0xFFF6F8FA);
 }

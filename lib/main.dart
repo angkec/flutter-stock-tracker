@@ -23,6 +23,7 @@ import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
 import 'package:stock_rtwatcher/data/repository/tdx_pool_fetch_adapter.dart';
 
@@ -171,6 +172,13 @@ class MyApp extends StatelessWidget {
           create: (_) {
             final service = BacktestService();
             service.loadConfig(); // 异步加载回测配置
+            return service;
+          },
+        ),
+        ChangeNotifierProvider(
+          create: (_) {
+            final service = AuditService();
+            service.refreshLatest();
             return service;
           },
         ),

@@ -16,6 +16,9 @@ import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/macd_config.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/audit/services/audit_export_service.dart';
+import 'package:stock_rtwatcher/audit/services/audit_operation_runner.dart';
+import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/data_management_screen.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
@@ -41,11 +44,13 @@ class DataManagementFixtureContext {
     required this.repository,
     required this.marketProvider,
     required this.macdService,
+    required this.auditService,
   });
 
   final FakeDataRepository repository;
   final FakeMarketDataProvider marketProvider;
   final FakeMacdIndicatorService macdService;
+  final AuditService auditService;
 
   ProgressWatchdog createWatchdog({
     Duration stallThreshold = const Duration(seconds: 5),
@@ -64,6 +69,15 @@ Future<DataManagementFixtureContext> launchDataManagementWithFixture(
   final repository = FakeDataRepository(preset: preset);
   final marketProvider = FakeMarketDataProvider(data: stocks, preset: preset);
   final macdService = FakeMacdIndicatorService(repository: repository);
+  final auditSink = MemoryAuditSink();
+  final auditService = AuditService.forTest(
+    runner: AuditOperationRunner(sink: auditSink, nowProvider: DateTime.now),
+    readLatest: () async => auditSink.latestSummary,
+    exporter: AuditExportService(
+      auditRootProvider: () async => throw UnimplementedError(),
+      outputDirectoryProvider: () async => throw UnimplementedError(),
+    ),
+  );
 
   final app = MultiProvider(
     providers: [
@@ -79,6 +93,7 @@ Future<DataManagementFixtureContext> launchDataManagementWithFixture(
         create: (_) => FakeIndustryRankService(),
       ),
       ChangeNotifierProvider<MacdIndicatorService>.value(value: macdService),
+      ChangeNotifierProvider<AuditService>.value(value: auditService),
     ],
     child: const MaterialApp(home: DataManagementScreen()),
   );
@@ -90,6 +105,7 @@ Future<DataManagementFixtureContext> launchDataManagementWithFixture(
     repository: repository,
     marketProvider: marketProvider,
     macdService: macdService,
+    auditService: auditService,
   );
 }
 
@@ -334,12 +350,12 @@ class FakeMarketDataProvider extends MarketDataProvider {
     required List<StockMonitorData> data,
     required DataManagementFixturePreset preset,
   }) : _preset = preset,
-      _data = data,
-      super(
-        pool: TdxPool(poolSize: 1),
-        stockService: StockService(TdxPool(poolSize: 1)),
-        industryService: IndustryService(),
-      );
+       _data = data,
+       super(
+         pool: TdxPool(poolSize: 1),
+         stockService: StockService(TdxPool(poolSize: 1)),
+         industryService: IndustryService(),
+       );
 
   final List<StockMonitorData> _data;
   final DataManagementFixturePreset _preset;
