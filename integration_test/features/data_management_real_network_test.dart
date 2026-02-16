@@ -27,8 +27,9 @@ void main() {
       await _openDataManagementDirectly(tester);
       final driver = DataManagementDriver(tester);
 
-      await _runOperation(
+      await _runTimedOperation(
         tester,
+        operationName: 'historical_fetch_missing',
         action: () =>
             driver.tapHistoricalFetchMissing(allowForceFallback: true),
         driver: driver,
@@ -38,8 +39,9 @@ void main() {
         ),
       );
 
-      await _runOperation(
+      await _runTimedOperation(
         tester,
+        operationName: 'weekly_fetch_missing',
         action: driver.tapWeeklyFetchMissing,
         driver: driver,
         watchdog: ProgressWatchdog(
@@ -48,8 +50,9 @@ void main() {
         ),
       );
 
-      await _runOperation(
+      await _runTimedOperation(
         tester,
+        operationName: 'daily_force_refetch',
         action: driver.tapDailyForceRefetch,
         driver: driver,
         watchdog: ProgressWatchdog(
@@ -58,8 +61,9 @@ void main() {
         ),
       );
 
-      await _runOperation(
+      await _runTimedOperation(
         tester,
+        operationName: 'historical_recheck',
         action: driver.tapHistoricalRecheck,
         driver: driver,
         watchdog: ProgressWatchdog(
@@ -184,4 +188,25 @@ Future<void> _runOperation(
     hardTimeout: const Duration(minutes: 15),
   );
   await tester.pump(const Duration(seconds: 1));
+}
+
+Future<void> _runTimedOperation(
+  WidgetTester tester, {
+  required String operationName,
+  required Future<void> Function() action,
+  required DataManagementDriver driver,
+  required ProgressWatchdog watchdog,
+}) async {
+  final stopwatch = Stopwatch()..start();
+  await _runOperation(
+    tester,
+    action: action,
+    driver: driver,
+    watchdog: watchdog,
+  );
+  stopwatch.stop();
+  debugPrint(
+    '[DataManagement Real E2E] ${operationName}_elapsed_ms='
+    '${stopwatch.elapsedMilliseconds}',
+  );
 }

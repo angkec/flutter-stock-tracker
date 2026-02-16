@@ -86,6 +86,10 @@ flutter test integration_test/features/data_management_real_network_test.dart \
 - 周线 MACD 重算
 
 并输出耗时统计日志，便于对比优化前后性能：
+- `[DataManagement Real E2E] historical_fetch_missing_elapsed_ms=...`
+- `[DataManagement Real E2E] weekly_fetch_missing_elapsed_ms=...`
+- `[DataManagement Real E2E] daily_force_refetch_elapsed_ms=...`
+- `[DataManagement Real E2E] historical_recheck_elapsed_ms=...`
 - `[DataManagement Real E2E] weekly_force_refetch_elapsed_ms=...`
 - `[DataManagement Real E2E] weekly_macd_recompute_elapsed_ms=...`
 - `[DataManagement Real E2E] weekly_force_refetch_progress_hint=speed:true/false,eta:true/false`

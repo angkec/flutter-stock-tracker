@@ -898,42 +898,56 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         completionMessage = '$completionMessage；$baselineVerificationWarning';
       }
 
-      // Get current data version for cache validation
-      final dataVersion = await repository.getCurrentVersion();
+      final shouldRecalculateIndustry =
+          forceRefetch || fetchResult.totalRecords > 0;
+      if (shouldRecalculateIndustry) {
+        // Get current data version for cache validation
+        final dataVersion = await repository.getCurrentVersion();
 
-      // 计算行业趋势和排名（数据来自 DataRepository）
-      if (context.mounted) {
-        final industryCalcStopwatch = Stopwatch()..start();
+        // 计算行业趋势和排名（数据来自 DataRepository）
+        if (context.mounted) {
+          final industryCalcStopwatch = Stopwatch()..start();
 
-        debugPrint('[DataManagement] 开始计算行业趋势');
-        progressNotifier.value = (current: 0, total: 1, stage: '3/4 计算行业趋势...');
-        final trendStopwatch = Stopwatch()..start();
-        await trendService.recalculateFromKlineData(
-          klineService,
-          marketProvider.allData,
-          dataVersion: dataVersion,
-        );
-        trendStopwatch.stop();
-        debugPrint('[DataManagement] 行业趋势计算完成');
-        debugPrint(
-          '[DataManagement][timing] trendMs=${trendStopwatch.elapsedMilliseconds}',
-        );
+          debugPrint('[DataManagement] 开始计算行业趋势');
+          progressNotifier.value = (
+            current: 0,
+            total: 1,
+            stage: '3/4 计算行业趋势...',
+          );
+          final trendStopwatch = Stopwatch()..start();
+          await trendService.recalculateFromKlineData(
+            klineService,
+            marketProvider.allData,
+            dataVersion: dataVersion,
+          );
+          trendStopwatch.stop();
+          debugPrint('[DataManagement] 行业趋势计算完成');
+          debugPrint(
+            '[DataManagement][timing] trendMs=${trendStopwatch.elapsedMilliseconds}',
+          );
 
-        debugPrint('[DataManagement] 开始计算行业排名');
-        progressNotifier.value = (current: 0, total: 1, stage: '4/4 计算行业排名...');
-        final rankStopwatch = Stopwatch()..start();
-        await rankService.recalculateFromKlineData(
-          klineService,
-          marketProvider.allData,
-          dataVersion: dataVersion,
-        );
-        rankStopwatch.stop();
-        debugPrint('[DataManagement] 行业排名计算完成');
-        industryCalcStopwatch.stop();
-        debugPrint(
-          '[DataManagement][timing] rankMs=${rankStopwatch.elapsedMilliseconds}, '
-          'industryCalcTotalMs=${industryCalcStopwatch.elapsedMilliseconds}',
-        );
+          debugPrint('[DataManagement] 开始计算行业排名');
+          progressNotifier.value = (
+            current: 0,
+            total: 1,
+            stage: '4/4 计算行业排名...',
+          );
+          final rankStopwatch = Stopwatch()..start();
+          await rankService.recalculateFromKlineData(
+            klineService,
+            marketProvider.allData,
+            dataVersion: dataVersion,
+          );
+          rankStopwatch.stop();
+          debugPrint('[DataManagement] 行业排名计算完成');
+          industryCalcStopwatch.stop();
+          debugPrint(
+            '[DataManagement][timing] rankMs=${rankStopwatch.elapsedMilliseconds}, '
+            'industryCalcTotalMs=${industryCalcStopwatch.elapsedMilliseconds}',
+          );
+        }
+      } else {
+        debugPrint('[DataManagement] 历史分钟K无新增记录，跳过行业趋势/排名重算以缩短等待时间');
       }
     } catch (e, stackTrace) {
       debugPrint('[DataManagement] 拉取历史数据失败: $e');

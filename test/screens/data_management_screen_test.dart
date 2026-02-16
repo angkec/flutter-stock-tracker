@@ -42,6 +42,7 @@ class _FakeDataRepository implements DataRepository {
     duration: Duration.zero,
   );
   Map<String, MissingDatesResult> missingMinuteDatesByStock = const {};
+  Map<String, MissingDatesResult>? missingMinuteDatesAfterFetch;
   int findMissingMinuteDatesBatchCallCount = 0;
   int fetchMissingDataCallCount = 0;
   int refetchDataCallCount = 0;
@@ -110,6 +111,10 @@ class _FakeDataRepository implements DataRepository {
 
     if (fetchMissingDataDelay > Duration.zero) {
       await Future<void>.delayed(fetchMissingDataDelay);
+    }
+
+    if (missingMinuteDatesAfterFetch != null) {
+      missingMinuteDatesByStock = missingMinuteDatesAfterFetch!;
     }
 
     return fetchMissingDataResult;
@@ -186,23 +191,35 @@ class _FakeDataRepository implements DataRepository {
 }
 
 class _FakeIndustryTrendService extends IndustryTrendService {
+  int recalculateCallCount = 0;
+  int? lastDataVersion;
+
   @override
   Future<void> recalculateFromKlineData(
     HistoricalKlineService klineService,
     List<StockMonitorData> stocks, {
     int? dataVersion,
     bool force = false,
-  }) async {}
+  }) async {
+    recalculateCallCount++;
+    lastDataVersion = dataVersion;
+  }
 }
 
 class _FakeIndustryRankService extends IndustryRankService {
+  int recalculateCallCount = 0;
+  int? lastDataVersion;
+
   @override
   Future<void> recalculateFromKlineData(
     HistoricalKlineService klineService,
     List<StockMonitorData> stocks, {
     int? dataVersion,
     bool force = false,
-  }) async {}
+  }) async {
+    recalculateCallCount++;
+    lastDataVersion = dataVersion;
+  }
 }
 
 class _FakeMarketDataProvider extends MarketDataProvider {
@@ -687,7 +704,6 @@ void main() {
         ),
       ],
     );
-
     repository.fetchMissingDataResult = FetchResult(
       totalStocks: 1,
       successCount: 1,
@@ -728,6 +744,144 @@ void main() {
     expect(find.textContaining('1 / 2'), findsOneWidget);
 
     await tester.pumpAndSettle();
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('历史分钟K拉取缺失无新增记录时应跳过行业重算', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    final now = DateTime.now();
+    repository.tradingDates = List<DateTime>.generate(12, (index) {
+      var day = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).subtract(Duration(days: index + 1));
+      while (day.weekday == DateTime.saturday ||
+          day.weekday == DateTime.sunday) {
+        day = day.subtract(const Duration(days: 1));
+      }
+      return day;
+    });
+    repository.missingMinuteDatesByStock = {
+      '600000': MissingDatesResult(
+        missingDates: <DateTime>[now.subtract(const Duration(days: 2))],
+        incompleteDates: const <DateTime>[],
+        completeDates: const <DateTime>[],
+      ),
+    };
+    repository.missingMinuteDatesAfterFetch =
+        const <String, MissingDatesResult>{
+          '600000': MissingDatesResult(
+            missingDates: <DateTime>[],
+            incompleteDates: <DateTime>[],
+            completeDates: <DateTime>[],
+          ),
+        };
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 0,
+      duration: const Duration(milliseconds: 20),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
+    final historicalFetchButton = find.descendant(
+      of: historicalCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(historicalFetchButton);
+    await tester.tap(historicalFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(trendService.recalculateCallCount, 0);
+    expect(rankService.recalculateCallCount, 0);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('历史分钟K拉取缺失有新增记录时应触发行业重算', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 12,
+      duration: const Duration(milliseconds: 20),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
+    final historicalFetchButton = find.descendant(
+      of: historicalCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(historicalFetchButton);
+    await tester.tap(historicalFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(trendService.recalculateCallCount, 1);
+    expect(rankService.recalculateCallCount, 1);
 
     provider.dispose();
     klineService.dispose();

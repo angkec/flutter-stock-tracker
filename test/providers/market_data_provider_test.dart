@@ -18,6 +18,7 @@ import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
@@ -157,6 +158,25 @@ class _FakeDataRepository implements DataRepository {
 
   @override
   Future<void> dispose() async {}
+}
+
+class _DelayedFalseBreakoutService extends BreakoutService {
+  _DelayedFalseBreakoutService(this.delay);
+
+  final Duration delay;
+  int callCount = 0;
+
+  @override
+  Future<bool> isBreakoutPullback(
+    List<KLine> dailyBars, {
+    String? stockCode,
+  }) async {
+    callCount++;
+    if (delay > Duration.zero) {
+      await Future<void>.delayed(delay);
+    }
+    return false;
+  }
 }
 
 DailyKlineCacheStore _buildStorageForPath(String basePath) {
@@ -371,6 +391,62 @@ void main() {
 
       expect(stages.any((stage) => stage.startsWith('2/4 写入日K文件')), isTrue);
       expect(stages.last, '4/4 保存缓存元数据...');
+    },
+  );
+
+  test(
+    'forceRefetchDailyBars should avoid sequential breakout recompute latency',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'daily-bars-breakout-latency-',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final monitorData = List<StockMonitorData>.generate(10, (index) {
+        final code = (600000 + index).toString();
+        return StockMonitorData(
+          stock: Stock(code: code, name: '股票$code', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        );
+      });
+
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode(
+          monitorData.map((e) => e.toJson()).toList(growable: false),
+        ),
+        'market_data_date': DateTime(2026, 2, 14).toIso8601String(),
+      });
+
+      final pool = _ReconnectableFakePool(
+        dailyBarsByCode: {
+          for (final item in monitorData) item.stock.code: _buildDailyBars(260),
+        },
+      );
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: StockService(pool),
+        industryService: IndustryService(),
+        dailyBarsFileStorage: _buildStorageForPath(tempDir.path),
+      );
+      provider.setPullbackService(PullbackService());
+      final breakoutService = _DelayedFalseBreakoutService(
+        const Duration(milliseconds: 150),
+      );
+      provider.setBreakoutService(breakoutService);
+
+      await provider.loadFromCache();
+
+      final stopwatch = Stopwatch()..start();
+      await provider.forceRefetchDailyBars();
+      stopwatch.stop();
+
+      expect(breakoutService.callCount, monitorData.length);
+      expect(stopwatch.elapsed, lessThan(const Duration(milliseconds: 1200)));
     },
   );
 

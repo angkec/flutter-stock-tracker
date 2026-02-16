@@ -59,6 +59,7 @@ class MarketDataProvider extends ChangeNotifier {
   // Cache keys
   static const String _dailyBarsCacheKey = 'daily_bars_cache_v1';
   static const int _dailyCacheTargetBars = 260;
+  static const int _breakoutDetectMaxConcurrency = 6;
   static const String _minuteDataCacheKey = 'minute_data_cache_v1';
   static const String _minuteDataDateKey = 'minute_data_date';
   static const String _lastFetchDateKey = 'last_fetch_date';
@@ -601,14 +602,26 @@ class MarketDataProvider extends ChangeNotifier {
     if (_allData.isEmpty) return;
 
     final totalStocks = _allData.length <= 0 ? 1 : _allData.length;
+    final totalStopwatch = Stopwatch()..start();
+    final stageStopwatch = Stopwatch();
 
+    void resetStageTimer() {
+      stageStopwatch
+        ..reset()
+        ..start();
+    }
+
+    resetStageTimer();
     onProgress?.call('连接数据源...', 0, 1);
     final connected = await _pool.ensureConnected();
     if (!connected) {
       throw StateError('无法连接到服务器');
     }
     onProgress?.call('连接数据源...', 1, 1);
+    stageStopwatch.stop();
+    final connectMs = stageStopwatch.elapsedMilliseconds;
 
+    resetStageTimer();
     onProgress?.call('1/4 拉取日K数据...', 0, totalStocks);
     await _detectPullbacks(
       forceRefetchDaily: true,
@@ -623,7 +636,10 @@ class MarketDataProvider extends ChangeNotifier {
         onProgress?.call('2/4 写入日K文件...', safeCurrent, safeTotal);
       },
     );
+    stageStopwatch.stop();
+    final fetchAndPersistMs = stageStopwatch.elapsedMilliseconds;
 
+    resetStageTimer();
     onProgress?.call('3/4 计算指标...', 0, totalStocks);
     await _detectBreakouts(
       onProgress: (current, total) {
@@ -640,10 +656,23 @@ class MarketDataProvider extends ChangeNotifier {
         onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
       },
     );
+    stageStopwatch.stop();
+    final indicatorsMs = stageStopwatch.elapsedMilliseconds;
 
+    resetStageTimer();
     onProgress?.call('4/4 保存缓存元数据...', 0, 1);
     await _saveToCache();
     onProgress?.call('4/4 保存缓存元数据...', 1, 1);
+    stageStopwatch.stop();
+    final saveMetaMs = stageStopwatch.elapsedMilliseconds;
+
+    totalStopwatch.stop();
+    debugPrint(
+      '[MarketDataProvider][timing] forceRefetchDailyBars '
+      'connectMs=$connectMs, fetchAndPersistMs=$fetchAndPersistMs, '
+      'indicatorsMs=$indicatorsMs, saveMetaMs=$saveMetaMs, '
+      'totalMs=${totalStopwatch.elapsedMilliseconds}',
+    );
   }
 
   bool _canReuseMinuteDataCache() {
@@ -928,41 +957,59 @@ class MarketDataProvider extends ChangeNotifier {
     if (_breakoutService == null) return;
 
     final total = _allData.length;
-    final updatedData = <StockMonitorData>[];
-    var current = 0;
+    if (total <= 0) return;
 
-    for (final data in _allData) {
-      final dailyBars = _dailyBarsCache[data.stock.code];
+    final updatedData = List<StockMonitorData?>.filled(total, null);
+    var nextIndex = 0;
+    var completed = 0;
+    final workerCount = math.min(_breakoutDetectMaxConcurrency, total);
 
-      bool isBreakout = false;
-      if (dailyBars != null && dailyBars.length >= 6) {
-        isBreakout = await _breakoutService!.isBreakoutPullback(
-          dailyBars,
-          stockCode: data.stock.code,
-        );
-
-        // 检查今日分钟量比条件
-        if (isBreakout && _breakoutService!.config.minMinuteRatio > 0) {
-          isBreakout = data.ratio >= _breakoutService!.config.minMinuteRatio;
+    Future<void> runWorker() async {
+      while (true) {
+        final index = nextIndex;
+        if (index >= total) {
+          return;
         }
+        nextIndex++;
 
-        // 检查是否过滤暴涨
-        if (isBreakout && _breakoutService!.config.filterSurgeAfterPullback) {
-          final todayGain = data.changePercent / 100;
-          if (todayGain > _breakoutService!.config.surgeThreshold) {
-            isBreakout = false;
+        final data = _allData[index];
+        final dailyBars = _dailyBarsCache[data.stock.code];
+
+        var isBreakout = false;
+        if (dailyBars != null && dailyBars.length >= 6) {
+          isBreakout = await _breakoutService!.isBreakoutPullback(
+            dailyBars,
+            stockCode: data.stock.code,
+          );
+
+          // 检查今日分钟量比条件
+          if (isBreakout && _breakoutService!.config.minMinuteRatio > 0) {
+            isBreakout = data.ratio >= _breakoutService!.config.minMinuteRatio;
+          }
+
+          // 检查是否过滤暴涨
+          if (isBreakout && _breakoutService!.config.filterSurgeAfterPullback) {
+            final todayGain = data.changePercent / 100;
+            if (todayGain > _breakoutService!.config.surgeThreshold) {
+              isBreakout = false;
+            }
           }
         }
-      }
 
-      updatedData.add(
-        data.copyWith(isPullback: data.isPullback, isBreakout: isBreakout),
-      );
-      current++;
-      onProgress?.call(current, total);
+        updatedData[index] = data.copyWith(
+          isPullback: data.isPullback,
+          isBreakout: isBreakout,
+        );
+        completed++;
+        onProgress?.call(completed, total);
+      }
     }
 
-    _allData = updatedData;
+    await Future.wait(
+      List<Future<void>>.generate(workerCount, (_) => runWorker()),
+    );
+
+    _allData = updatedData.cast<StockMonitorData>();
     notifyListeners();
   }
 
