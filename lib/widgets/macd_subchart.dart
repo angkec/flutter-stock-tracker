@@ -127,14 +127,15 @@ class _MacdSubChartBodyState extends State<_MacdSubChartBody> {
     final title = widget.dataType == KLineDataType.daily
         ? 'MACD(日)'
         : 'MACD(周)';
-    final points = _resolveViewportPoints();
+    final resolved = _resolveViewportSeries();
+    final points = resolved?.points;
     final selectedVisibleIndex = _resolveSelectedVisibleIndex();
     final activePoint = _resolveActivePoint(
-      points: points,
+      resolved: resolved,
       selectedVisibleIndex: selectedVisibleIndex,
     );
     final activeDate = _resolveActiveDate(
-      points: points,
+      resolved: resolved,
       selectedVisibleIndex: selectedVisibleIndex,
     );
     final overlayTheme = theme.extension<ChartOverlayTheme>();
@@ -200,26 +201,36 @@ class _MacdSubChartBodyState extends State<_MacdSubChartBody> {
                               textAlign: TextAlign.center,
                             ),
                           )
-                        : Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: CustomPaint(
-                              key: widget.chartKey,
-                              painter: MacdSubChartPainter(
-                                points: points,
-                                selectedVisibleIndex: selectedVisibleIndex,
-                                selectionLineColor: selectionLineColor,
-                                selectionLineWidth: selectionLineWidth,
-                                selectionDashLength: selectionDashLength,
-                                selectionGapLength: selectionGapLength,
-                                gridColor: Colors.grey.withValues(alpha: 0.1),
-                                zeroLineColor: colorScheme.outline.withValues(
-                                  alpha: 0.3,
+                        : Builder(
+                            builder: (context) {
+                              final resolvedSeries = resolved!;
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: CustomPaint(
+                                  key: widget.chartKey,
+                                  painter: MacdSubChartPainter(
+                                    points: points,
+                                    totalSlotCount:
+                                        resolvedSeries.totalSlotCount,
+                                    firstSlotIndex:
+                                        resolvedSeries.firstSlotIndex,
+                                    selectedVisibleIndex: selectedVisibleIndex,
+                                    selectionLineColor: selectionLineColor,
+                                    selectionLineWidth: selectionLineWidth,
+                                    selectionDashLength: selectionDashLength,
+                                    selectionGapLength: selectionGapLength,
+                                    gridColor: Colors.grey.withValues(
+                                      alpha: 0.1,
+                                    ),
+                                    zeroLineColor: colorScheme.outline
+                                        .withValues(alpha: 0.3),
+                                    difLineColor: Colors.orange,
+                                    deaLineColor: Colors.lightBlue,
+                                  ),
+                                  size: Size.infinite,
                                 ),
-                                difLineColor: Colors.orange,
-                                deaLineColor: Colors.lightBlue,
-                              ),
-                              size: Size.infinite,
-                            ),
+                              );
+                            },
                           )),
             ),
           ],
@@ -234,10 +245,9 @@ class _MacdSubChartBodyState extends State<_MacdSubChartBody> {
     required MacdPoint? activePoint,
     required DateTime? activeDate,
   }) {
-    final baseStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
-      fontSize: 12,
-      color: Colors.grey,
-    );
+    final baseStyle = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(fontSize: 12, color: Colors.grey);
     final dateText = activeDate == null
         ? '--/--/--'
         : '${activeDate.year}/${activeDate.month}/${activeDate.day}';
@@ -287,33 +297,48 @@ class _MacdSubChartBodyState extends State<_MacdSubChartBody> {
   }
 
   MacdPoint? _resolveActivePoint({
-    required List<MacdPoint>? points,
+    required _ResolvedViewportMacd? resolved,
     required int? selectedVisibleIndex,
   }) {
+    final points = resolved?.points;
     if (points == null || points.isEmpty) {
       return null;
     }
     if (selectedVisibleIndex != null &&
-        selectedVisibleIndex >= 0 &&
-        selectedVisibleIndex < points.length) {
-      return points[selectedVisibleIndex];
+        resolved != null &&
+        selectedVisibleIndex >= resolved.firstSlotIndex &&
+        selectedVisibleIndex <
+            resolved.firstSlotIndex + resolved.points.length) {
+      final pointIndex = selectedVisibleIndex - resolved.firstSlotIndex;
+      return points[pointIndex];
+    }
+    if (selectedVisibleIndex != null) {
+      return null;
     }
     return points.last;
   }
 
   DateTime? _resolveActiveDate({
-    required List<MacdPoint>? points,
+    required _ResolvedViewportMacd? resolved,
     required int? selectedVisibleIndex,
   }) {
+    final points = resolved?.points;
     if (points == null || points.isEmpty || widget.bars.isEmpty) {
       return null;
     }
 
     final start = widget.viewport.startIndex;
-    final pointIndex = selectedVisibleIndex == null
-        ? points.length - 1
-        : selectedVisibleIndex.clamp(0, points.length - 1);
-    final globalIndex = start + pointIndex;
+    final visibleIndex = selectedVisibleIndex == null
+        ? resolved!.firstSlotIndex + points.length - 1
+        : selectedVisibleIndex;
+    if (selectedVisibleIndex != null &&
+        resolved != null &&
+        (selectedVisibleIndex < resolved.firstSlotIndex ||
+            selectedVisibleIndex >=
+                resolved.firstSlotIndex + resolved.points.length)) {
+      return null;
+    }
+    final globalIndex = start + visibleIndex;
     if (globalIndex < 0 || globalIndex >= widget.bars.length) {
       return null;
     }
@@ -348,7 +373,7 @@ class _MacdSubChartBodyState extends State<_MacdSubChartBody> {
     }
   }
 
-  List<MacdPoint>? _resolveViewportPoints() {
+  _ResolvedViewportMacd? _resolveViewportSeries() {
     final series = _series;
     if (series == null || series.points.isEmpty || widget.bars.isEmpty) {
       return null;
@@ -359,7 +384,8 @@ class _MacdSubChartBodyState extends State<_MacdSubChartBody> {
     };
 
     final total = widget.bars.length;
-    final safeVisibleCount = widget.viewport.visibleCount.clamp(0, total);
+    final safeVisibleCount =
+        widget.viewport.visibleCount.clamp(0, total) as int;
     final safeStart =
         widget.viewport.startIndex.clamp(
               0,
@@ -374,15 +400,30 @@ class _MacdSubChartBodyState extends State<_MacdSubChartBody> {
 
     final visibleBars = widget.bars.sublist(safeStart, safeEnd);
     final visiblePoints = <MacdPoint>[];
-    for (final bar in visibleBars) {
+    var firstSlotIndex = -1;
+    for (var slot = 0; slot < visibleBars.length; slot++) {
+      final bar = visibleBars[slot];
       final point = dateToPoint[_dateKey(bar.datetime)];
       if (point == null) {
-        return null;
+        if (firstSlotIndex >= 0) {
+          return null;
+        }
+        continue;
+      }
+      if (firstSlotIndex < 0) {
+        firstSlotIndex = slot;
       }
       visiblePoints.add(point);
     }
+    if (visiblePoints.isEmpty || firstSlotIndex < 0) {
+      return null;
+    }
 
-    return visiblePoints;
+    return _ResolvedViewportMacd(
+      points: visiblePoints,
+      totalSlotCount: visibleBars.length,
+      firstSlotIndex: firstSlotIndex,
+    );
   }
 
   int _dateKey(DateTime date) =>
@@ -404,9 +445,23 @@ class _MacdSubChartBodyState extends State<_MacdSubChartBody> {
   }
 }
 
+class _ResolvedViewportMacd {
+  const _ResolvedViewportMacd({
+    required this.points,
+    required this.totalSlotCount,
+    required this.firstSlotIndex,
+  });
+
+  final List<MacdPoint> points;
+  final int totalSlotCount;
+  final int firstSlotIndex;
+}
+
 class MacdSubChartPainter extends CustomPainter {
   const MacdSubChartPainter({
     required this.points,
+    this.totalSlotCount,
+    this.firstSlotIndex = 0,
     this.selectedVisibleIndex,
     this.selectionLineColor = const Color(0xB3000000),
     this.selectionLineWidth = 1.0,
@@ -422,6 +477,8 @@ class MacdSubChartPainter extends CustomPainter {
   });
 
   final List<MacdPoint> points;
+  final int? totalSlotCount;
+  final int firstSlotIndex;
   final int? selectedVisibleIndex;
   final Color selectionLineColor;
   final double selectionLineWidth;
@@ -495,7 +552,11 @@ class MacdSubChartPainter extends CustomPainter {
       zeroLine,
     );
 
-    final spacing = drawWidth / points.length;
+    final slotCount = math.max(
+      totalSlotCount ?? points.length,
+      firstSlotIndex + points.length,
+    );
+    final spacing = drawWidth / slotCount;
     final barWidth = math.max(1.0, spacing * 0.56);
 
     final upPaint = Paint()..color = AppColors.stockUp.withValues(alpha: 0.88);
@@ -507,7 +568,7 @@ class MacdSubChartPainter extends CustomPainter {
 
     for (var i = 0; i < points.length; i++) {
       final point = points[i];
-      final centerX = sidePadding + spacing * (i + 0.5);
+      final centerX = sidePadding + spacing * (firstSlotIndex + i + 0.5);
 
       final histY = toY(point.hist);
       final rectTop = math.min(zeroY, histY);
@@ -545,8 +606,8 @@ class MacdSubChartPainter extends CustomPainter {
     canvas.drawPath(deaPath, deaPaint);
 
     if (selectedVisibleIndex != null &&
-        selectedVisibleIndex! >= 0 &&
-        selectedVisibleIndex! < points.length) {
+        selectedVisibleIndex! >= firstSlotIndex &&
+        selectedVisibleIndex! < firstSlotIndex + points.length) {
       final selectedX = sidePadding + spacing * (selectedVisibleIndex! + 0.5);
       final dashPaint = Paint()
         ..color = selectionLineColor
@@ -554,10 +615,7 @@ class MacdSubChartPainter extends CustomPainter {
       var y = topPadding;
       final bottom = size.height - bottomPadding;
       while (y < bottom) {
-        final endY = (y + selectionDashLength).clamp(
-          topPadding,
-          bottom,
-        );
+        final endY = (y + selectionDashLength).clamp(topPadding, bottom);
         canvas.drawLine(
           Offset(selectedX, y),
           Offset(selectedX, endY),
@@ -571,6 +629,8 @@ class MacdSubChartPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant MacdSubChartPainter oldDelegate) {
     return !listEquals(oldDelegate.points, points) ||
+        oldDelegate.totalSlotCount != totalSlotCount ||
+        oldDelegate.firstSlotIndex != firstSlotIndex ||
         oldDelegate.selectedVisibleIndex != selectedVisibleIndex ||
         oldDelegate.selectionLineColor != selectionLineColor ||
         oldDelegate.selectionLineWidth != selectionLineWidth ||

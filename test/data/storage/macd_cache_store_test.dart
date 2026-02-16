@@ -136,5 +136,47 @@ void main() {
     expect(daily, isNull);
     expect(weekly, isNull);
   });
-}
 
+  test(
+    'listStockCodes should return existing codes for selected data type',
+    () async {
+      final config = MacdConfig.defaults;
+
+      await cacheStore.saveAll([
+        MacdCacheSeries(
+          stockCode: '600000',
+          dataType: KLineDataType.weekly,
+          config: config,
+          sourceSignature: 'w1',
+          points: _buildPoints(DateTime(2026, 1, 1), 8),
+        ),
+        MacdCacheSeries(
+          stockCode: '600001',
+          dataType: KLineDataType.weekly,
+          config: config,
+          sourceSignature: 'w2',
+          points: _buildPoints(DateTime(2026, 1, 1), 8),
+        ),
+        MacdCacheSeries(
+          stockCode: '600002',
+          dataType: KLineDataType.daily,
+          config: config,
+          sourceSignature: 'd1',
+          points: _buildPoints(DateTime(2026, 1, 1), 8),
+        ),
+      ]);
+
+      final weeklyCodes = await cacheStore.listStockCodes(
+        dataType: KLineDataType.weekly,
+      );
+      final dailyCodes = await cacheStore.listStockCodes(
+        dataType: KLineDataType.daily,
+      );
+
+      expect(weeklyCodes, containsAll(<String>['600000', '600001']));
+      expect(weeklyCodes, isNot(contains('600002')));
+      expect(dailyCodes, contains('600002'));
+      expect(dailyCodes, isNot(contains('600000')));
+    },
+  );
+}

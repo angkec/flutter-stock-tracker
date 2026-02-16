@@ -55,6 +55,68 @@ void main() {
     expect(find.text('暂无MACD缓存，请先在数据管理同步'), findsOneWidget);
   });
 
+  testWidgets('renders MACD when cache covers only the trailing visible bars', (
+    tester,
+  ) async {
+    final bars = buildDailyBars(count: 80, startDate: DateTime(2026, 1, 1));
+    final trailingBars = bars.sublist(bars.length - 12);
+    final trailingSeries = MacdCacheSeries(
+      stockCode: '600000',
+      dataType: KLineDataType.weekly,
+      config: MacdConfig.defaults,
+      sourceSignature: 'trailing_only',
+      points: trailingBars
+          .map(
+            (bar) => MacdPoint(
+              datetime: bar.datetime,
+              dif: 0.1,
+              dea: 0.08,
+              hist: 0.04,
+            ),
+          )
+          .toList(growable: false),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 320,
+            child: KLineChartWithSubCharts(
+              stockCode: '600000',
+              bars: bars,
+              subCharts: [
+                MacdSubChart(
+                  key: const ValueKey('weekly_macd_subchart'),
+                  dataType: KLineDataType.weekly,
+                  cacheStore: _FakeMacdCacheStore({
+                    '600000|weekly': trailingSeries,
+                  }),
+                  chartKey: const ValueKey('weekly_macd_paint_trailing'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text('暂无MACD缓存，请先在数据管理同步'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('weekly_macd_paint_trailing')),
+      findsOneWidget,
+    );
+    final paint = tester.widget<CustomPaint>(
+      find.byKey(const ValueKey('weekly_macd_paint_trailing')),
+    );
+    final painter = paint.painter as MacdSubChartPainter;
+    expect(painter.points.length, 12);
+    expect(painter.totalSlotCount, 30);
+    expect(painter.firstSlotIndex, 18);
+  });
+
   testWidgets('renders the same number of macd points as visible bars', (
     tester,
   ) async {

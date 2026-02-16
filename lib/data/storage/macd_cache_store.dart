@@ -43,12 +43,12 @@ class MacdCacheSeries {
       stockCode: json['stockCode'] as String,
       dataType: KLineDataType.fromName(json['dataType'] as String),
       config: MacdConfig.fromJson(
-        (json['config'] as Map<String, dynamic>? ??
-            const <String, dynamic>{}),
+        (json['config'] as Map<String, dynamic>? ?? const <String, dynamic>{}),
       ),
       sourceSignature: json['sourceSignature'] as String? ?? '',
       points: points,
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+      updatedAt:
+          DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0),
     );
   }
@@ -165,6 +165,33 @@ class MacdCacheStore {
         }
       }
     }
+  }
+
+  Future<Set<String>> listStockCodes({required KLineDataType dataType}) async {
+    await initialize();
+    final dir = Directory(_cacheDirectoryPath!);
+    if (!await dir.exists()) {
+      return <String>{};
+    }
+
+    final suffix = '_${dataType.name}_macd_cache.json';
+    final result = <String>{};
+
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is! File) {
+        continue;
+      }
+      final fileName = entity.path.split(Platform.pathSeparator).last;
+      if (!fileName.endsWith(suffix)) {
+        continue;
+      }
+      final stockCode = fileName.substring(0, fileName.length - suffix.length);
+      if (stockCode.isNotEmpty) {
+        result.add(stockCode);
+      }
+    }
+
+    return result;
   }
 
   Future<void> _saveSingle(MacdCacheSeries series) async {

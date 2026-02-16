@@ -253,6 +253,40 @@ class FakeMinuteSyncWriter extends MinuteSyncWriter {
   }
 }
 
+class DelayedLoadMetadataManager extends KLineMetadataManager {
+  DelayedLoadMetadataManager({
+    required super.database,
+    required super.fileStorage,
+    required this.delay,
+  });
+
+  final Duration delay;
+  int inFlight = 0;
+  int maxInFlight = 0;
+
+  @override
+  Future<List<KLine>> loadKlineData({
+    required String stockCode,
+    required KLineDataType dataType,
+    required DateRange dateRange,
+  }) async {
+    inFlight++;
+    if (inFlight > maxInFlight) {
+      maxInFlight = inFlight;
+    }
+    await Future<void>.delayed(delay);
+    try {
+      return await super.loadKlineData(
+        stockCode: stockCode,
+        dataType: dataType,
+        dateRange: dateRange,
+      );
+    } finally {
+      inFlight--;
+    }
+  }
+}
+
 void main() {
   late MarketDataRepository repository;
   late KLineMetadataManager manager;
@@ -425,6 +459,58 @@ void main() {
       );
 
       expect(result['999999'], isEmpty);
+    });
+
+    test('should load klines concurrently across stock codes', () async {
+      final stockCodes = <String>[
+        '600000',
+        '600001',
+        '600002',
+        '600003',
+        '600004',
+        '600005',
+      ];
+      final dateRange = DateRange(DateTime(2024, 1, 1), DateTime(2024, 2, 1));
+
+      for (final code in stockCodes) {
+        await manager.saveKlineData(
+          stockCode: code,
+          newBars: [
+            KLine(
+              datetime: DateTime(2024, 1, 15),
+              open: 10,
+              close: 10.1,
+              high: 10.2,
+              low: 9.8,
+              volume: 1000,
+              amount: 12000,
+            ),
+          ],
+          dataType: KLineDataType.weekly,
+        );
+      }
+
+      final delayedManager = DelayedLoadMetadataManager(
+        database: database,
+        fileStorage: fileStorage,
+        delay: const Duration(milliseconds: 40),
+      );
+      final concurrentRepository = MarketDataRepository(
+        metadataManager: delayedManager,
+      );
+
+      try {
+        final result = await concurrentRepository.getKlines(
+          stockCodes: stockCodes,
+          dateRange: dateRange,
+          dataType: KLineDataType.weekly,
+        );
+
+        expect(result.length, stockCodes.length);
+        expect(delayedManager.maxInFlight, greaterThan(1));
+      } finally {
+        await concurrentRepository.dispose();
+      }
     });
 
     test('should detect fresh data', () async {

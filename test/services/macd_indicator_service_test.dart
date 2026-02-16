@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,10 @@ import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 
 class _FakeDataRepository implements DataRepository {
   Map<String, List<KLine>> klinesByStock = <String, List<KLine>>{};
+  int getKlinesCallCount = 0;
+  Duration getKlinesDelay = Duration.zero;
+  final List<List<String>> getKlinesRequestBatches = <List<String>>[];
+  int currentVersion = 1;
 
   @override
   Future<Map<String, List<KLine>>> getKlines({
@@ -28,6 +33,11 @@ class _FakeDataRepository implements DataRepository {
     required DateRange dateRange,
     required KLineDataType dataType,
   }) async {
+    getKlinesCallCount++;
+    getKlinesRequestBatches.add(List<String>.from(stockCodes, growable: false));
+    if (getKlinesDelay > Duration.zero) {
+      await Future<void>.delayed(getKlinesDelay);
+    }
     return {
       for (final code in stockCodes)
         code: (klinesByStock[code] ?? const <KLine>[])
@@ -56,7 +66,7 @@ class _FakeDataRepository implements DataRepository {
   }
 
   @override
-  Future<int> getCurrentVersion() async => 1;
+  Future<int> getCurrentVersion() async => currentVersion;
 
   @override
   Future<FetchResult> fetchMissingData({
@@ -122,9 +132,30 @@ class _SpyMacdCacheStore extends MacdCacheStore {
 
   int saveSeriesCallCount = 0;
   int saveAllCallCount = 0;
+  int loadSeriesCallCount = 0;
   int totalSavedItems = 0;
   int maxSavedBatchSize = 0;
   List<MacdCacheSeries> lastSavedBatch = const <MacdCacheSeries>[];
+  final List<int?> requestedMaxConcurrentWrites = <int?>[];
+  Set<String>? existingStockCodesForList;
+
+  @override
+  Future<Set<String>> listStockCodes({required KLineDataType dataType}) async {
+    final existing = existingStockCodesForList;
+    if (existing != null) {
+      return existing;
+    }
+    return super.listStockCodes(dataType: dataType);
+  }
+
+  @override
+  Future<MacdCacheSeries?> loadSeries({
+    required String stockCode,
+    required KLineDataType dataType,
+  }) async {
+    loadSeriesCallCount++;
+    return super.loadSeries(stockCode: stockCode, dataType: dataType);
+  }
 
   @override
   Future<void> saveSeries({
@@ -150,6 +181,7 @@ class _SpyMacdCacheStore extends MacdCacheStore {
     int? maxConcurrentWrites,
     void Function(int current, int total)? onProgress,
   }) async {
+    requestedMaxConcurrentWrites.add(maxConcurrentWrites);
     saveAllCallCount++;
     totalSavedItems += items.length;
     if (items.length > maxSavedBatchSize) {
@@ -213,6 +245,44 @@ class _ConcurrencyProbeMacdService extends MacdIndicatorService {
     await Future<void>.delayed(const Duration(milliseconds: 20));
     _inFlight--;
     return const <MacdPoint>[];
+  }
+}
+
+class _DelayedPrewarmMacdService extends MacdIndicatorService {
+  _DelayedPrewarmMacdService({
+    required super.repository,
+    required super.cacheStore,
+    required this.delay,
+  });
+
+  final Duration delay;
+  final Completer<void> firstPrewarmStarted = Completer<void>();
+  int prewarmFromBarsCallCount = 0;
+
+  @override
+  Future<void> prewarmFromBars({
+    required KLineDataType dataType,
+    required Map<String, List<KLine>> barsByStockCode,
+    bool forceRecompute = false,
+    int? maxConcurrentTasks,
+    int? maxConcurrentPersistWrites,
+    int? persistBatchSize,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    prewarmFromBarsCallCount++;
+    if (!firstPrewarmStarted.isCompleted) {
+      firstPrewarmStarted.complete();
+    }
+    await Future<void>.delayed(delay);
+    return super.prewarmFromBars(
+      dataType: dataType,
+      barsByStockCode: barsByStockCode,
+      forceRecompute: forceRecompute,
+      maxConcurrentTasks: maxConcurrentTasks,
+      maxConcurrentPersistWrites: maxConcurrentPersistWrites,
+      persistBatchSize: persistBatchSize,
+      onProgress: onProgress,
+    );
   }
 }
 
@@ -345,6 +415,66 @@ void main() {
     expect(raw!.length, lessThan(256));
   });
 
+  test('weekly config should default to 12-month window', () async {
+    final service = MacdIndicatorService(
+      repository: repository,
+      cacheStore: cacheStore,
+    );
+    await service.load();
+
+    final weekly = service.configFor(KLineDataType.weekly);
+    expect(weekly.windowMonths, 12);
+  });
+
+  test(
+    'weekly config should upgrade legacy window to 12 months on load',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        MacdIndicatorService.weeklyConfigStorageKey: jsonEncode({
+          'fastPeriod': 12,
+          'slowPeriod': 26,
+          'signalPeriod': 9,
+          'windowMonths': 3,
+        }),
+      });
+
+      final service = MacdIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
+
+      final weekly = service.configFor(KLineDataType.weekly);
+      expect(weekly.windowMonths, 12);
+    },
+  );
+
+  test('updateConfigFor weekly should enforce 12-month window', () async {
+    final service = MacdIndicatorService(
+      repository: repository,
+      cacheStore: cacheStore,
+    );
+    await service.load();
+
+    await service.updateConfigFor(
+      dataType: KLineDataType.weekly,
+      newConfig: const MacdConfig(
+        fastPeriod: 12,
+        slowPeriod: 26,
+        signalPeriod: 9,
+        windowMonths: 6,
+      ),
+    );
+
+    final reloaded = MacdIndicatorService(
+      repository: repository,
+      cacheStore: cacheStore,
+    );
+    await reloaded.load();
+
+    expect(reloaded.configFor(KLineDataType.weekly).windowMonths, 12);
+  });
+
   test('prewarmFromBars should process stocks concurrently', () async {
     final service = _ConcurrencyProbeMacdService(
       repository: repository,
@@ -364,6 +494,168 @@ void main() {
 
     expect(service.maxInFlight, greaterThan(1));
   });
+
+  test(
+    'prewarmFromRepository should fetch in chunks and aggregate progress',
+    () async {
+      final service = MacdIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
+
+      final stockCodes = <String>[
+        '600000',
+        '600001',
+        '600002',
+        '600003',
+        '600004',
+        '600005',
+        '600006',
+      ];
+      repository.klinesByStock = {
+        for (final code in stockCodes)
+          code: _buildBars(DateTime(2025, 10, 1), 90),
+      };
+
+      final progressRecords = <({int current, int total})>[];
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.weekly,
+        dateRange: DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1)),
+        fetchBatchSize: 3,
+        onProgress: (current, total) {
+          progressRecords.add((current: current, total: total));
+        },
+      );
+
+      expect(repository.getKlinesCallCount, 3);
+      expect(
+        repository.getKlinesRequestBatches
+            .map((batch) => batch.length)
+            .toList(),
+        <int>[3, 3, 1],
+      );
+      expect(progressRecords, isNotEmpty);
+      expect(progressRecords.last.total, stockCodes.length * 2);
+      expect(progressRecords.last.current, progressRecords.last.total);
+    },
+  );
+
+  test(
+    'prewarmFromRepository should pipeline next chunk fetch while current chunk computes',
+    () async {
+      final service = _DelayedPrewarmMacdService(
+        repository: repository,
+        cacheStore: cacheStore,
+        delay: const Duration(milliseconds: 200),
+      );
+      await service.load();
+      repository.getKlinesDelay = const Duration(milliseconds: 20);
+
+      final stockCodes = <String>[
+        '600000',
+        '600001',
+        '600002',
+        '600003',
+        '600004',
+        '600005',
+      ];
+      repository.klinesByStock = {
+        for (final code in stockCodes)
+          code: _buildBars(DateTime(2025, 10, 1), 90),
+      };
+
+      final prewarmFuture = service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.weekly,
+        dateRange: DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1)),
+        fetchBatchSize: 3,
+      );
+
+      await service.firstPrewarmStarted.future;
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(repository.getKlinesCallCount, 2);
+
+      await prewarmFuture;
+      expect(service.prewarmFromBarsCallCount, 2);
+    },
+  );
+
+  test(
+    'prewarmFromRepository should skip unchanged version with same config and stock scope',
+    () async {
+      final service = MacdIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
+      repository.currentVersion = 42;
+
+      final stockCodes = <String>['600000', '600001', '600002'];
+      repository.klinesByStock = {
+        for (final code in stockCodes)
+          code: _buildBars(DateTime(2025, 10, 1), 90),
+      };
+
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.weekly,
+        dateRange: DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1)),
+      );
+      expect(repository.getKlinesCallCount, 1);
+
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.weekly,
+        dateRange: DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1)),
+      );
+      expect(repository.getKlinesCallCount, 1);
+    },
+  );
+
+  test(
+    'prewarmFromRepository should rerun when config changes even with same data version',
+    () async {
+      final service = MacdIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
+      repository.currentVersion = 99;
+
+      const stockCodes = <String>['600000', '600001'];
+      repository.klinesByStock = {
+        for (final code in stockCodes)
+          code: _buildBars(DateTime(2025, 10, 1), 90),
+      };
+
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.weekly,
+        dateRange: DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1)),
+      );
+      expect(repository.getKlinesCallCount, 1);
+
+      await service.updateConfigFor(
+        dataType: KLineDataType.weekly,
+        newConfig: const MacdConfig(
+          fastPeriod: 10,
+          slowPeriod: 30,
+          signalPeriod: 7,
+          windowMonths: 12,
+        ),
+      );
+
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.weekly,
+        dateRange: DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1)),
+      );
+      expect(repository.getKlinesCallCount, 2);
+    },
+  );
 
   test('prewarmFromBars should batch persist computed series', () async {
     final storage = KLineFileStorage();
@@ -480,42 +772,118 @@ void main() {
     expect(spyStore.totalSavedItems, payload.length);
   });
 
-  test('should persist daily and weekly configs independently', () async {
-    final service = MacdIndicatorService(
-      repository: repository,
-      cacheStore: cacheStore,
-    );
-    await service.load();
+  test(
+    'prewarmFromBars should use configured persist write concurrency',
+    () async {
+      final storage = KLineFileStorage();
+      storage.setBaseDirPathForTesting(tempDir.path);
+      final spyStore = _SpyMacdCacheStore(storage: storage);
 
-    const dailyConfig = MacdConfig(
-      fastPeriod: 8,
-      slowPeriod: 21,
-      signalPeriod: 5,
-      windowMonths: 4,
-    );
-    const weeklyConfig = MacdConfig(
-      fastPeriod: 10,
-      slowPeriod: 30,
-      signalPeriod: 7,
-      windowMonths: 6,
-    );
+      final service = MacdIndicatorService(
+        repository: repository,
+        cacheStore: spyStore,
+      );
+      await service.load();
 
-    await service.updateConfigFor(
-      dataType: KLineDataType.daily,
-      newConfig: dailyConfig,
-    );
-    await service.updateConfigFor(
-      dataType: KLineDataType.weekly,
-      newConfig: weeklyConfig,
-    );
+      final payload = <String, List<KLine>>{
+        for (var i = 0; i < 12; i++)
+          '600${i.toString().padLeft(3, '0')}': _buildBars(
+            DateTime(2025, 10, 1),
+            90,
+          ),
+      };
 
-    final reloaded = MacdIndicatorService(
-      repository: repository,
-      cacheStore: cacheStore,
-    );
-    await reloaded.load();
+      await service.prewarmFromBars(
+        dataType: KLineDataType.weekly,
+        barsByStockCode: payload,
+        maxConcurrentTasks: 1,
+        persistBatchSize: 4,
+        maxConcurrentPersistWrites: 8,
+      );
 
-    expect(reloaded.configFor(KLineDataType.daily), dailyConfig);
-    expect(reloaded.configFor(KLineDataType.weekly), weeklyConfig);
-  });
+      expect(spyStore.saveAllCallCount, greaterThan(0));
+      expect(spyStore.requestedMaxConcurrentWrites, isNotEmpty);
+      expect(
+        spyStore.requestedMaxConcurrentWrites.every((value) => value == 8),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'prewarmFromBars should skip disk reads for stocks without cache files',
+    () async {
+      final storage = KLineFileStorage();
+      storage.setBaseDirPathForTesting(tempDir.path);
+      final spyStore = _SpyMacdCacheStore(storage: storage);
+      spyStore.existingStockCodesForList = <String>{};
+
+      final service = MacdIndicatorService(
+        repository: repository,
+        cacheStore: spyStore,
+      );
+      await service.load();
+
+      final payload = <String, List<KLine>>{
+        for (var i = 0; i < 15; i++)
+          '600${i.toString().padLeft(3, '0')}': _buildBars(
+            DateTime(2025, 10, 1),
+            90,
+          ),
+      };
+
+      await service.prewarmFromBars(
+        dataType: KLineDataType.weekly,
+        barsByStockCode: payload,
+        maxConcurrentTasks: 1,
+      );
+
+      expect(spyStore.loadSeriesCallCount, 0);
+    },
+  );
+
+  test(
+    'should persist daily and weekly configs independently with fixed weekly window',
+    () async {
+      final service = MacdIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
+
+      const dailyConfig = MacdConfig(
+        fastPeriod: 8,
+        slowPeriod: 21,
+        signalPeriod: 5,
+        windowMonths: 4,
+      );
+      const weeklyConfig = MacdConfig(
+        fastPeriod: 10,
+        slowPeriod: 30,
+        signalPeriod: 7,
+        windowMonths: 6,
+      );
+
+      await service.updateConfigFor(
+        dataType: KLineDataType.daily,
+        newConfig: dailyConfig,
+      );
+      await service.updateConfigFor(
+        dataType: KLineDataType.weekly,
+        newConfig: weeklyConfig,
+      );
+
+      final reloaded = MacdIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await reloaded.load();
+
+      expect(reloaded.configFor(KLineDataType.daily), dailyConfig);
+      expect(
+        reloaded.configFor(KLineDataType.weekly),
+        weeklyConfig.copyWith(windowMonths: 12),
+      );
+    },
+  );
 }

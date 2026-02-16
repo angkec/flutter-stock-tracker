@@ -52,6 +52,63 @@ flutter test integration_test/chinese_bdd_runner.dart -d macos --name "Feature: 
 
 ---
 
+## 数据管理页防卡住回归
+
+### 离线主回归（默认）
+
+```bash
+flutter test integration_test/features/data_management_offline_test.dart -d macos
+```
+
+覆盖目标：
+- 历史分钟K拉取、周K拉取、日K强制拉取、重新检测
+- 失败可恢复路径
+- 连续 5 秒无业务进展即判定卡住
+
+### 真网络全量复验（离线修改完成后）
+
+```bash
+bash scripts/run_data_management_real_e2e.sh
+```
+
+等价命令：
+
+```bash
+flutter test integration_test/features/data_management_real_network_test.dart \
+  -d macos \
+  --dart-define=RUN_DATA_MGMT_REAL_E2E=true
+```
+
+说明：不传 `RUN_DATA_MGMT_REAL_E2E=true` 时，真网络场景会主动跳过。
+
+---
+
+## 周线 MACD 重算压测（模拟器）
+
+用于验证“重算周线 MACD”首进度时延和总耗时，并做参数 sweep（`fetchBatchSize` / `persistConcurrency`）。
+
+```bash
+scripts/benchmark_weekly_macd_recompute.sh
+```
+
+常用参数：
+
+```bash
+BENCH_DEVICE='iPhone SE (3rd generation)' \
+WEEKLY_MACD_BENCH_STOCK_LIMIT=500 \
+WEEKLY_MACD_BENCH_SWEEP='40x6,80x8,120x8' \
+scripts/benchmark_weekly_macd_recompute.sh
+```
+
+输出：
+- 原始日志：`/tmp/weekly_macd_recompute_bench_*.log`
+- 汇总表：`/tmp/weekly_macd_recompute_bench_*.tsv`
+- 控制台会给出推荐参数
+
+最新基准记录见：`docs/reports/weekly-macd-recompute-benchmark-2026-02-16.md`
+
+---
+
 ## 文件结构
 
 ```

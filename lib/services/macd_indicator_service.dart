@@ -27,8 +27,20 @@ class MacdIndicatorService extends ChangeNotifier {
   static const String configStorageKey = 'macd_indicator_config_v1';
   static const String weeklyConfigStorageKey =
       'macd_indicator_weekly_config_v1';
+  static const String dailyPrewarmSnapshotStorageKey =
+      'macd_prewarm_daily_snapshot_v1';
+  static const String weeklyPrewarmSnapshotStorageKey =
+      'macd_prewarm_weekly_snapshot_v1';
+  static const MacdConfig weeklyDefaultConfig = MacdConfig(
+    fastPeriod: 12,
+    slowPeriod: 26,
+    signalPeriod: 9,
+    windowMonths: 12,
+  );
   static const int _defaultMaxConcurrentPrewarm = 6;
   static const int _defaultPersistBatchSize = 120;
+  static const int _defaultRepositoryPrewarmBatchSize = 240;
+  static const int _defaultFirstRepositoryPrewarmBatchSize = 40;
 
   final DataRepository _repository;
   final MacdCacheStore _cacheStore;
@@ -36,7 +48,7 @@ class MacdIndicatorService extends ChangeNotifier {
       <String, _MacdMemoryEntry>{};
 
   MacdConfig _dailyConfig = MacdConfig.defaults;
-  MacdConfig _weeklyConfig = MacdConfig.defaults;
+  MacdConfig _weeklyConfig = weeklyDefaultConfig;
 
   MacdIndicatorService({
     required DataRepository repository,
@@ -52,6 +64,12 @@ class MacdIndicatorService extends ChangeNotifier {
     return dataType == KLineDataType.weekly ? _weeklyConfig : _dailyConfig;
   }
 
+  static MacdConfig defaultConfigFor(KLineDataType dataType) {
+    return dataType == KLineDataType.weekly
+        ? weeklyDefaultConfig
+        : MacdConfig.defaults;
+  }
+
   Future<void> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -59,13 +77,23 @@ class MacdIndicatorService extends ChangeNotifier {
         prefs.getString(configStorageKey),
         fallback: MacdConfig.defaults,
       );
-      _weeklyConfig = _decodeConfig(
+      final weeklyLoaded = _decodeConfig(
         prefs.getString(weeklyConfigStorageKey),
-        fallback: _dailyConfig,
+        fallback: weeklyDefaultConfig,
       );
+      _weeklyConfig = _normalizeConfigForDataType(
+        KLineDataType.weekly,
+        weeklyLoaded,
+      );
+      if (_weeklyConfig != weeklyLoaded) {
+        await prefs.setString(
+          weeklyConfigStorageKey,
+          jsonEncode(_weeklyConfig.toJson()),
+        );
+      }
     } catch (_) {
       _dailyConfig = MacdConfig.defaults;
-      _weeklyConfig = MacdConfig.defaults;
+      _weeklyConfig = weeklyDefaultConfig;
     }
   }
 
@@ -80,17 +108,18 @@ class MacdIndicatorService extends ChangeNotifier {
     if (!newConfig.isValid) {
       throw ArgumentError('Invalid MACD config');
     }
+    final normalizedConfig = _normalizeConfigForDataType(dataType, newConfig);
     if (dataType == KLineDataType.weekly) {
-      _weeklyConfig = newConfig;
+      _weeklyConfig = normalizedConfig;
     } else {
-      _dailyConfig = newConfig;
+      _dailyConfig = normalizedConfig;
     }
     _clearMemoryForDataType(dataType);
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _configStorageKeyFor(dataType),
-      jsonEncode(newConfig.toJson()),
+      jsonEncode(normalizedConfig.toJson()),
     );
     notifyListeners();
   }
@@ -100,7 +129,10 @@ class MacdIndicatorService extends ChangeNotifier {
   }
 
   Future<void> resetConfigFor(KLineDataType dataType) async {
-    await updateConfigFor(dataType: dataType, newConfig: MacdConfig.defaults);
+    await updateConfigFor(
+      dataType: dataType,
+      newConfig: defaultConfigFor(dataType),
+    );
   }
 
   Future<List<MacdPoint>> getOrComputeFromRepository({
@@ -196,6 +228,7 @@ class MacdIndicatorService extends ChangeNotifier {
     required Map<String, List<KLine>> barsByStockCode,
     bool forceRecompute = false,
     int? maxConcurrentTasks,
+    int? maxConcurrentPersistWrites,
     int? persistBatchSize,
     void Function(int current, int total)? onProgress,
   }) async {
@@ -211,6 +244,9 @@ class MacdIndicatorService extends ChangeNotifier {
       total,
     );
     final batchSize = max(1, persistBatchSize ?? _defaultPersistBatchSize);
+    final cachedStockCodes = forceRecompute
+        ? const <String>{}
+        : await _cacheStore.listStockCodes(dataType: dataType);
 
     var nextIndex = 0;
     var computeCompleted = 0;
@@ -229,7 +265,12 @@ class MacdIndicatorService extends ChangeNotifier {
       final batch = List<MacdCacheSeries>.from(localPending, growable: false);
       localPending.clear();
 
-      await _cacheStore.saveAll(batch, maxConcurrentWrites: 1);
+      await _cacheStore.saveAll(
+        batch,
+        maxConcurrentWrites:
+            maxConcurrentPersistWrites ??
+            _cacheStore.defaultMaxConcurrentWrites,
+      );
       writeCompleted += batch.length;
       emitProgress();
     }
@@ -247,11 +288,13 @@ class MacdIndicatorService extends ChangeNotifier {
 
         final entry = entries[index];
         MacdCacheSeries? computedSeries;
+        final shouldForceForMissingCache =
+            !forceRecompute && !cachedStockCodes.contains(entry.key);
         await getOrComputeFromBars(
           stockCode: entry.key,
           dataType: dataType,
           bars: entry.value,
-          forceRecompute: forceRecompute,
+          forceRecompute: forceRecompute || shouldForceForMissingCache,
           persistToDisk: false,
           onSeriesComputed: (series) {
             computedSeries = series;
@@ -283,6 +326,8 @@ class MacdIndicatorService extends ChangeNotifier {
     required KLineDataType dataType,
     required DateRange dateRange,
     bool forceRecompute = false,
+    int? fetchBatchSize,
+    int? maxConcurrentPersistWrites,
     void Function(int current, int total)? onProgress,
   }) async {
     if (stockCodes.isEmpty) {
@@ -290,18 +335,118 @@ class MacdIndicatorService extends ChangeNotifier {
       return;
     }
 
-    final barsByStock = await _repository.getKlines(
-      stockCodes: stockCodes,
-      dateRange: dateRange,
-      dataType: dataType,
+    final deduplicatedStockCodes = stockCodes.toSet().toList(growable: false);
+    final stockScopeSignature = _buildStockScopeSignature(
+      deduplicatedStockCodes,
     );
+    final configSignature = _buildConfigSignature(configFor(dataType));
 
-    await prewarmFromBars(
-      dataType: dataType,
-      barsByStockCode: barsByStock,
-      forceRecompute: forceRecompute,
-      onProgress: onProgress,
+    int? currentDataVersion;
+    if (!forceRecompute) {
+      try {
+        currentDataVersion = await _repository.getCurrentVersion();
+        final prewarmSnapshot = await _loadPrewarmSnapshot(dataType);
+        final canSkip =
+            prewarmSnapshot != null &&
+            prewarmSnapshot.version == currentDataVersion &&
+            prewarmSnapshot.configSignature == configSignature &&
+            prewarmSnapshot.stockScopeSignature == stockScopeSignature;
+        if (canSkip) {
+          onProgress?.call(1, 1);
+          return;
+        }
+      } catch (_) {
+        // Ignore version snapshot failures and continue with full prewarm.
+      }
+    }
+
+    final batchSize = max(
+      1,
+      fetchBatchSize ?? _defaultRepositoryPrewarmBatchSize,
     );
+    final firstBatchSize = min(
+      batchSize,
+      _defaultFirstRepositoryPrewarmBatchSize,
+    );
+    final totalProgress = deduplicatedStockCodes.length * 2;
+    var completedProgress = 0;
+
+    var cursor = 0;
+
+    List<String> nextChunk({required int chunkSize}) {
+      if (cursor >= deduplicatedStockCodes.length) {
+        return const <String>[];
+      }
+      final end = min(cursor + chunkSize, deduplicatedStockCodes.length);
+      final chunk = deduplicatedStockCodes.sublist(cursor, end);
+      cursor = end;
+      return chunk;
+    }
+
+    var currentChunkStockCodes = nextChunk(chunkSize: firstBatchSize);
+    if (currentChunkStockCodes.isEmpty) {
+      onProgress?.call(1, 1);
+      return;
+    }
+
+    Future<Map<String, List<KLine>>> currentChunkFetchFuture = _repository
+        .getKlines(
+          stockCodes: currentChunkStockCodes,
+          dateRange: dateRange,
+          dataType: dataType,
+        );
+
+    while (true) {
+      final nextChunkStockCodes = nextChunk(chunkSize: batchSize);
+      final Future<Map<String, List<KLine>>>? nextChunkFetchFuture =
+          nextChunkStockCodes.isEmpty
+          ? null
+          : _repository.getKlines(
+              stockCodes: nextChunkStockCodes,
+              dateRange: dateRange,
+              dataType: dataType,
+            );
+
+      final barsByStock = await currentChunkFetchFuture;
+
+      await prewarmFromBars(
+        dataType: dataType,
+        barsByStockCode: barsByStock,
+        forceRecompute: forceRecompute,
+        maxConcurrentPersistWrites: maxConcurrentPersistWrites,
+        onProgress: (current, total) {
+          final mappedCurrent = (completedProgress + current).clamp(
+            0,
+            totalProgress,
+          );
+          onProgress?.call(mappedCurrent, totalProgress);
+        },
+      );
+
+      completedProgress += currentChunkStockCodes.length * 2;
+      onProgress?.call(
+        completedProgress.clamp(0, totalProgress),
+        totalProgress,
+      );
+
+      if (nextChunkFetchFuture == null) {
+        break;
+      }
+
+      currentChunkStockCodes = nextChunkStockCodes;
+      currentChunkFetchFuture = nextChunkFetchFuture;
+    }
+
+    if (!forceRecompute && currentDataVersion != null) {
+      await _savePrewarmSnapshot(
+        dataType: dataType,
+        snapshot: (
+          version: currentDataVersion,
+          configSignature: configSignature,
+          stockScopeSignature: stockScopeSignature,
+        ),
+      );
+    }
   }
 
   static List<MacdPoint> _computeMacdSeries(
@@ -425,9 +570,95 @@ class MacdIndicatorService extends ChangeNotifier {
         : configStorageKey;
   }
 
+  String _prewarmSnapshotStorageKeyFor(KLineDataType dataType) {
+    return dataType == KLineDataType.weekly
+        ? weeklyPrewarmSnapshotStorageKey
+        : dailyPrewarmSnapshotStorageKey;
+  }
+
+  MacdConfig _normalizeConfigForDataType(
+    KLineDataType dataType,
+    MacdConfig config,
+  ) {
+    if (dataType != KLineDataType.weekly) {
+      return config;
+    }
+    if (config.windowMonths == weeklyDefaultConfig.windowMonths) {
+      return config;
+    }
+    return config.copyWith(windowMonths: weeklyDefaultConfig.windowMonths);
+  }
+
   void _clearMemoryForDataType(KLineDataType dataType) {
     final suffix = '_${dataType.name}';
     _memoryCache.removeWhere((key, _) => key.endsWith(suffix));
+  }
+
+  String _buildConfigSignature(MacdConfig config) {
+    return '${config.fastPeriod}|${config.slowPeriod}|'
+        '${config.signalPeriod}|${config.windowMonths}';
+  }
+
+  String _buildStockScopeSignature(List<String> stockCodes) {
+    if (stockCodes.isEmpty) {
+      return '0|0';
+    }
+    final sortedCodes = List<String>.from(stockCodes)..sort();
+    var rolling = 23;
+    for (final code in sortedCodes) {
+      for (final rune in code.runes) {
+        rolling = _mixInt(rolling, rune);
+      }
+    }
+    return '${sortedCodes.length}|$rolling';
+  }
+
+  Future<({int version, String configSignature, String stockScopeSignature})?>
+  _loadPrewarmSnapshot(KLineDataType dataType) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_prewarmSnapshotStorageKeyFor(dataType));
+      if (raw == null || raw.isEmpty) {
+        return null;
+      }
+
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final version = json['version'] as int?;
+      final configSignature = json['configSignature'] as String?;
+      final stockScopeSignature = json['stockScopeSignature'] as String?;
+      if (version == null ||
+          configSignature == null ||
+          stockScopeSignature == null) {
+        return null;
+      }
+      return (
+        version: version,
+        configSignature: configSignature,
+        stockScopeSignature: stockScopeSignature,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _savePrewarmSnapshot({
+    required KLineDataType dataType,
+    required ({int version, String configSignature, String stockScopeSignature})
+    snapshot,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _prewarmSnapshotStorageKeyFor(dataType),
+        jsonEncode({
+          'version': snapshot.version,
+          'configSignature': snapshot.configSignature,
+          'stockScopeSignature': snapshot.stockScopeSignature,
+        }),
+      );
+    } catch (_) {
+      // Swallow snapshot persistence errors; they should not break prewarm flow.
+    }
   }
 
   int _mixInt(int seed, int value) {

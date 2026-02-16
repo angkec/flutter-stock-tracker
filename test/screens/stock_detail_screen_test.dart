@@ -100,6 +100,53 @@ void main() {
     );
   });
 
+  testWidgets(
+    'weekly mode renders MACD paint with trailing-only weekly cache',
+    (tester) async {
+      final weeklyBars = buildDailyBars(
+        count: 80,
+        startDate: DateTime(2025, 1, 1),
+      );
+      const stockCode = '600000';
+      final cacheStore = _FakeMacdCacheStore({
+        '$stockCode|weekly': _buildSeries(
+          stockCode: stockCode,
+          dataType: KLineDataType.weekly,
+          dates: weeklyBars
+              .sublist(weeklyBars.length - 12)
+              .map((bar) => bar.datetime)
+              .toList(growable: false),
+        ),
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StockDetailScreen(
+            stock: stock,
+            skipAutoConnectForTest: true,
+            showWatchlistToggle: false,
+            showIndustryHeatSection: false,
+            initialChartMode: ChartMode.weekly,
+            initialDailyBars: buildDailyBars(
+              count: 50,
+              startDate: DateTime(2026, 1, 1),
+            ),
+            initialWeeklyBars: weeklyBars,
+            macdCacheStoreForTest: cacheStore,
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('暂无MACD缓存，请先在数据管理同步'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('stock_detail_macd_paint_weekly')),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('renders MACD paint for daily and linked modes with cache', (
     tester,
   ) async {

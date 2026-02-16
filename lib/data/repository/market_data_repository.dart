@@ -45,6 +45,7 @@ class MarketDataRepository implements DataRepository {
 
   // 最大缓存大小
   static const int _maxCacheSize = 100;
+  static const int _defaultKlineReadConcurrency = 6;
 
   // 完整分钟数据的最小K线数量（一个交易日约240根1分钟K线）
   static const int _minCompleteBars = 220;
@@ -114,47 +115,76 @@ class MarketDataRepository implements DataRepository {
     required KLineDataType dataType,
   }) async {
     final result = <String, List<KLine>>{};
+    if (stockCodes.isEmpty) {
+      return result;
+    }
 
-    for (final stockCode in stockCodes) {
-      // 构建缓存key
-      final cacheKey = _buildCacheKey(stockCode, dateRange, dataType);
+    final workerCount = min(_defaultKlineReadConcurrency, stockCodes.length);
+    var nextIndex = 0;
 
-      // 检查缓存
-      if (_klineCache.containsKey(cacheKey)) {
-        result[stockCode] = _klineCache[cacheKey]!;
-        continue;
-      }
+    Future<void> runWorker() async {
+      while (true) {
+        final index = nextIndex;
+        if (index >= stockCodes.length) {
+          return;
+        }
+        nextIndex++;
 
-      // 从存储加载
-      try {
-        final klines = await _metadataManager.loadKlineData(
+        final stockCode = stockCodes[index];
+        result[stockCode] = await _loadKlinesForStock(
           stockCode: stockCode,
-          dataType: dataType,
           dateRange: dateRange,
+          dataType: dataType,
         );
-
-        // 存入缓存（带LRU驱逐）
-        if (_klineCache.length >= _maxCacheSize &&
-            !_klineCache.containsKey(cacheKey)) {
-          // 移除最旧的缓存条目（第一个）
-          final firstKey = _klineCache.keys.first;
-          _klineCache.remove(firstKey);
-        }
-        _klineCache[cacheKey] = klines;
-        result[stockCode] = klines;
-      } catch (e, stackTrace) {
-        // Log the error for debugging
-        debugPrint('Failed to load K-line data for $stockCode: $e');
-        if (kDebugMode) {
-          debugPrint('Stack trace: $stackTrace');
-        }
-
-        // 加载失败，返回空列表
-        result[stockCode] = [];
       }
     }
 
+    await Future.wait(
+      List.generate(workerCount, (_) => runWorker(), growable: false),
+    );
+
     return result;
+  }
+
+  Future<List<KLine>> _loadKlinesForStock({
+    required String stockCode,
+    required DateRange dateRange,
+    required KLineDataType dataType,
+  }) async {
+    // 构建缓存key
+    final cacheKey = _buildCacheKey(stockCode, dateRange, dataType);
+
+    // 检查缓存
+    if (_klineCache.containsKey(cacheKey)) {
+      return _klineCache[cacheKey]!;
+    }
+
+    // 从存储加载
+    try {
+      final klines = await _metadataManager.loadKlineData(
+        stockCode: stockCode,
+        dataType: dataType,
+        dateRange: dateRange,
+      );
+
+      // 存入缓存（带LRU驱逐）
+      if (_klineCache.length >= _maxCacheSize &&
+          !_klineCache.containsKey(cacheKey)) {
+        // 移除最旧的缓存条目（第一个）
+        final firstKey = _klineCache.keys.first;
+        _klineCache.remove(firstKey);
+      }
+      _klineCache[cacheKey] = klines;
+      return klines;
+    } catch (e, stackTrace) {
+      // Log the error for debugging
+      debugPrint('Failed to load K-line data for $stockCode: $e');
+      if (kDebugMode) {
+        debugPrint('Stack trace: $stackTrace');
+      }
+      // 加载失败，返回空列表
+      return <KLine>[];
+    }
   }
 
   String _buildCacheKey(

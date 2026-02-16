@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:stock_rtwatcher/config/debug_config.dart';
 import 'package:stock_rtwatcher/data/models/data_status.dart';
+import 'package:stock_rtwatcher/data/models/data_updated_event.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
@@ -35,6 +36,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   static const int _baselineFallbackSampleSize = 60;
   static const int _weeklyTargetBars = 100;
   static const int _weeklyRangeDays = 760;
+  static const int _weeklyMacdFetchBatchSize = 120;
+  static const int _weeklyMacdPersistConcurrency = 8;
 
   void _triggerRefresh() {
     setState(() {
@@ -996,6 +999,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     await WakelockPlus.enable();
 
     StreamSubscription<DataStatus>? statusSubscription;
+    StreamSubscription<DataUpdatedEvent>? updatedSubscription;
     String completionMessage = forceRefetch ? '周K数据已强制更新' : '周K数据已更新';
 
     try {
@@ -1022,6 +1026,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       _WeeklySyncStage? activeStage;
       DateTime? activeStageStartedAt;
       var activeStageStartProgress = 0;
+      final updatedWeeklyStockCodes = <String>{};
 
       Duration elapsedForStage(_WeeklySyncStage stage, DateTime now) {
         final base = stageDurations[stage] ?? Duration.zero;
@@ -1123,6 +1128,11 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           stage: '$stageTitle\n${buildStageMetrics(safeCurrent, safeTotal)}',
         );
       });
+      updatedSubscription = repository.dataUpdatedStream.listen((event) {
+        if (event.dataType == KLineDataType.weekly) {
+          updatedWeeklyStockCodes.addAll(event.stockCodes);
+        }
+      });
 
       final fetchResult = forceRefetch
           ? await repository.refetchData(
@@ -1144,22 +1154,45 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       final shouldPrewarmWeeklyMacd =
           macdService != null && (forceRefetch || fetchResult.totalRecords > 0);
       if (shouldPrewarmWeeklyMacd) {
+        final prewarmStockCodes = forceRefetch
+            ? stockCodes
+            : stockCodes
+                  .where((code) => updatedWeeklyStockCodes.contains(code))
+                  .toList(growable: false);
+        final effectivePrewarmStockCodes = prewarmStockCodes.isNotEmpty
+            ? prewarmStockCodes
+            : stockCodes;
+
         progressNotifier.value = (
           current: 0,
           total: 1,
-          stage: '准备更新周线MACD缓存...',
+          stage: '准备更新周线MACD缓存（${effectivePrewarmStockCodes.length}只）...',
         );
+        final prewarmStopwatch = Stopwatch()..start();
         await macdService.prewarmFromRepository(
-          stockCodes: stockCodes,
+          stockCodes: effectivePrewarmStockCodes,
           dataType: KLineDataType.weekly,
           dateRange: dateRange,
+          fetchBatchSize: _weeklyMacdFetchBatchSize,
+          maxConcurrentPersistWrites: _weeklyMacdPersistConcurrency,
           onProgress: (current, total) {
             final safeTotal = total <= 0 ? 1 : total;
             final safeCurrent = current.clamp(0, safeTotal);
+            final elapsedSeconds = prewarmStopwatch.elapsedMilliseconds / 1000;
+            final speed = elapsedSeconds <= 0
+                ? 0.0
+                : safeCurrent / elapsedSeconds;
+            final remaining = safeTotal - safeCurrent;
+            final etaLabel = speed <= 0
+                ? '--'
+                : _formatEtaSeconds((remaining / speed).ceil());
+
             progressNotifier.value = (
               current: safeCurrent,
               total: safeTotal,
-              stage: '更新周线MACD缓存...',
+              stage:
+                  '更新周线MACD缓存...\n'
+                  '速率 ${speed.toStringAsFixed(1)}只/秒 · 预计剩余 $etaLabel',
             );
           },
         );
@@ -1169,6 +1202,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       debugPrint('[DataManagement] 拉取周K数据失败: $e');
     } finally {
       await statusSubscription?.cancel();
+      await updatedSubscription?.cancel();
       await WakelockPlus.disable();
 
       if (context.mounted) {
@@ -1186,6 +1220,18 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         });
       }
     }
+  }
+
+  String _formatEtaSeconds(int seconds) {
+    if (seconds <= 0) {
+      return '0s';
+    }
+    if (seconds < 60) {
+      return '${seconds}s';
+    }
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+    return '${minutes}m${remainingSeconds.toString().padLeft(2, '0')}s';
   }
 
   Future<void> _forceRefetchMinuteData(BuildContext context) async {
@@ -1482,18 +1528,70 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   }
 }
 
-class _ProgressDialog extends StatelessWidget {
+class _ProgressDialog extends StatefulWidget {
   final ValueNotifier<({int current, int total, String stage})>
   progressNotifier;
 
   const _ProgressDialog({required this.progressNotifier});
 
   @override
+  State<_ProgressDialog> createState() => _ProgressDialogState();
+}
+
+class _ProgressDialogState extends State<_ProgressDialog> {
+  static const Duration _idleHintThreshold = Duration(seconds: 5);
+
+  late String _lastBusinessSignal;
+  int _idleSeconds = 0;
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastBusinessSignal = _buildBusinessSignal(widget.progressNotifier.value);
+    widget.progressNotifier.addListener(_onProgressChanged);
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      _idleSeconds++;
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    widget.progressNotifier.removeListener(_onProgressChanged);
+    super.dispose();
+  }
+
+  void _onProgressChanged() {
+    final signal = _buildBusinessSignal(widget.progressNotifier.value);
+    if (signal != _lastBusinessSignal) {
+      _lastBusinessSignal = signal;
+      _idleSeconds = 0;
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  String _buildBusinessSignal(
+    ({int current, int total, String stage}) progress,
+  ) {
+    return '${progress.stage}|${progress.current}|${progress.total}';
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final showIdleHint = _idleSeconds > _idleHintThreshold.inSeconds;
+    final idleHint = '已等待 ${_idleSeconds}s，正在处理，请稍候...';
+
     return AlertDialog(
       title: const Text('拉取历史数据'),
       content: ValueListenableBuilder<({int current, int total, String stage})>(
-        valueListenable: progressNotifier,
+        valueListenable: widget.progressNotifier,
         builder: (context, progress, _) {
           final isProcessing = progress.stage.contains('处理');
           final percent = progress.total > 0
@@ -1512,6 +1610,9 @@ class _ProgressDialog extends StatelessWidget {
               const SizedBox(height: 16),
               Text(progress.stage),
               const SizedBox(height: 8),
+              if (showIdleHint)
+                Text(idleHint, style: Theme.of(context).textTheme.bodySmall),
+              if (showIdleHint) const SizedBox(height: 8),
               if (!isProcessing)
                 Text(
                   '${progress.current} / ${progress.total} ($percent%)',

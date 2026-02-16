@@ -16,6 +16,9 @@ class MacdSettingsScreen extends StatefulWidget {
 }
 
 class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
+  static const int _weeklyRecomputeFetchBatchSize = 120;
+  static const int _weeklyRecomputePersistConcurrency = 8;
+
   late int _fastPeriod;
   late int _slowPeriod;
   late int _signalPeriod;
@@ -93,7 +96,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
   }
 
   Future<void> _resetDefaults() async {
-    const defaults = MacdConfig.defaults;
+    final defaults = MacdIndicatorService.defaultConfigFor(widget.dataType);
     setState(() {
       _fastPeriod = defaults.fastPeriod;
       _slowPeriod = defaults.slowPeriod;
@@ -153,7 +156,11 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
         stockCodes: stockCodes,
         dataType: widget.dataType,
         dateRange: _buildRecomputeDateRange(),
-        forceRecompute: true,
+        forceRecompute: false,
+        fetchBatchSize: _isWeekly ? _weeklyRecomputeFetchBatchSize : null,
+        maxConcurrentPersistWrites: _isWeekly
+            ? _weeklyRecomputePersistConcurrency
+            : null,
         onProgress: (current, total) {
           progressNotifier.value = (
             current: current.clamp(0, total <= 0 ? 1 : total),
@@ -281,10 +288,10 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
           _ParameterCard(
             title: '缓存窗口（月）',
             value: _windowMonths,
-            min: 1,
+            min: _isWeekly ? 12 : 1,
             max: 12,
-            divisions: 11,
-            hint: '当前策略建议保持 3 个月',
+            divisions: _isWeekly ? 1 : 11,
+            hint: _isWeekly ? '周线固定为 12 个月（1年）' : '当前策略建议保持 3 个月',
             onChanged: (value) => setState(() => _windowMonths = value),
           ),
           if (validation != null) ...[

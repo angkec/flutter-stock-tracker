@@ -48,6 +48,8 @@ class _FakeDataRepository implements DataRepository {
   final List<KLineDataType> fetchMissingDataTypes = <KLineDataType>[];
   final List<KLineDataType> refetchDataTypes = <KLineDataType>[];
   List<DataFetching> statusEventsDuringFetch = const <DataFetching>[];
+  List<DataUpdatedEvent> dataUpdatedEventsDuringFetch =
+      const <DataUpdatedEvent>[];
   Duration fetchMissingDataDelay = Duration.zero;
 
   @override
@@ -101,6 +103,10 @@ class _FakeDataRepository implements DataRepository {
       _statusController.add(status);
       await Future<void>.delayed(const Duration(milliseconds: 10));
     }
+    for (final event in dataUpdatedEventsDuringFetch) {
+      _updatedController.add(event);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
 
     if (fetchMissingDataDelay > Duration.zero) {
       await Future<void>.delayed(fetchMissingDataDelay);
@@ -119,6 +125,10 @@ class _FakeDataRepository implements DataRepository {
     refetchDataCallCount++;
     refetchDataTypes.add(dataType);
     onProgress?.call(stockCodes.length, stockCodes.length);
+    for (final event in dataUpdatedEventsDuringFetch) {
+      _updatedController.add(event);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
     return fetchMissingDataResult;
   }
 
@@ -254,6 +264,11 @@ class _FakeMacdIndicatorService extends MacdIndicatorService {
 
   int prewarmFromRepositoryCount = 0;
   final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
+  final List<List<String>> prewarmStockCodeBatches = <List<String>>[];
+  final List<int?> prewarmFetchBatchSizes = <int?>[];
+  final List<int?> prewarmPersistConcurrencyValues = <int?>[];
+  int prewarmProgressSteps = 1;
+  Duration prewarmProgressStepDelay = Duration.zero;
 
   @override
   Future<void> prewarmFromRepository({
@@ -261,11 +276,27 @@ class _FakeMacdIndicatorService extends MacdIndicatorService {
     required KLineDataType dataType,
     required DateRange dateRange,
     bool forceRecompute = false,
+    int? fetchBatchSize,
+    int? maxConcurrentPersistWrites,
     void Function(int current, int total)? onProgress,
   }) async {
     prewarmFromRepositoryCount++;
     prewarmDataTypes.add(dataType);
-    onProgress?.call(stockCodes.length, stockCodes.length);
+    prewarmStockCodeBatches.add(List<String>.from(stockCodes, growable: false));
+    prewarmFetchBatchSizes.add(fetchBatchSize);
+    prewarmPersistConcurrencyValues.add(maxConcurrentPersistWrites);
+    final safeTotal = stockCodes.isEmpty ? 1 : stockCodes.length;
+    final safeSteps = prewarmProgressSteps <= 0 ? 1 : prewarmProgressSteps;
+    for (var step = 1; step <= safeSteps; step++) {
+      final current = ((safeTotal * step) / safeSteps).ceil().clamp(
+        1,
+        safeTotal,
+      );
+      onProgress?.call(current, safeTotal);
+      if (prewarmProgressStepDelay > Duration.zero) {
+        await Future<void>.delayed(prewarmProgressStepDelay);
+      }
+    }
   }
 }
 
@@ -696,6 +727,71 @@ void main() {
     expect(find.text('2/4 写入K线数据'), findsOneWidget);
     expect(find.textContaining('1 / 2'), findsOneWidget);
 
+    await tester.pumpAndSettle();
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('业务进度超过5秒无变化时应展示可预期等待提示', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 12,
+      duration: const Duration(seconds: 10),
+    );
+    repository.fetchMissingDataDelay = const Duration(seconds: 10);
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+    await scrollToText(tester, '历史分钟K线');
+    final historicalCard = find.ancestor(
+      of: find.text('历史分钟K线'),
+      matching: find.byType(Card),
+    );
+    final historicalFetchButton = find.descendant(
+      of: historicalCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(historicalFetchButton);
+    await tester.tap(historicalFetchButton.hitTestable().first);
+    await tester.pump();
+
+    expect(find.text('拉取历史数据'), findsOneWidget);
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(seconds: 1));
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.textContaining('已等待'), findsOneWidget);
+    expect(find.textContaining('正在处理，请稍候'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
 
     provider.dispose();
@@ -1351,6 +1447,139 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(macdService.prewarmFromRepositoryCount, 1);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K预热应优先处理本次实际更新股票', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final provider = _FakeMarketDataProvider(data: _buildStocks(3));
+
+    final now = DateTime.now();
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 3,
+      successCount: 3,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 40,
+      duration: const Duration(milliseconds: 120),
+    );
+    repository.dataUpdatedEventsDuringFetch = <DataUpdatedEvent>[
+      DataUpdatedEvent(
+        stockCodes: const <String>['600000'],
+        dateRange: DateRange(now.subtract(const Duration(days: 30)), now),
+        dataType: KLineDataType.weekly,
+        dataVersion: 2,
+      ),
+    ];
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(macdService.prewarmFromRepositoryCount, 1);
+    expect(macdService.prewarmStockCodeBatches, hasLength(1));
+    expect(macdService.prewarmStockCodeBatches.single, const <String>[
+      '600000',
+    ]);
+    expect(macdService.prewarmFetchBatchSizes.single, 120);
+    expect(macdService.prewarmPersistConcurrencyValues.single, 8);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K预热阶段应展示速率与预计剩余时间', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final provider = _FakeMarketDataProvider(data: _buildStocks(3));
+
+    final now = DateTime.now();
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 3,
+      successCount: 3,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 40,
+      duration: const Duration(milliseconds: 120),
+    );
+    repository.dataUpdatedEventsDuringFetch = <DataUpdatedEvent>[
+      DataUpdatedEvent(
+        stockCodes: const <String>['600000', '600001', '600002'],
+        dateRange: DateRange(now.subtract(const Duration(days: 30)), now),
+        dataType: KLineDataType.weekly,
+        dataVersion: 2,
+      ),
+    ];
+    macdService.prewarmProgressSteps = 3;
+    macdService.prewarmProgressStepDelay = const Duration(milliseconds: 180);
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 280));
+
+    expect(find.textContaining('更新周线MACD缓存'), findsOneWidget);
+    expect(find.textContaining('速率'), findsWidgets);
+    expect(find.textContaining('预计剩余'), findsWidgets);
+
+    await tester.pumpAndSettle();
 
     provider.dispose();
     klineService.dispose();
