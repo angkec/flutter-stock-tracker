@@ -55,20 +55,36 @@ void main() {
       );
     });
 
-    testWidgets('daily force refetch completes with staged progress', (
+    testWidgets('daily incremental sync completes with staged progress', (
       tester,
     ) async {
       final context = await launchDataManagementWithFixture(tester);
       final driver = DataManagementDriver(tester);
 
-      await driver.tapDailyForceRefetch();
+      await driver.tapDailyFetchIncremental();
       await driver.expectProgressDialogVisible();
       await driver.waitForProgressDialogClosedWithWatchdog(
         context.createWatchdog(),
       );
 
-      await driver.expectSnackBarContains('日K数据已强制重新拉取');
-      expect(context.marketProvider.dailyForceRefetchCount, 1);
+      await driver.expectSnackBarContains('日K数据已增量拉取');
+      expect(context.marketProvider.dailyIncrementalSyncCount, 1);
+    });
+
+    testWidgets('daily force-full sync completes with staged progress', (
+      tester,
+    ) async {
+      final context = await launchDataManagementWithFixture(tester);
+      final driver = DataManagementDriver(tester);
+
+      await driver.tapDailyForceFullRefetch();
+      await driver.expectProgressDialogVisible();
+      await driver.waitForProgressDialogClosedWithWatchdog(
+        context.createWatchdog(),
+      );
+
+      await driver.expectSnackBarContains('日K数据已强制全量拉取');
+      expect(context.marketProvider.dailyForceFullSyncCount, 1);
     });
 
     testWidgets('new trading day intraday partial path remains computable', (
@@ -80,16 +96,16 @@ void main() {
       );
       final driver = DataManagementDriver(tester);
 
-      await driver.tapDailyForceRefetch();
+      await driver.tapDailyForceFullRefetch();
       await driver.expectProgressDialogVisible();
       await driver.waitForProgressDialogTextContains('日内增量计算');
       await driver.waitForProgressDialogClosedWithWatchdog(
         context.createWatchdog(),
       );
 
-      await driver.expectSnackBarContains('日K数据已强制重新拉取');
+      await driver.expectSnackBarContains('日K数据已强制全量拉取');
       expect(
-        context.marketProvider.lastDailyForceRefetchStages.any(
+        context.marketProvider.lastDailyForceFullStages.any(
           (stage) => stage.contains('日内增量计算'),
         ),
         isTrue,
@@ -105,16 +121,16 @@ void main() {
       );
       final driver = DataManagementDriver(tester);
 
-      await driver.tapDailyForceRefetch();
+      await driver.tapDailyForceFullRefetch();
       await driver.expectProgressDialogVisible();
       await driver.waitForProgressDialogTextContains('终盘覆盖增量重算');
       await driver.waitForProgressDialogClosedWithWatchdog(
         context.createWatchdog(),
       );
 
-      await driver.expectSnackBarContains('日K数据已强制重新拉取');
+      await driver.expectSnackBarContains('日K数据已强制全量拉取');
       expect(
-        context.marketProvider.lastDailyForceRefetchStages.any(
+        context.marketProvider.lastDailyForceFullStages.any(
           (stage) => stage.contains('终盘覆盖增量重算'),
         ),
         isTrue,

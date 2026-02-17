@@ -80,8 +80,12 @@ class DataManagementDriver {
     await _confirmForceRefetch();
   }
 
-  Future<void> tapDailyForceRefetch() async {
-    await _tapCardButton('日K数据', '强制拉取');
+  Future<void> tapDailyFetchIncremental() async {
+    await _tapCardButton('日K数据', '增量拉取');
+  }
+
+  Future<void> tapDailyForceFullRefetch() async {
+    await _tapCardButton('日K数据', '强制全量拉取');
     await _confirmForceRefetch();
   }
 

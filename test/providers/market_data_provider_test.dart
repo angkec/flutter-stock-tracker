@@ -13,12 +13,15 @@ import 'package:stock_rtwatcher/data/models/fetch_result.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/services/daily_kline_read_service.dart';
+import 'package:stock_rtwatcher/services/daily_kline_sync_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
@@ -163,6 +166,101 @@ class _FakeDataRepository implements DataRepository {
 
   @override
   Future<void> dispose() async {}
+}
+
+class _NoopCheckpointStore extends DailyKlineCheckpointStore {
+  @override
+  Future<void> saveGlobal({
+    required String dateKey,
+    required DailyKlineSyncMode mode,
+    required int successAtMs,
+  }) async {}
+
+  @override
+  Future<DailyKlineGlobalCheckpoint?> loadGlobal() async => null;
+
+  @override
+  Future<void> savePerStockSuccessAtMs(Map<String, int> value) async {}
+
+  @override
+  Future<Map<String, int>> loadPerStockSuccessAtMs() async =>
+      const <String, int>{};
+}
+
+class _NoopCacheStore extends DailyKlineCacheStore {
+  _NoopCacheStore()
+    : super(
+        storage: KLineFileStorage()
+          ..setBaseDirPathForTesting(Directory.systemTemp.path),
+      );
+
+  @override
+  Future<void> saveAll(
+    Map<String, List<KLine>> barsByStockCode, {
+    void Function(int current, int total)? onProgress,
+    int? maxConcurrentWrites,
+  }) async {}
+}
+
+class _FakeDailyKlineReadService extends DailyKlineReadService {
+  _FakeDailyKlineReadService() : super(cacheStore: _NoopCacheStore());
+
+  int readCallCount = 0;
+  Object? readError;
+  final Map<String, List<KLine>> payloadByCode = <String, List<KLine>>{};
+
+  @override
+  Future<Map<String, List<KLine>>> readOrThrow({
+    required List<String> stockCodes,
+    required DateTime anchorDate,
+    required int targetBars,
+  }) async {
+    readCallCount++;
+    final error = readError;
+    if (error != null) {
+      throw error;
+    }
+    return {
+      for (final code in stockCodes)
+        code: payloadByCode[code] ?? const <KLine>[],
+    };
+  }
+}
+
+class _FakeDailyKlineSyncService extends DailyKlineSyncService {
+  _FakeDailyKlineSyncService()
+    : super(
+        checkpointStore: _NoopCheckpointStore(),
+        cacheStore: _NoopCacheStore(),
+        fetcher:
+            ({
+              required List<Stock> stocks,
+              required int count,
+              required DailyKlineSyncMode mode,
+              void Function(int current, int total)? onProgress,
+            }) async {
+              return const <String, List<KLine>>{};
+            },
+      );
+
+  int syncCallCount = 0;
+  DailyKlineSyncMode? lastMode;
+
+  @override
+  Future<DailyKlineSyncResult> sync({
+    required DailyKlineSyncMode mode,
+    required List<Stock> stocks,
+    required int targetBars,
+    void Function(String stage, int current, int total)? onProgress,
+  }) async {
+    syncCallCount++;
+    lastMode = mode;
+    return const DailyKlineSyncResult(
+      successStockCodes: <String>[],
+      failureStockCodes: <String>[],
+      failureReasons: <String, String>{},
+    );
+  }
 }
 
 class _DelayedFalseBreakoutService extends BreakoutService {
@@ -377,6 +475,22 @@ void main() {
 
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('daily_bars_cache_v1'), isNull);
+      expect(
+        prefs.getString('daily_kline_checkpoint_last_success_date'),
+        isNotNull,
+      );
+      expect(
+        prefs.getString('daily_kline_checkpoint_last_mode'),
+        isNotNull,
+      );
+      expect(
+        prefs.getInt('daily_kline_checkpoint_last_success_at_ms'),
+        isNotNull,
+      );
+      expect(
+        prefs.getString('daily_kline_checkpoint_per_stock_last_success_at_ms'),
+        isNotNull,
+      );
     },
   );
 
@@ -906,4 +1020,83 @@ void main() {
     expect(pool.batchFetchCalls, 1);
     expect(fakeRepository.getKlinesCallCount, 0);
   });
+
+  test('recalculateBreakouts should fail fast when daily read fails', () async {
+    final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+    final monitorData = StockMonitorData(
+      stock: stock,
+      ratio: 1.1,
+      changePercent: 0.3,
+    );
+    SharedPreferences.setMockInitialValues({
+      'market_data_cache': jsonEncode([monitorData.toJson()]),
+      'market_data_date': DateTime(2026, 2, 17).toIso8601String(),
+      'minute_data_date': DateTime(2026, 2, 17).toIso8601String(),
+      'minute_data_cache_v1': 1,
+    });
+
+    final pool = _ReconnectableFakePool(
+      dailyBarsByCode: {'600000': _buildDailyBars(260)},
+    );
+    final readService = _FakeDailyKlineReadService()
+      ..readError = const DailyKlineReadException(
+        stockCode: '600000',
+        reason: DailyKlineReadFailureReason.missingFile,
+        message: 'missing',
+      );
+    final provider = MarketDataProvider(
+      pool: pool,
+      stockService: StockService(pool),
+      industryService: IndustryService(),
+      dailyKlineReadService: readService,
+      dailyKlineSyncService: _FakeDailyKlineSyncService(),
+    );
+    provider.setBreakoutService(BreakoutService());
+
+    await provider.loadFromCache();
+    final error = await provider.recalculateBreakouts();
+
+    expect(error, contains('日K读取失败'));
+    expect(error, contains('missing'));
+    expect(readService.readCallCount, greaterThanOrEqualTo(1));
+  });
+
+  test(
+    'refresh should not trigger daily sync unless explicit action is called',
+    () async {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+      final monitorData = StockMonitorData(
+        stock: stock,
+        ratio: 1.1,
+        changePercent: 0.3,
+      );
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode([monitorData.toJson()]),
+        'market_data_date': today.toIso8601String(),
+        'minute_data_date': today.toIso8601String(),
+        'minute_data_cache_v1': 1,
+      });
+
+      final pool = _ReconnectableFakePool(
+        dailyBarsByCode: {'600000': _buildDailyBars(260)},
+      );
+      final syncService = _FakeDailyKlineSyncService();
+      final readService = _FakeDailyKlineReadService();
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: StockService(pool),
+        industryService: IndustryService(),
+        dailyKlineReadService: readService,
+        dailyKlineSyncService: syncService,
+      );
+      provider.setPullbackService(PullbackService());
+
+      await provider.loadFromCache();
+      await provider.refresh(silent: true);
+
+      expect(syncService.syncCallCount, 0);
+    },
+  );
 }

@@ -79,7 +79,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
               _buildSectionTitle(context, '基础数据'),
               const SizedBox(height: 6),
-              _buildCacheItem(
+              _buildDailyCacheItem(
                 context,
                 title: '日K数据',
                 subtitle: '${provider.dailyBarsCacheCount}只股票',
@@ -87,10 +87,11 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 statusLabel: provider.dailyBarsCacheCount > 0 ? '已缓存' : '待拉取',
                 isReady: provider.dailyBarsCacheCount > 0,
                 isBusy: provider.isLoading,
-                onForceRefetch: () => _confirmForceRefetch(
+                onIncrementalFetch: () => _syncDailyIncremental(context),
+                onForceFullFetch: () => _confirmForceRefetch(
                   context,
-                  '日K数据',
-                  () => _forceRefetchDailyData(context),
+                  '日K数据（强制全量）',
+                  () => _syncDailyForceFull(context),
                 ),
               ),
               _buildCacheItem(
@@ -449,6 +450,44 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         trailing: FilledButton.tonal(
           onPressed: isBusy ? null : onForceRefetch,
           child: const Text('强制拉取'),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDailyCacheItem(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required String? size,
+    required String statusLabel,
+    required bool isReady,
+    required bool isBusy,
+    required VoidCallback onIncrementalFetch,
+    required VoidCallback onForceFullFetch,
+  }) {
+    final summary = '$subtitle · ${size ?? '-'} · $statusLabel';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: Icon(_iconForCacheType(title)),
+        title: Text(title),
+        subtitle: Text(summary),
+        trailing: Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          alignment: WrapAlignment.end,
+          children: [
+            FilledButton.tonal(
+              onPressed: isBusy ? null : onIncrementalFetch,
+              child: const Text('增量拉取'),
+            ),
+            FilledButton.tonal(
+              onPressed: isBusy ? null : onForceFullFetch,
+              child: const Text('强制全量拉取'),
+            ),
+          ],
         ),
       ),
     );
@@ -1630,7 +1669,18 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     }
   }
 
-  Future<void> _forceRefetchDailyData(BuildContext context) async {
+  Future<void> _syncDailyIncremental(BuildContext context) async {
+    await _runDailySync(context, forceFull: false);
+  }
+
+  Future<void> _syncDailyForceFull(BuildContext context) async {
+    await _runDailySync(context, forceFull: true);
+  }
+
+  Future<void> _runDailySync(
+    BuildContext context, {
+    required bool forceFull,
+  }) async {
     final provider = context.read<MarketDataProvider>();
     final auditService = context.read<AuditService>();
     if (provider.allData.isEmpty) {
@@ -1657,26 +1707,26 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
     DateTime? writeStageStartedAt;
     var writeStageStartProgress = 0;
-    var sawIntradayStage = false;
-    var sawFinalOverrideStage = false;
+    final operation = forceFull
+        ? AuditOperationType.dailyForceRefetch
+        : AuditOperationType.dailyFetchIncremental;
+    final stageLabel = forceFull
+        ? 'daily_force_refetch'
+        : 'daily_fetch_incremental';
 
     try {
       await auditService.runner.run(
-        operation: AuditOperationType.dailyForceRefetch,
+        operation: operation,
         body: (audit) async {
-          audit.stageStarted('daily_force_refetch');
-          await provider.forceRefetchDailyBars(
+          audit.stageStarted(stageLabel);
+          final syncRunner = forceFull
+              ? provider.syncDailyBarsForceFull
+              : provider.syncDailyBarsIncremental;
+          await syncRunner(
             onProgress: (stage, current, total) {
               final safeTotal = total <= 0 ? 1 : total;
               final safeCurrent = current.clamp(0, safeTotal);
               var stageLabel = stage;
-
-              if (stage.contains('日内增量计算')) {
-                sawIntradayStage = true;
-              }
-              if (stage.contains('终盘覆盖增量重算')) {
-                sawFinalOverrideStage = true;
-              }
 
               if (stage.startsWith('2/4 写入日K文件')) {
                 final now = DateTime.now();
@@ -1722,35 +1772,25 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
             'data_changed': true,
             'scope_count': provider.allData.length,
           });
-          if (sawFinalOverrideStage) {
-            audit.record(AuditEventType.completenessState, {
-              'state': 'finalized',
-            });
-          } else if (sawIntradayStage) {
-            audit.record(AuditEventType.completenessState, {
-              'state': 'partial',
-            });
-          } else {
-            audit.record(AuditEventType.completenessState, {
-              'state': 'unknown',
-            });
-          }
-          audit.stageCompleted('daily_force_refetch');
+          audit.record(AuditEventType.completenessState, {'state': 'unknown'});
+          audit.stageCompleted(stageLabel);
         },
       );
       if (context.mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('日K数据已强制重新拉取')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(forceFull ? '日K数据已强制全量拉取' : '日K数据已增量拉取')),
+        );
         _triggerRefresh();
       }
     } catch (e) {
       if (context.mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('日K数据强制拉取失败: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(forceFull ? '日K数据强制全量拉取失败: $e' : '日K数据增量拉取失败: $e'),
+          ),
+        );
       }
     } finally {
       await _refreshAuditLatestSafely(auditService);

@@ -234,6 +234,7 @@ class _FakeMarketDataProvider extends MarketDataProvider {
   final List<StockMonitorData> _testData;
   int forceMinuteRefetchCount = 0;
   int forceDailyRefetchCount = 0;
+  int incrementalDailySyncCount = 0;
   int forceIndustryRefetchCount = 0;
   List<({String stage, int current, int total})> dailyProgressEvents = const [];
   Duration dailyProgressEventInterval = const Duration(milliseconds: 10);
@@ -266,6 +267,32 @@ class _FakeMarketDataProvider extends MarketDataProvider {
 
   @override
   Future<void> forceRefetchDailyBars({
+    void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
+  }) async {
+    await syncDailyBarsForceFull(
+      onProgress: onProgress,
+      indicatorTargetStockCodes: indicatorTargetStockCodes,
+    );
+  }
+
+  @override
+  Future<void> syncDailyBarsIncremental({
+    void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
+  }) async {
+    incrementalDailySyncCount++;
+    for (final event in dailyProgressEvents) {
+      onProgress?.call(event.stage, event.current, event.total);
+      await Future<void>.delayed(dailyProgressEventInterval);
+    }
+    if (dailyRefetchDelay > Duration.zero) {
+      await Future<void>.delayed(dailyRefetchDelay);
+    }
+  }
+
+  @override
+  Future<void> syncDailyBarsForceFull({
     void Function(String stage, int current, int total)? onProgress,
     Set<String>? indicatorTargetStockCodes,
   }) async {
@@ -1070,7 +1097,7 @@ void main() {
     );
     final dailyForceButton = find.descendant(
       of: dailyCard,
-      matching: find.text('强制拉取'),
+      matching: find.text('强制全量拉取'),
     );
 
     await tester.ensureVisible(dailyForceButton);
@@ -1099,9 +1126,7 @@ void main() {
     await repository.dispose();
   });
 
-  testWidgets('daily force refetch should write latest audit summary', (
-    tester,
-  ) async {
+  testWidgets('日K数据卡片应同时显示增量拉取与强制全量拉取动作', (tester) async {
     final repository = _FakeDataRepository();
     final klineService = HistoricalKlineService(repository: repository);
     final trendService = _FakeIndustryTrendService();
@@ -1115,12 +1140,6 @@ void main() {
         ),
       ],
     );
-    provider.dailyProgressEvents =
-        const <({String stage, int current, int total})>[
-          (stage: '1/4 拉取日K数据...', current: 1, total: 3),
-          (stage: '日内增量计算', current: 2, total: 3),
-          (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
-        ];
 
     await pumpDataManagement(
       tester,
@@ -1136,17 +1155,14 @@ void main() {
       of: find.text('日K数据'),
       matching: find.byType(Card),
     );
-    final dailyForceButton = find.descendant(
-      of: dailyCard,
-      matching: find.text('强制拉取'),
+    expect(
+      find.descendant(of: dailyCard, matching: find.text('增量拉取')),
+      findsOneWidget,
     );
-    await tester.tap(dailyForceButton);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('确定').last);
-    await tester.pumpAndSettle();
-
-    expect(find.text('Latest Audit'), findsOneWidget);
-    expect(find.text('PASS'), findsWidgets);
+    expect(
+      find.descendant(of: dailyCard, matching: find.text('强制全量拉取')),
+      findsOneWidget,
+    );
 
     provider.dispose();
     klineService.dispose();
@@ -1154,6 +1170,64 @@ void main() {
     rankService.dispose();
     await repository.dispose();
   });
+
+  testWidgets(
+    'daily force refetch should write FAIL latest audit when completeness is unknown',
+    (tester) async {
+      final repository = _FakeDataRepository();
+      final klineService = HistoricalKlineService(repository: repository);
+      final trendService = _FakeIndustryTrendService();
+      final rankService = _FakeIndustryRankService();
+      final provider = _FakeMarketDataProvider(
+        data: [
+          StockMonitorData(
+            stock: Stock(code: '600000', name: '浦发银行', market: 1),
+            ratio: 1.2,
+            changePercent: 0.5,
+          ),
+        ],
+      );
+      provider.dailyProgressEvents =
+          const <({String stage, int current, int total})>[
+            (stage: '1/4 拉取日K数据...', current: 1, total: 3),
+            (stage: '日内增量计算', current: 2, total: 3),
+            (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
+          ];
+
+      await pumpDataManagement(
+        tester,
+        repository: repository,
+        marketDataProvider: provider,
+        klineService: klineService,
+        trendService: trendService,
+        rankService: rankService,
+      );
+
+      await scrollToText(tester, '日K数据');
+      final dailyCard = find.ancestor(
+        of: find.text('日K数据'),
+        matching: find.byType(Card),
+      );
+      final dailyForceButton = find.descendant(
+        of: dailyCard,
+        matching: find.text('强制全量拉取'),
+      );
+      await tester.tap(dailyForceButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确定').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Latest Audit'), findsOneWidget);
+      expect(find.text('FAIL'), findsWidgets);
+      expect(find.text('unknown_state'), findsWidgets);
+
+      provider.dispose();
+      klineService.dispose();
+      trendService.dispose();
+      rankService.dispose();
+      await repository.dispose();
+    },
+  );
 
   testWidgets('failed historical fetch should produce FAIL latest audit', (
     tester,
@@ -1257,7 +1331,7 @@ void main() {
     );
     final dailyForceButton = find.descendant(
       of: dailyCard,
-      matching: find.text('强制拉取'),
+      matching: find.text('强制全量拉取'),
     );
     await tester.ensureVisible(dailyForceButton);
     await tester.tap(dailyForceButton);
