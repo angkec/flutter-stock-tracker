@@ -52,7 +52,7 @@ void main() {
       );
 
       final dailyForceRefetchStopwatch = Stopwatch()..start();
-      await driver.tapDailyForceRefetch();
+      await driver.tapDailyForceFullRefetch();
       final dailyForceRefetchSawSpeed = await driver
           .waitForProgressDialogTextContainsOrClosed(
             '速率',

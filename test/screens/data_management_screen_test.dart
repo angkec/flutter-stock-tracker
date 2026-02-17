@@ -1171,61 +1171,63 @@ void main() {
     await repository.dispose();
   });
 
-  testWidgets('daily force refetch should write latest audit summary', (
-    tester,
-  ) async {
-    final repository = _FakeDataRepository();
-    final klineService = HistoricalKlineService(repository: repository);
-    final trendService = _FakeIndustryTrendService();
-    final rankService = _FakeIndustryRankService();
-    final provider = _FakeMarketDataProvider(
-      data: [
-        StockMonitorData(
-          stock: Stock(code: '600000', name: '浦发银行', market: 1),
-          ratio: 1.2,
-          changePercent: 0.5,
-        ),
-      ],
-    );
-    provider.dailyProgressEvents =
-        const <({String stage, int current, int total})>[
-          (stage: '1/4 拉取日K数据...', current: 1, total: 3),
-          (stage: '日内增量计算', current: 2, total: 3),
-          (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
-        ];
+  testWidgets(
+    'daily force refetch should write FAIL latest audit when completeness is unknown',
+    (tester) async {
+      final repository = _FakeDataRepository();
+      final klineService = HistoricalKlineService(repository: repository);
+      final trendService = _FakeIndustryTrendService();
+      final rankService = _FakeIndustryRankService();
+      final provider = _FakeMarketDataProvider(
+        data: [
+          StockMonitorData(
+            stock: Stock(code: '600000', name: '浦发银行', market: 1),
+            ratio: 1.2,
+            changePercent: 0.5,
+          ),
+        ],
+      );
+      provider.dailyProgressEvents =
+          const <({String stage, int current, int total})>[
+            (stage: '1/4 拉取日K数据...', current: 1, total: 3),
+            (stage: '日内增量计算', current: 2, total: 3),
+            (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
+          ];
 
-    await pumpDataManagement(
-      tester,
-      repository: repository,
-      marketDataProvider: provider,
-      klineService: klineService,
-      trendService: trendService,
-      rankService: rankService,
-    );
+      await pumpDataManagement(
+        tester,
+        repository: repository,
+        marketDataProvider: provider,
+        klineService: klineService,
+        trendService: trendService,
+        rankService: rankService,
+      );
 
-    await scrollToText(tester, '日K数据');
-    final dailyCard = find.ancestor(
-      of: find.text('日K数据'),
-      matching: find.byType(Card),
-    );
-    final dailyForceButton = find.descendant(
-      of: dailyCard,
-      matching: find.text('强制全量拉取'),
-    );
-    await tester.tap(dailyForceButton);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('确定').last);
-    await tester.pumpAndSettle();
+      await scrollToText(tester, '日K数据');
+      final dailyCard = find.ancestor(
+        of: find.text('日K数据'),
+        matching: find.byType(Card),
+      );
+      final dailyForceButton = find.descendant(
+        of: dailyCard,
+        matching: find.text('强制全量拉取'),
+      );
+      await tester.tap(dailyForceButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确定').last);
+      await tester.pumpAndSettle();
 
-    expect(find.text('Latest Audit'), findsOneWidget);
-    expect(find.text('PASS'), findsWidgets);
+      expect(find.text('Latest Audit'), findsOneWidget);
+      expect(find.text('FAIL'), findsWidgets);
+      expect(find.text('unknown_state'), findsWidgets);
 
-    provider.dispose();
-    klineService.dispose();
-    trendService.dispose();
-    rankService.dispose();
-    await repository.dispose();
-  });
+      provider.dispose();
+      klineService.dispose();
+      trendService.dispose();
+      rankService.dispose();
+      await repository.dispose();
+    },
+  );
 
   testWidgets('failed historical fetch should produce FAIL latest audit', (
     tester,

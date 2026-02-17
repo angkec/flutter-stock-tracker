@@ -367,10 +367,12 @@ class FakeMarketDataProvider extends MarketDataProvider {
   final List<StockMonitorData> _data;
   final DataManagementFixturePreset _preset;
 
-  int dailyForceRefetchCount = 0;
+  int dailyIncrementalSyncCount = 0;
+  int dailyForceFullSyncCount = 0;
   int minuteForceRefetchCount = 0;
   int industryForceRefetchCount = 0;
-  final List<String> lastDailyForceRefetchStages = <String>[];
+  final List<String> lastDailyIncrementalStages = <String>[];
+  final List<String> lastDailyForceFullStages = <String>[];
 
   @override
   List<StockMonitorData> get allData => _data;
@@ -415,17 +417,40 @@ class FakeMarketDataProvider extends MarketDataProvider {
       minuteForceRefetchCount++;
     }
     if (forceDailyRefetch) {
-      dailyForceRefetchCount++;
+      dailyForceFullSyncCount++;
     }
   }
 
   @override
-  Future<void> forceRefetchDailyBars({
+  Future<void> syncDailyBarsIncremental({
     void Function(String stage, int current, int total)? onProgress,
     Set<String>? indicatorTargetStockCodes,
   }) async {
-    dailyForceRefetchCount++;
-    lastDailyForceRefetchStages.clear();
+    dailyIncrementalSyncCount++;
+    lastDailyIncrementalStages.clear();
+
+    const events = <({String stage, int current, int total})>[
+      (stage: '1/4 拉取日K数据...', current: 1, total: 3),
+      (stage: '2/4 写入日K文件...', current: 1, total: 3),
+      (stage: '2/4 写入日K文件...', current: 3, total: 3),
+      (stage: '3/4 计算指标...', current: 1, total: 1),
+      (stage: '4/4 保存缓存元数据...', current: 1, total: 1),
+    ];
+
+    await _emitDailyStages(
+      events: events,
+      stageCollector: lastDailyIncrementalStages,
+      onProgress: onProgress,
+    );
+  }
+
+  @override
+  Future<void> syncDailyBarsForceFull({
+    void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
+  }) async {
+    dailyForceFullSyncCount++;
+    lastDailyForceFullStages.clear();
 
     final events = switch (_preset) {
       DataManagementFixturePreset.newTradingDayIntradayPartial =>
@@ -454,8 +479,31 @@ class FakeMarketDataProvider extends MarketDataProvider {
       ],
     };
 
+    await _emitDailyStages(
+      events: events,
+      stageCollector: lastDailyForceFullStages,
+      onProgress: onProgress,
+    );
+  }
+
+  @override
+  Future<void> forceRefetchDailyBars({
+    void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
+  }) {
+    return syncDailyBarsForceFull(
+      onProgress: onProgress,
+      indicatorTargetStockCodes: indicatorTargetStockCodes,
+    );
+  }
+
+  Future<void> _emitDailyStages({
+    required List<({String stage, int current, int total})> events,
+    required List<String> stageCollector,
+    required void Function(String stage, int current, int total)? onProgress,
+  }) async {
     for (final event in events) {
-      lastDailyForceRefetchStages.add(event.stage);
+      stageCollector.add(event.stage);
       onProgress?.call(event.stage, event.current, event.total);
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
