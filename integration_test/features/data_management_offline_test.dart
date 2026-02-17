@@ -163,6 +163,31 @@ void main() {
       },
     );
 
+    testWidgets(
+      'weekly ADX recompute should expose progress hints and close without stall',
+      (tester) async {
+        final context = await launchDataManagementWithFixture(tester);
+        final driver = DataManagementDriver(tester);
+
+        await driver.tapWeeklyAdxSettings();
+        await driver.tapWeeklyAdxRecompute();
+        await driver.expectAdxRecomputeDialogVisible('周线');
+        await driver.waitForAdxRecomputeDialogTextContains('速率');
+        await driver.waitForAdxRecomputeDialogTextContains('预计剩余');
+        await driver.waitForAdxRecomputeDialogClosedWithWatchdog(
+          context.createWatchdog(),
+          scopeLabel: '周线',
+        );
+
+        await driver.expectSnackBarContains('周线 ADX重算完成');
+        expect(context.adxService.prewarmCalls, greaterThan(0));
+        expect(context.adxService.prewarmDataTypes.last, KLineDataType.weekly);
+        expect(context.adxService.prewarmForceRecomputeValues.last, isFalse);
+        expect(context.adxService.prewarmFetchBatchSizes.last, 120);
+        expect(context.adxService.prewarmPersistConcurrencyValues.last, 8);
+      },
+    );
+
     testWidgets('fails when no business progress for over 5 seconds', (
       tester,
     ) async {

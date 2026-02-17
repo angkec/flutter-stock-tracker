@@ -22,6 +22,7 @@ import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
+import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
@@ -168,6 +169,15 @@ class MyApp extends StatelessWidget {
           },
           update: (_, repository, previous) => previous!,
         ),
+        ChangeNotifierProxyProvider<DataRepository, AdxIndicatorService>(
+          create: (context) {
+            final repository = context.read<DataRepository>();
+            final service = AdxIndicatorService(repository: repository);
+            service.load();
+            return service;
+          },
+          update: (_, repository, previous) => previous!,
+        ),
         ChangeNotifierProvider(
           create: (_) {
             final service = BacktestService();
@@ -200,6 +210,7 @@ class MyApp extends StatelessWidget {
             final historicalKlineService = context
                 .read<HistoricalKlineService>();
             final macdService = context.read<MacdIndicatorService>();
+            final adxService = context.read<AdxIndicatorService>();
             breakoutService.setHistoricalKlineService(historicalKlineService);
             final provider = MarketDataProvider(
               pool: pool,
@@ -210,12 +221,13 @@ class MyApp extends StatelessWidget {
             provider.setPullbackService(pullbackService);
             provider.setBreakoutService(breakoutService);
             provider.setMacdService(macdService);
+            provider.setAdxService(adxService);
             provider.loadFromCache();
             return provider;
           },
           update:
               (
-                _,
+                context,
                 stockService,
                 industryService,
                 pullbackService,
@@ -224,12 +236,14 @@ class MyApp extends StatelessWidget {
                 macdService,
                 previous,
               ) {
+                final adxService = context.read<AdxIndicatorService>();
                 breakoutService.setHistoricalKlineService(
                   historicalKlineService,
                 );
                 previous!.setPullbackService(pullbackService);
                 previous.setBreakoutService(breakoutService);
                 previous.setMacdService(macdService);
+                previous.setAdxService(adxService);
                 return previous;
               },
         ),

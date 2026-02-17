@@ -30,6 +30,14 @@ void main() {
       find.byKey(const ValueKey('linked_daily_macd_subchart')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('linked_weekly_adx_subchart')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('linked_daily_adx_subchart')),
+      findsOneWidget,
+    );
 
     final weeklyChart = tester.widget<KLineChartWithSubCharts>(
       find.byKey(const ValueKey('linked_weekly_chart')),

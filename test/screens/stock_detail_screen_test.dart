@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
+import 'package:stock_rtwatcher/models/adx_config.dart';
+import 'package:stock_rtwatcher/models/adx_point.dart';
 import 'package:stock_rtwatcher/models/macd_config.dart';
 import 'package:stock_rtwatcher/models/macd_point.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
@@ -23,6 +26,20 @@ class _FakeMacdCacheStore extends MacdCacheStore {
   }
 }
 
+class _FakeAdxCacheStore extends AdxCacheStore {
+  _FakeAdxCacheStore(this._seriesByKey);
+
+  final Map<String, AdxCacheSeries> _seriesByKey;
+
+  @override
+  Future<AdxCacheSeries?> loadSeries({
+    required String stockCode,
+    required KLineDataType dataType,
+  }) async {
+    return _seriesByKey['$stockCode|${dataType.name}'];
+  }
+}
+
 MacdCacheSeries _buildSeries({
   required String stockCode,
   required KLineDataType dataType,
@@ -36,6 +53,24 @@ MacdCacheSeries _buildSeries({
     points: dates
         .map(
           (date) => MacdPoint(datetime: date, dif: 0.1, dea: 0.08, hist: 0.04),
+        )
+        .toList(growable: false),
+  );
+}
+
+AdxCacheSeries _buildAdxSeries({
+  required String stockCode,
+  required KLineDataType dataType,
+  required List<DateTime> dates,
+}) {
+  return AdxCacheSeries(
+    stockCode: stockCode,
+    dataType: dataType,
+    config: const AdxConfig(period: 14, threshold: 25),
+    sourceSignature: 'test_adx_${stockCode}_${dataType.name}',
+    points: dates
+        .map(
+          (date) => AdxPoint(datetime: date, adx: 20, plusDi: 25, minusDi: 15),
         )
         .toList(growable: false),
   );
@@ -70,6 +105,10 @@ void main() {
       find.byKey(const ValueKey('stock_detail_macd_daily')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('stock_detail_adx_daily')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('weekly mode displays cached MACD subchart section', (
@@ -98,6 +137,10 @@ void main() {
       find.byKey(const ValueKey('stock_detail_macd_weekly')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('stock_detail_adx_weekly')),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -110,6 +153,16 @@ void main() {
       const stockCode = '600000';
       final cacheStore = _FakeMacdCacheStore({
         '$stockCode|weekly': _buildSeries(
+          stockCode: stockCode,
+          dataType: KLineDataType.weekly,
+          dates: weeklyBars
+              .sublist(weeklyBars.length - 12)
+              .map((bar) => bar.datetime)
+              .toList(growable: false),
+        ),
+      });
+      final adxCacheStore = _FakeAdxCacheStore({
+        '$stockCode|weekly': _buildAdxSeries(
           stockCode: stockCode,
           dataType: KLineDataType.weekly,
           dates: weeklyBars
@@ -133,6 +186,7 @@ void main() {
             ),
             initialWeeklyBars: weeklyBars,
             macdCacheStoreForTest: cacheStore,
+            adxCacheStoreForTest: adxCacheStore,
           ),
         ),
       );
@@ -142,6 +196,10 @@ void main() {
       expect(find.text('暂无MACD缓存，请先在数据管理同步'), findsNothing);
       expect(
         find.byKey(const ValueKey('stock_detail_macd_paint_weekly')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('stock_detail_adx_paint_weekly')),
         findsOneWidget,
       );
     },
@@ -169,6 +227,18 @@ void main() {
         dates: weeklyBars.map((bar) => bar.datetime).toList(growable: false),
       ),
     });
+    final adxCacheStore = _FakeAdxCacheStore({
+      '$stockCode|daily': _buildAdxSeries(
+        stockCode: stockCode,
+        dataType: KLineDataType.daily,
+        dates: dailyBars.map((bar) => bar.datetime).toList(growable: false),
+      ),
+      '$stockCode|weekly': _buildAdxSeries(
+        stockCode: stockCode,
+        dataType: KLineDataType.weekly,
+        dates: weeklyBars.map((bar) => bar.datetime).toList(growable: false),
+      ),
+    });
 
     await tester.pumpWidget(
       MaterialApp(
@@ -181,6 +251,7 @@ void main() {
           initialDailyBars: dailyBars,
           initialWeeklyBars: weeklyBars,
           macdCacheStoreForTest: cacheStore,
+          adxCacheStoreForTest: adxCacheStore,
         ),
       ),
     );
@@ -188,6 +259,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('stock_detail_macd_paint_daily')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('stock_detail_adx_paint_daily')),
       findsOneWidget,
     );
 
@@ -199,6 +274,14 @@ void main() {
     );
     expect(
       find.byKey(const ValueKey('linked_daily_macd_paint')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('linked_weekly_adx_paint')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('linked_daily_adx_paint')),
       findsOneWidget,
     );
   });
