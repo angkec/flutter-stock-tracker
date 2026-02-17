@@ -128,4 +128,35 @@ class LinkedLayoutConfig {
           (json['containerMaxHeight'] as num?)?.toDouble() ?? 840,
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    return other is LinkedLayoutConfig &&
+        other.mainMinHeight == mainMinHeight &&
+        other.mainIdealHeight == mainIdealHeight &&
+        other.subMinHeight == subMinHeight &&
+        other.subIdealHeight == subIdealHeight &&
+        other.infoBarHeight == infoBarHeight &&
+        other.subchartSpacing == subchartSpacing &&
+        other.paneGap == paneGap &&
+        other.topPaneWeight == topPaneWeight &&
+        other.bottomPaneWeight == bottomPaneWeight &&
+        other.containerMinHeight == containerMinHeight &&
+        other.containerMaxHeight == containerMaxHeight;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    mainMinHeight,
+    mainIdealHeight,
+    subMinHeight,
+    subIdealHeight,
+    infoBarHeight,
+    subchartSpacing,
+    paneGap,
+    topPaneWeight,
+    bottomPaneWeight,
+    containerMinHeight,
+    containerMaxHeight,
+  );
 }
