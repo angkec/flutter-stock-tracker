@@ -15,6 +15,7 @@ import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
+import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 
 /// 在隔离线程中解析股票监控数据 JSON
 List<StockMonitorData> _parseMarketDataJson(String jsonStr) {
@@ -40,6 +41,7 @@ class MarketDataProvider extends ChangeNotifier {
   PullbackService? _pullbackService;
   BreakoutService? _breakoutService;
   MacdIndicatorService? _macdService;
+  AdxIndicatorService? _adxService;
 
   List<StockMonitorData> _allData = [];
   bool _isLoading = false;
@@ -206,6 +208,11 @@ class MarketDataProvider extends ChangeNotifier {
   /// 设置MACD指标服务（用于日/周线MACD计算与缓存）
   void setMacdService(MacdIndicatorService service) {
     _macdService = service;
+  }
+
+  /// 设置ADX指标服务（用于日/周线ADX计算与缓存）
+  void setAdxService(AdxIndicatorService service) {
+    _adxService = service;
   }
 
   void _updateProgress(RefreshStage stage, int current, int total) {
@@ -424,6 +431,14 @@ class MarketDataProvider extends ChangeNotifier {
           }
         }
 
+        if (_adxService != null && _dailyBarsCache.isNotEmpty) {
+          try {
+            await _prewarmDailyAdx();
+          } catch (e) {
+            debugPrint('ADX prewarm failed: $e');
+          }
+        }
+
         if (!silent) {
           _updateProgress(RefreshStage.analyzing, 0, 0);
         }
@@ -539,6 +554,14 @@ class MarketDataProvider extends ChangeNotifier {
         }
       }
 
+      if (_adxService != null && _dailyBarsCache.isNotEmpty) {
+        try {
+          await _prewarmDailyAdx();
+        } catch (e) {
+          debugPrint('ADX prewarm failed: $e');
+        }
+      }
+
       // Update stage to analyzing
       if (!silent) {
         _updateProgress(RefreshStage.analyzing, 0, 0);
@@ -640,8 +663,7 @@ class MarketDataProvider extends ChangeNotifier {
     stageStopwatch.stop();
     final fetchAndPersistMs = stageStopwatch.elapsedMilliseconds;
 
-    final normalizedIndicatorTargets =
-        indicatorTargetStockCodes == null
+    final normalizedIndicatorTargets = indicatorTargetStockCodes == null
         ? null
         : indicatorTargetStockCodes
               .where((code) => _dailyBarsCache.containsKey(code))
@@ -651,7 +673,11 @@ class MarketDataProvider extends ChangeNotifier {
         : normalizedIndicatorTargets.length;
 
     resetStageTimer();
-    onProgress?.call('3/4 计算指标...', 0, indicatorTotal <= 0 ? 1 : indicatorTotal);
+    onProgress?.call(
+      '3/4 计算指标...',
+      0,
+      indicatorTotal <= 0 ? 1 : indicatorTotal,
+    );
     await _detectBreakouts(
       targetStockCodes: normalizedIndicatorTargets,
       onProgress: (current, total) {
@@ -664,6 +690,16 @@ class MarketDataProvider extends ChangeNotifier {
     );
 
     await _prewarmDailyMacd(
+      stockCodes: normalizedIndicatorTargets,
+      onProgress: (current, total) {
+        final safeTotal = total <= 0
+            ? (indicatorTotal <= 0 ? 1 : indicatorTotal)
+            : total;
+        final safeCurrent = current.clamp(0, safeTotal);
+        onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
+      },
+    );
+    await _prewarmDailyAdx(
       stockCodes: normalizedIndicatorTargets,
       onProgress: (current, total) {
         final safeTotal = total <= 0
@@ -872,6 +908,34 @@ class MarketDataProvider extends ChangeNotifier {
     }
 
     await _macdService!.prewarmFromBars(
+      dataType: KLineDataType.daily,
+      barsByStockCode: payload,
+      onProgress: onProgress,
+    );
+  }
+
+  Future<void> _prewarmDailyAdx({
+    Set<String>? stockCodes,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (_adxService == null || _dailyBarsCache.isEmpty) {
+      return;
+    }
+
+    final payload = <String, List<KLine>>{};
+    for (final entry in _dailyBarsCache.entries) {
+      if (stockCodes != null && !stockCodes.contains(entry.key)) {
+        continue;
+      }
+      if (entry.value.isNotEmpty) {
+        payload[entry.key] = entry.value;
+      }
+    }
+    if (payload.isEmpty) {
+      return;
+    }
+
+    await _adxService!.prewarmFromBars(
       dataType: KLineDataType.daily,
       barsByStockCode: payload,
       onProgress: onProgress,

@@ -14,7 +14,9 @@ import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/screens/adx_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/macd_settings_screen.dart';
+import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
@@ -43,6 +45,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   static const int _weeklyRangeDays = 760;
   static const int _weeklyMacdFetchBatchSize = 120;
   static const int _weeklyMacdPersistConcurrency = 8;
+  static const int _weeklyAdxFetchBatchSize = 120;
+  static const int _weeklyAdxPersistConcurrency = 8;
 
   void _triggerRefresh() {
     setState(() {
@@ -149,6 +153,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               const SizedBox(height: 6),
               _buildMacdSettingsItem(context, dataType: KLineDataType.daily),
               _buildMacdSettingsItem(context, dataType: KLineDataType.weekly),
+              _buildAdxSettingsItem(context, dataType: KLineDataType.daily),
+              _buildAdxSettingsItem(context, dataType: KLineDataType.weekly),
 
               const SizedBox(height: 10),
               _buildSectionTitle(context, '历史分钟K线'),
@@ -480,6 +486,49 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: const Icon(Icons.auto_graph_rounded),
+        title: Text(title),
+        subtitle: Text(summary),
+        trailing: FilledButton.tonal(
+          onPressed: navigateToSettings,
+          child: const Text('进入'),
+        ),
+        onTap: navigateToSettings,
+      ),
+    );
+  }
+
+  Widget _buildAdxSettingsItem(
+    BuildContext context, {
+    required KLineDataType dataType,
+  }) {
+    final adxService = context.watch<AdxIndicatorService?>();
+    final config = adxService?.configFor(dataType);
+    final isWeekly = dataType == KLineDataType.weekly;
+    final title = isWeekly ? '周线ADX参数设置' : '日线ADX参数设置';
+    final summary = config == null
+        ? '服务未初始化'
+        : '周期${config.period} · 阈值${config.threshold.toStringAsFixed(1)}';
+
+    Future<void> navigateToSettings() async {
+      if (adxService == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('ADX服务未初始化')));
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AdxSettingsScreen(dataType: dataType),
+        ),
+      );
+      _triggerRefresh();
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: const Icon(Icons.show_chart_rounded),
         title: Text(title),
         subtitle: Text(summary),
         trailing: FilledButton.tonal(
@@ -1216,6 +1265,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     final marketProvider = context.read<MarketDataProvider>();
     final repository = context.read<DataRepository>();
     final macdService = context.read<MacdIndicatorService?>();
+    final adxService = context.read<AdxIndicatorService?>();
     final auditService = context.read<AuditService>();
 
     if (marketProvider.allData.isEmpty) {
@@ -1417,10 +1467,10 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 '${forceRefetch ? '周K数据已强制更新' : '周K数据已更新'}（${fetchResult.failureCount}/${fetchResult.totalStocks} 只拉取失败）';
           }
 
-          final shouldPrewarmWeeklyMacd =
-              macdService != null &&
+          final shouldPrewarmWeeklyIndicators =
+              (macdService != null || adxService != null) &&
               (forceRefetch || fetchResult.totalRecords > 0);
-          if (shouldPrewarmWeeklyMacd) {
+          if (shouldPrewarmWeeklyIndicators) {
             final prewarmStockCodes = forceRefetch
                 ? stockCodes
                 : stockCodes
@@ -1434,19 +1484,23 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               'scope_count': effectivePrewarmStockCodes.length,
             });
 
-            progressNotifier.value = (
-              current: 0,
-              total: 1,
-              stage: '准备更新周线MACD缓存（${effectivePrewarmStockCodes.length}只）...',
-            );
-            final prewarmStopwatch = Stopwatch()..start();
-            await macdService.prewarmFromRepository(
-              stockCodes: effectivePrewarmStockCodes,
-              dataType: KLineDataType.weekly,
-              dateRange: dateRange,
-              fetchBatchSize: _weeklyMacdFetchBatchSize,
-              maxConcurrentPersistWrites: _weeklyMacdPersistConcurrency,
-              onProgress: (current, total) {
+            Future<void> prewarmWithProgress({
+              required String preparingLabel,
+              required String workingLabel,
+              required String stageKey,
+              required Future<void> Function(
+                void Function(int current, int total)? onProgress,
+              )
+              action,
+            }) async {
+              progressNotifier.value = (
+                current: 0,
+                total: 1,
+                stage:
+                    '$preparingLabel（${effectivePrewarmStockCodes.length}只）...',
+              );
+              final prewarmStopwatch = Stopwatch()..start();
+              await action((current, total) {
                 final safeTotal = total <= 0 ? 1 : total;
                 final safeCurrent = current.clamp(0, safeTotal);
                 final elapsedSeconds =
@@ -1463,16 +1517,52 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                   current: safeCurrent,
                   total: safeTotal,
                   stage:
-                      '更新周线MACD缓存...\n'
+                      '$workingLabel...\n'
                       '速率 ${speed.toStringAsFixed(1)}只/秒 · 预计剩余 $etaLabel',
                 );
                 audit.stageProgress(
-                  'weekly_macd_prewarm',
+                  stageKey,
                   current: safeCurrent,
                   total: safeTotal,
                 );
-              },
-            );
+              });
+            }
+
+            if (macdService != null) {
+              await prewarmWithProgress(
+                preparingLabel: '准备更新周线MACD缓存',
+                workingLabel: '更新周线MACD缓存',
+                stageKey: 'weekly_macd_prewarm',
+                action: (onProgress) {
+                  return macdService.prewarmFromRepository(
+                    stockCodes: effectivePrewarmStockCodes,
+                    dataType: KLineDataType.weekly,
+                    dateRange: dateRange,
+                    fetchBatchSize: _weeklyMacdFetchBatchSize,
+                    maxConcurrentPersistWrites: _weeklyMacdPersistConcurrency,
+                    onProgress: onProgress,
+                  );
+                },
+              );
+            }
+
+            if (adxService != null) {
+              await prewarmWithProgress(
+                preparingLabel: '准备更新周线ADX缓存',
+                workingLabel: '更新周线ADX缓存',
+                stageKey: 'weekly_adx_prewarm',
+                action: (onProgress) {
+                  return adxService.prewarmFromRepository(
+                    stockCodes: effectivePrewarmStockCodes,
+                    dataType: KLineDataType.weekly,
+                    dateRange: dateRange,
+                    fetchBatchSize: _weeklyAdxFetchBatchSize,
+                    maxConcurrentPersistWrites: _weeklyAdxPersistConcurrency,
+                    onProgress: onProgress,
+                  );
+                },
+              );
+            }
           } else {
             audit.record(AuditEventType.indicatorRecomputeResult, {
               'data_changed': false,

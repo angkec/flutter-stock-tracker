@@ -24,6 +24,7 @@ import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -325,6 +326,47 @@ class _FakeMacdIndicatorService extends MacdIndicatorService {
   }
 }
 
+class _FakeAdxIndicatorService extends AdxIndicatorService {
+  _FakeAdxIndicatorService({required super.repository});
+
+  int prewarmFromRepositoryCount = 0;
+  final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
+  final List<List<String>> prewarmStockCodeBatches = <List<String>>[];
+  final List<int?> prewarmFetchBatchSizes = <int?>[];
+  final List<int?> prewarmPersistConcurrencyValues = <int?>[];
+  int prewarmProgressSteps = 1;
+  Duration prewarmProgressStepDelay = Duration.zero;
+
+  @override
+  Future<void> prewarmFromRepository({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+    required DateRange dateRange,
+    bool forceRecompute = false,
+    int? fetchBatchSize,
+    int? maxConcurrentPersistWrites,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    prewarmFromRepositoryCount++;
+    prewarmDataTypes.add(dataType);
+    prewarmStockCodeBatches.add(List<String>.from(stockCodes, growable: false));
+    prewarmFetchBatchSizes.add(fetchBatchSize);
+    prewarmPersistConcurrencyValues.add(maxConcurrentPersistWrites);
+    final safeTotal = stockCodes.isEmpty ? 1 : stockCodes.length;
+    final safeSteps = prewarmProgressSteps <= 0 ? 1 : prewarmProgressSteps;
+    for (var step = 1; step <= safeSteps; step++) {
+      final current = ((safeTotal * step) / safeSteps).ceil().clamp(
+        1,
+        safeTotal,
+      );
+      onProgress?.call(current, safeTotal);
+      if (prewarmProgressStepDelay > Duration.zero) {
+        await Future<void>.delayed(prewarmProgressStepDelay);
+      }
+    }
+  }
+}
+
 List<KLine> _buildBarsForDate(DateTime day, int count) {
   final start = DateTime(day.year, day.month, day.day, 9, 30);
   return List.generate(count, (index) {
@@ -364,10 +406,13 @@ void main() {
     required IndustryTrendService trendService,
     required IndustryRankService rankService,
     MacdIndicatorService? macdService,
+    AdxIndicatorService? adxService,
     AuditService? auditService,
   }) async {
     final effectiveMacdService =
         macdService ?? MacdIndicatorService(repository: repository);
+    final effectiveAdxService =
+        adxService ?? AdxIndicatorService(repository: repository);
     final effectiveAuditService =
         auditService ??
         (() {
@@ -382,6 +427,7 @@ void main() {
           );
         })();
     await effectiveMacdService.load();
+    await effectiveAdxService.load();
 
     await tester.pumpWidget(
       MultiProvider(
@@ -399,6 +445,9 @@ void main() {
           ChangeNotifierProvider<IndustryRankService>.value(value: rankService),
           ChangeNotifierProvider<MacdIndicatorService>.value(
             value: effectiveMacdService,
+          ),
+          ChangeNotifierProvider<AdxIndicatorService>.value(
+            value: effectiveAdxService,
           ),
           ChangeNotifierProvider<AuditService>.value(
             value: effectiveAuditService,
@@ -1586,6 +1635,45 @@ void main() {
     await repository.dispose();
   });
 
+  testWidgets('数据管理页应提供日线和周线ADX参数入口并可分别打开页面', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '日线ADX参数设置');
+    expect(find.text('日线ADX参数设置'), findsOneWidget);
+    expect(find.text('周线ADX参数设置'), findsOneWidget);
+
+    await tester.tap(find.text('日线ADX参数设置'));
+    await tester.pumpAndSettle();
+    expect(find.text('日线ADX设置'), findsOneWidget);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
   testWidgets('日线MACD设置页应支持触发日线重算', (tester) async {
     final repository = _FakeDataRepository();
     final klineService = HistoricalKlineService(repository: repository);
@@ -1699,6 +1787,119 @@ void main() {
     await repository.dispose();
   });
 
+  testWidgets('日线ADX设置页应支持触发日线重算', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final adxService = _FakeAdxIndicatorService(repository: repository);
+    await adxService.load();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      adxService: adxService,
+    );
+
+    await scrollToText(tester, '日线ADX参数设置');
+    await tester.tap(find.text('日线ADX参数设置').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('日线ADX设置'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('重算日线 ADX'),
+      220,
+      scrollable: find.byType(Scrollable).last,
+    );
+    final dailyRecomputeButton = find.byKey(
+      const ValueKey('adx_recompute_daily'),
+    );
+    expect(dailyRecomputeButton, findsOneWidget);
+    await tester.ensureVisible(dailyRecomputeButton);
+    await tester.tap(dailyRecomputeButton, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(adxService.prewarmDataTypes, contains(KLineDataType.daily));
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    adxService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周线ADX设置页应支持触发周线重算', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final adxService = _FakeAdxIndicatorService(repository: repository);
+    await adxService.load();
+    adxService.prewarmProgressSteps = 3;
+    adxService.prewarmProgressStepDelay = const Duration(milliseconds: 150);
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      adxService: adxService,
+    );
+
+    await scrollToText(tester, '周线ADX参数设置');
+    await tester.tap(find.text('周线ADX参数设置').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('周线ADX设置'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('重算周线 ADX'),
+      220,
+      scrollable: find.byType(Scrollable).last,
+    );
+    final weeklyRecomputeButton = find.byKey(
+      const ValueKey('adx_recompute_weekly'),
+    );
+    expect(weeklyRecomputeButton, findsOneWidget);
+    await tester.ensureVisible(weeklyRecomputeButton);
+    await tester.tap(weeklyRecomputeButton, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
+    expect(find.text('重算周线 ADX'), findsOneWidget);
+    expect(find.textContaining('速率'), findsOneWidget);
+    expect(find.textContaining('预计剩余'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(adxService.prewarmDataTypes, contains(KLineDataType.weekly));
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    adxService.dispose();
+    await repository.dispose();
+  });
+
   testWidgets('周K拉取缺失后应触发周线MACD预热', (tester) async {
     final repository = _FakeDataRepository();
     final klineService = HistoricalKlineService(repository: repository);
@@ -1755,6 +1956,69 @@ void main() {
     trendService.dispose();
     rankService.dispose();
     macdService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K拉取缺失后应触发周线ADX预热', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final adxService = _FakeAdxIndicatorService(repository: repository);
+    await adxService.load();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 20,
+      duration: const Duration(milliseconds: 1),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+      adxService: adxService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(adxService.prewarmFromRepositoryCount, 1);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
+    adxService.dispose();
     await repository.dispose();
   });
 
@@ -1947,6 +2211,69 @@ void main() {
     trendService.dispose();
     rankService.dispose();
     macdService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K拉取缺失无新增记录时应跳过周线ADX预热', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final adxService = _FakeAdxIndicatorService(repository: repository);
+    await adxService.load();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 0,
+      duration: const Duration(milliseconds: 1),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+      adxService: adxService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(adxService.prewarmFromRepositoryCount, 0);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
+    adxService.dispose();
     await repository.dispose();
   });
 }
