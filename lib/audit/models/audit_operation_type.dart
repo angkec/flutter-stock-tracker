@@ -1,5 +1,6 @@
 enum AuditOperationType {
   historicalFetchMissing,
+  dailyFetchIncremental,
   dailyForceRefetch,
   weeklyFetchMissing,
   weeklyForceRefetch,
@@ -11,6 +12,8 @@ extension AuditOperationTypeX on AuditOperationType {
     switch (this) {
       case AuditOperationType.historicalFetchMissing:
         return 'historical_fetch_missing';
+      case AuditOperationType.dailyFetchIncremental:
+        return 'daily_fetch_incremental';
       case AuditOperationType.dailyForceRefetch:
         return 'daily_force_refetch';
       case AuditOperationType.weeklyFetchMissing:
