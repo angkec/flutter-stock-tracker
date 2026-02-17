@@ -332,6 +332,47 @@ void main() {
   );
 
   test(
+    'prewarmFromRepository should bypass snapshot and fetch daily bars when forceRecompute is true',
+    () async {
+      final service = AdxIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
+      repository.currentVersion = 42;
+
+      const stockCodes = <String>['600000'];
+      repository.klinesByStock = {
+        for (final code in stockCodes)
+          code: _buildBars(DateTime(2025, 10, 1), 120),
+      };
+      final range = DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1));
+
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.daily,
+        dateRange: range,
+      );
+      expect(repository.getKlinesCallCount, 1);
+
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.daily,
+        dateRange: range,
+      );
+      expect(repository.getKlinesCallCount, 1);
+
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.daily,
+        dateRange: range,
+        forceRecompute: true,
+      );
+      expect(repository.getKlinesCallCount, 2);
+    },
+  );
+
+  test(
     'prewarmFromRepository should rerun when snapshot matches but daily cache file is missing',
     () async {
       final service = AdxIndicatorService(

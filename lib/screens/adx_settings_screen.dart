@@ -145,7 +145,7 @@ class _AdxSettingsScreenState extends State<AdxSettingsScreen> {
         stockCodes: stockCodes,
         dataType: widget.dataType,
         dateRange: _buildRecomputeDateRange(),
-        forceRecompute: _isWeekly,
+        forceRecompute: true,
         fetchBatchSize: _isWeekly ? _weeklyRecomputeFetchBatchSize : null,
         maxConcurrentPersistWrites: _isWeekly
             ? _weeklyRecomputePersistConcurrency

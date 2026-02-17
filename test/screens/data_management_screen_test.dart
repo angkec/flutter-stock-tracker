@@ -317,6 +317,7 @@ class _FakeMacdIndicatorService extends MacdIndicatorService {
 
   int prewarmFromRepositoryCount = 0;
   final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
+  final List<bool> prewarmForceRecomputeValues = <bool>[];
   final List<List<String>> prewarmStockCodeBatches = <List<String>>[];
   final List<int?> prewarmFetchBatchSizes = <int?>[];
   final List<int?> prewarmPersistConcurrencyValues = <int?>[];
@@ -335,6 +336,7 @@ class _FakeMacdIndicatorService extends MacdIndicatorService {
   }) async {
     prewarmFromRepositoryCount++;
     prewarmDataTypes.add(dataType);
+    prewarmForceRecomputeValues.add(forceRecompute);
     prewarmStockCodeBatches.add(List<String>.from(stockCodes, growable: false));
     prewarmFetchBatchSizes.add(fetchBatchSize);
     prewarmPersistConcurrencyValues.add(maxConcurrentPersistWrites);
@@ -358,6 +360,7 @@ class _FakeAdxIndicatorService extends AdxIndicatorService {
 
   int prewarmFromRepositoryCount = 0;
   final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
+  final List<bool> prewarmForceRecomputeValues = <bool>[];
   final List<List<String>> prewarmStockCodeBatches = <List<String>>[];
   final List<int?> prewarmFetchBatchSizes = <int?>[];
   final List<int?> prewarmPersistConcurrencyValues = <int?>[];
@@ -376,6 +379,7 @@ class _FakeAdxIndicatorService extends AdxIndicatorService {
   }) async {
     prewarmFromRepositoryCount++;
     prewarmDataTypes.add(dataType);
+    prewarmForceRecomputeValues.add(forceRecompute);
     prewarmStockCodeBatches.add(List<String>.from(stockCodes, growable: false));
     prewarmFetchBatchSizes.add(fetchBatchSize);
     prewarmPersistConcurrencyValues.add(maxConcurrentPersistWrites);
@@ -1792,6 +1796,7 @@ void main() {
     await tester.tap(dailyRecomputeButton, warnIfMissed: false);
     await tester.pumpAndSettle();
     expect(macdService.prewarmDataTypes, contains(KLineDataType.daily));
+    expect(macdService.prewarmForceRecomputeValues, <bool>[true]);
 
     provider.dispose();
     klineService.dispose();
@@ -1852,6 +1857,7 @@ void main() {
     expect(find.textContaining('预计剩余'), findsOneWidget);
     await tester.pumpAndSettle();
     expect(macdService.prewarmDataTypes, contains(KLineDataType.weekly));
+    expect(macdService.prewarmForceRecomputeValues, contains(true));
 
     provider.dispose();
     klineService.dispose();
@@ -1906,6 +1912,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(provider.forceDailyRefetchCount, 0);
     expect(adxService.prewarmDataTypes, contains(KLineDataType.daily));
+    expect(adxService.prewarmForceRecomputeValues, <bool>[true]);
 
     provider.dispose();
     klineService.dispose();
@@ -1966,6 +1973,7 @@ void main() {
     expect(find.textContaining('预计剩余'), findsOneWidget);
     await tester.pumpAndSettle();
     expect(adxService.prewarmDataTypes, contains(KLineDataType.weekly));
+    expect(adxService.prewarmForceRecomputeValues, contains(true));
 
     provider.dispose();
     klineService.dispose();
