@@ -95,6 +95,12 @@ class DataManagementDriver {
     expect(find.text('周线MACD设置'), findsOneWidget);
   }
 
+  Future<void> tapWeeklyAdxSettings() async {
+    await _tapCardButton('周线ADX参数设置', '进入');
+    await tester.pumpAndSettle();
+    expect(find.text('周线ADX设置'), findsOneWidget);
+  }
+
   Future<void> tapWeeklyMacdRecompute() async {
     Finder recomputeButton = find.byKey(
       const ValueKey('macd_recompute_weekly'),
@@ -125,6 +131,34 @@ class DataManagementDriver {
     await tester.pump();
   }
 
+  Future<void> tapWeeklyAdxRecompute() async {
+    Finder recomputeButton = find.byKey(const ValueKey('adx_recompute_weekly'));
+    if (recomputeButton.evaluate().isEmpty) {
+      recomputeButton = find.text('重算周线 ADX');
+    }
+
+    if (recomputeButton.evaluate().isEmpty) {
+      final listView = find.byType(ListView);
+      for (var i = 0; i < 16; i++) {
+        await tester.drag(listView.first, const Offset(0, -260));
+        await tester.pumpAndSettle();
+        recomputeButton = find.byKey(const ValueKey('adx_recompute_weekly'));
+        if (recomputeButton.evaluate().isNotEmpty) {
+          break;
+        }
+        recomputeButton = find.text('重算周线 ADX');
+        if (recomputeButton.evaluate().isNotEmpty) {
+          break;
+        }
+      }
+    }
+
+    expect(recomputeButton, findsOneWidget);
+    await tester.ensureVisible(recomputeButton.first);
+    await tester.tap(recomputeButton.first, warnIfMissed: false);
+    await tester.pump();
+  }
+
   Future<void> expectProgressDialogVisible({
     Duration timeout = const Duration(seconds: 2),
   }) async {
@@ -140,6 +174,10 @@ class DataManagementDriver {
 
   Future<void> expectMacdRecomputeDialogVisible(String scopeLabel) async {
     expect(find.text('重算$scopeLabel MACD'), findsOneWidget);
+  }
+
+  Future<void> expectAdxRecomputeDialogVisible(String scopeLabel) async {
+    expect(find.text('重算$scopeLabel ADX'), findsOneWidget);
   }
 
   Future<void> waitForProgressDialogClosedWithWatchdog(
@@ -161,6 +199,18 @@ class DataManagementDriver {
     await waitForDialogClosedWithWatchdog(
       watchdog,
       dialogTitle: '重算$scopeLabel MACD',
+      hardTimeout: hardTimeout,
+    );
+  }
+
+  Future<void> waitForAdxRecomputeDialogClosedWithWatchdog(
+    ProgressWatchdog watchdog, {
+    String scopeLabel = '周线',
+    Duration hardTimeout = const Duration(minutes: 10),
+  }) async {
+    await waitForDialogClosedWithWatchdog(
+      watchdog,
+      dialogTitle: '重算$scopeLabel ADX',
       hardTimeout: hardTimeout,
     );
   }
@@ -231,6 +281,13 @@ class DataManagementDriver {
     return waitForDialogVisible('重算$scopeLabel MACD', timeout: timeout);
   }
 
+  Future<bool> waitForAdxRecomputeDialogVisible({
+    String scopeLabel = '周线',
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    return waitForDialogVisible('重算$scopeLabel ADX', timeout: timeout);
+  }
+
   Future<void> waitForMacdRecomputeDialogTextContains(
     String keyword, {
     String scopeLabel = '周线',
@@ -238,6 +295,18 @@ class DataManagementDriver {
   }) async {
     await waitForDialogTextContains(
       dialogTitle: '重算$scopeLabel MACD',
+      keyword: keyword,
+      timeout: timeout,
+    );
+  }
+
+  Future<void> waitForAdxRecomputeDialogTextContains(
+    String keyword, {
+    String scopeLabel = '周线',
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    await waitForDialogTextContains(
+      dialogTitle: '重算$scopeLabel ADX',
       keyword: keyword,
       timeout: timeout,
     );
@@ -251,6 +320,20 @@ class DataManagementDriver {
   }) async {
     return waitForDialogTextContainsOrClosed(
       dialogTitle: '重算$scopeLabel MACD',
+      keyword: keyword,
+      timeout: timeout,
+      waitAppearTimeout: waitAppearTimeout,
+    );
+  }
+
+  Future<bool> waitForAdxRecomputeDialogTextContainsOrClosed(
+    String keyword, {
+    String scopeLabel = '周线',
+    Duration timeout = const Duration(seconds: 30),
+    Duration waitAppearTimeout = const Duration(seconds: 3),
+  }) async {
+    return waitForDialogTextContainsOrClosed(
+      dialogTitle: '重算$scopeLabel ADX',
       keyword: keyword,
       timeout: timeout,
       waitAppearTimeout: waitAppearTimeout,
@@ -455,7 +538,7 @@ class DataManagementDriver {
   }
 
   bool _isDialogVisible(String title) {
-    return find.text(title).evaluate().isNotEmpty;
+    return _resolveDialogByTitle(title) != null;
   }
 
   String? _readBusinessSignal(String dialogTitle) {

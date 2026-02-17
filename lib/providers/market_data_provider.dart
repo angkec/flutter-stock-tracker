@@ -689,22 +689,11 @@ class MarketDataProvider extends ChangeNotifier {
       },
     );
 
-    await _prewarmDailyMacd(
+    await _prewarmDailyIndicatorsConcurrently(
       stockCodes: normalizedIndicatorTargets,
       onProgress: (current, total) {
-        final safeTotal = total <= 0
-            ? (indicatorTotal <= 0 ? 1 : indicatorTotal)
-            : total;
-        final safeCurrent = current.clamp(0, safeTotal);
-        onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
-      },
-    );
-    await _prewarmDailyAdx(
-      stockCodes: normalizedIndicatorTargets,
-      onProgress: (current, total) {
-        final safeTotal = total <= 0
-            ? (indicatorTotal <= 0 ? 1 : indicatorTotal)
-            : total;
+        final fallbackTotal = indicatorTotal <= 0 ? 1 : indicatorTotal;
+        final safeTotal = total <= 0 ? fallbackTotal : total;
         final safeCurrent = current.clamp(0, safeTotal);
         onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
       },
@@ -940,6 +929,66 @@ class MarketDataProvider extends ChangeNotifier {
       barsByStockCode: payload,
       onProgress: onProgress,
     );
+  }
+
+  Future<void> _prewarmDailyIndicatorsConcurrently({
+    Set<String>? stockCodes,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    final hasMacd = _macdService != null && _dailyBarsCache.isNotEmpty;
+    final hasAdx = _adxService != null && _dailyBarsCache.isNotEmpty;
+    if (!hasMacd && !hasAdx) {
+      return;
+    }
+
+    var macdCurrent = 0;
+    var macdTotal = 0;
+    var adxCurrent = 0;
+    var adxTotal = 0;
+
+    void emitProgress() {
+      final safeMacdTotal = hasMacd ? (macdTotal <= 0 ? 1 : macdTotal) : 0;
+      final safeAdxTotal = hasAdx ? (adxTotal <= 0 ? 1 : adxTotal) : 0;
+      final total = safeMacdTotal + safeAdxTotal;
+      if (total <= 0) {
+        onProgress?.call(1, 1);
+        return;
+      }
+      final current =
+          macdCurrent.clamp(0, safeMacdTotal) +
+          adxCurrent.clamp(0, safeAdxTotal);
+      onProgress?.call(current.clamp(0, total), total);
+    }
+
+    final jobs = <Future<void>>[];
+    if (hasMacd) {
+      jobs.add(
+        _prewarmDailyMacd(
+          stockCodes: stockCodes,
+          onProgress: (current, total) {
+            macdCurrent = current;
+            macdTotal = total;
+            emitProgress();
+          },
+        ),
+      );
+    }
+    if (hasAdx) {
+      jobs.add(
+        _prewarmDailyAdx(
+          stockCodes: stockCodes,
+          onProgress: (current, total) {
+            adxCurrent = current;
+            adxTotal = total;
+            emitProgress();
+          },
+        ),
+      );
+    }
+
+    emitProgress();
+    await Future.wait(jobs);
+    emitProgress();
   }
 
   Future<void> _restoreDailyBarsFromFile(

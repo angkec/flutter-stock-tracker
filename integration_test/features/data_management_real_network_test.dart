@@ -6,6 +6,7 @@ import 'package:stock_rtwatcher/screens/data_management_screen.dart';
 import 'package:stock_rtwatcher/testing/progress_watchdog.dart';
 
 import '../support/data_management_driver.dart';
+import '../support/frame_timing_probe.dart';
 
 const _runRealNetwork = bool.fromEnvironment('RUN_DATA_MGMT_REAL_E2E');
 
@@ -224,6 +225,76 @@ void main() {
       debugPrint(
         '[DataManagement Real E2E] weekly_macd_recompute_progress_hint='
         'dialog:$weeklyMacdDialogAppeared,speed:$weeklyMacdSawSpeed,eta:$weeklyMacdSawEta',
+      );
+
+      await driver.tapWeeklyAdxSettings();
+      final weeklyAdxFrameProbe = FrameTimingProbe();
+      weeklyAdxFrameProbe.start();
+      final weeklyAdxStopwatch = Stopwatch()..start();
+      var weeklyAdxDialogAppeared = false;
+      var weeklyAdxSawSpeed = false;
+      var weeklyAdxSawEta = false;
+      late FrameTimingProbeSummary weeklyAdxFrameSummary;
+      try {
+        await driver.tapWeeklyAdxRecompute();
+        weeklyAdxDialogAppeared = await driver.waitForAdxRecomputeDialogVisible(
+          timeout: const Duration(seconds: 3),
+        );
+        if (weeklyAdxDialogAppeared) {
+          weeklyAdxSawSpeed = await driver
+              .waitForAdxRecomputeDialogTextContainsOrClosed(
+                '速率',
+                timeout: const Duration(seconds: 60),
+                waitAppearTimeout: Duration.zero,
+              );
+          if (weeklyAdxSawSpeed) {
+            weeklyAdxSawEta = await driver
+                .waitForAdxRecomputeDialogTextContainsOrClosed(
+                  '预计剩余',
+                  timeout: const Duration(seconds: 20),
+                  waitAppearTimeout: Duration.zero,
+                );
+          }
+          await driver.waitForAdxRecomputeDialogClosedWithWatchdog(
+            ProgressWatchdog(
+              stallThreshold: const Duration(seconds: 5),
+              now: DateTime.now,
+            ),
+            scopeLabel: '周线',
+            hardTimeout: const Duration(minutes: 20),
+          );
+        }
+      } finally {
+        weeklyAdxStopwatch.stop();
+        weeklyAdxFrameSummary = weeklyAdxFrameProbe.stop();
+      }
+      if (weeklyAdxDialogAppeared &&
+          weeklyAdxStopwatch.elapsed > const Duration(seconds: 5)) {
+        expect(
+          weeklyAdxSawSpeed,
+          isTrue,
+          reason: 'weekly ADX recompute exceeded 5s without progress hint',
+        );
+      }
+      if (weeklyAdxDialogAppeared) {
+        expect(
+          weeklyAdxFrameSummary.freezeFrameCount,
+          0,
+          reason:
+              'weekly ADX recompute observed freeze-like frame(s): maxFrameMs=${weeklyAdxFrameSummary.maxFrameMs}',
+        );
+      }
+      debugPrint(
+        '[DataManagement Real E2E] weekly_adx_recompute_elapsed_ms='
+        '${weeklyAdxStopwatch.elapsedMilliseconds}',
+      );
+      debugPrint(
+        '[DataManagement Real E2E] weekly_adx_recompute_progress_hint='
+        'dialog:$weeklyAdxDialogAppeared,speed:$weeklyAdxSawSpeed,eta:$weeklyAdxSawEta',
+      );
+      debugPrint(
+        '[DataManagement Real E2E] weekly_adx_ui_frame='
+        '${weeklyAdxFrameSummary.toLogString()}',
       );
     });
   });

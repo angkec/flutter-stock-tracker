@@ -192,14 +192,13 @@ class MyApp extends StatelessWidget {
             return service;
           },
         ),
-        ChangeNotifierProxyProvider7<
+        ChangeNotifierProxyProvider6<
           StockService,
           IndustryService,
           PullbackService,
           BreakoutService,
           HistoricalKlineService,
           MacdIndicatorService,
-          AdxIndicatorService,
           MarketDataProvider
         >(
           create: (context) {
@@ -228,16 +227,16 @@ class MyApp extends StatelessWidget {
           },
           update:
               (
-                _,
+                context,
                 stockService,
                 industryService,
                 pullbackService,
                 breakoutService,
                 historicalKlineService,
                 macdService,
-                adxService,
                 previous,
               ) {
+                final adxService = context.read<AdxIndicatorService>();
                 breakoutService.setHistoricalKlineService(
                   historicalKlineService,
                 );

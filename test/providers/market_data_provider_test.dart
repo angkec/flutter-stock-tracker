@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -20,6 +21,7 @@ import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
@@ -212,6 +214,54 @@ class _RecordingMacdIndicatorService extends MacdIndicatorService {
     prewarmPayloadStockCodes.add(barsByStockCode.keys.toSet());
     final total = barsByStockCode.isEmpty ? 1 : barsByStockCode.length;
     onProgress?.call(total, total);
+  }
+}
+
+class _BlockingMacdPrewarmService extends MacdIndicatorService {
+  _BlockingMacdPrewarmService({required super.repository});
+
+  final Completer<void> started = Completer<void>();
+  final Completer<void> unblock = Completer<void>();
+
+  @override
+  Future<void> prewarmFromBars({
+    required KLineDataType dataType,
+    required Map<String, List<KLine>> barsByStockCode,
+    bool forceRecompute = false,
+    int? maxConcurrentTasks,
+    int? maxConcurrentPersistWrites,
+    int? persistBatchSize,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (!started.isCompleted) {
+      started.complete();
+    }
+    await unblock.future;
+    onProgress?.call(1, 1);
+  }
+}
+
+class _BlockingAdxPrewarmService extends AdxIndicatorService {
+  _BlockingAdxPrewarmService({required super.repository});
+
+  final Completer<void> started = Completer<void>();
+  final Completer<void> unblock = Completer<void>();
+
+  @override
+  Future<void> prewarmFromBars({
+    required KLineDataType dataType,
+    required Map<String, List<KLine>> barsByStockCode,
+    bool forceRecompute = false,
+    int? maxConcurrentTasks,
+    int? maxConcurrentPersistWrites,
+    int? persistBatchSize,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (!started.isCompleted) {
+      started.complete();
+    }
+    await unblock.future;
+    onProgress?.call(1, 1);
   }
 }
 
@@ -542,6 +592,79 @@ void main() {
 
       expect(breakoutService.touchedStockCodes.toSet(), {'600000'});
       expect(macdService.prewarmPayloadStockCodes.last, {'600000'});
+    },
+  );
+
+  test(
+    'forceRefetchDailyBars should start MACD and ADX prewarm concurrently',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'daily-bars-indicator-concurrency-',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+      final monitorData = StockMonitorData(
+        stock: stock,
+        ratio: 1.2,
+        changePercent: 0.5,
+      );
+
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode([monitorData.toJson()]),
+        'market_data_date': DateTime(2026, 2, 14).toIso8601String(),
+      });
+
+      final pool = _ReconnectableFakePool(
+        dailyBarsByCode: {'600000': _buildDailyBars(260)},
+      );
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: StockService(pool),
+        industryService: IndustryService(),
+        dailyBarsFileStorage: _buildStorageForPath(tempDir.path),
+      );
+      provider.setPullbackService(PullbackService());
+
+      final macdService = _BlockingMacdPrewarmService(
+        repository: _FakeDataRepository(),
+      );
+      final adxService = _BlockingAdxPrewarmService(
+        repository: _FakeDataRepository(),
+      );
+      provider.setMacdService(macdService);
+      provider.setAdxService(adxService);
+
+      await provider.loadFromCache();
+
+      final refetchFuture = provider.forceRefetchDailyBars();
+
+      await macdService.started.future.timeout(const Duration(seconds: 2));
+      Object? adxStartError;
+      try {
+        await adxService.started.future.timeout(const Duration(seconds: 1));
+      } catch (error) {
+        adxStartError = error;
+      } finally {
+        if (!macdService.unblock.isCompleted) {
+          macdService.unblock.complete();
+        }
+        if (!adxService.unblock.isCompleted) {
+          adxService.unblock.complete();
+        }
+      }
+
+      await refetchFuture;
+
+      expect(
+        adxStartError,
+        isNull,
+        reason: 'ADX prewarm should start before MACD prewarm is unblocked',
+      );
     },
   );
 

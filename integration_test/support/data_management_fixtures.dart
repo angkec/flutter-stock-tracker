@@ -12,6 +12,7 @@ import 'package:stock_rtwatcher/data/models/day_data_status.dart';
 import 'package:stock_rtwatcher/data/models/fetch_result.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
+import 'package:stock_rtwatcher/models/adx_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/macd_config.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
@@ -22,6 +23,7 @@ import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/data_management_screen.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
+import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
@@ -44,12 +46,14 @@ class DataManagementFixtureContext {
     required this.repository,
     required this.marketProvider,
     required this.macdService,
+    required this.adxService,
     required this.auditService,
   });
 
   final FakeDataRepository repository;
   final FakeMarketDataProvider marketProvider;
   final FakeMacdIndicatorService macdService;
+  final FakeAdxIndicatorService adxService;
   final AuditService auditService;
 
   ProgressWatchdog createWatchdog({
@@ -69,6 +73,7 @@ Future<DataManagementFixtureContext> launchDataManagementWithFixture(
   final repository = FakeDataRepository(preset: preset);
   final marketProvider = FakeMarketDataProvider(data: stocks, preset: preset);
   final macdService = FakeMacdIndicatorService(repository: repository);
+  final adxService = FakeAdxIndicatorService(repository: repository);
   final auditSink = MemoryAuditSink();
   final auditService = AuditService.forTest(
     runner: AuditOperationRunner(sink: auditSink, nowProvider: DateTime.now),
@@ -93,6 +98,7 @@ Future<DataManagementFixtureContext> launchDataManagementWithFixture(
         create: (_) => FakeIndustryRankService(),
       ),
       ChangeNotifierProvider<MacdIndicatorService>.value(value: macdService),
+      ChangeNotifierProvider<AdxIndicatorService>.value(value: adxService),
       ChangeNotifierProvider<AuditService>.value(value: auditService),
     ],
     child: const MaterialApp(home: DataManagementScreen()),
@@ -105,6 +111,7 @@ Future<DataManagementFixtureContext> launchDataManagementWithFixture(
     repository: repository,
     marketProvider: marketProvider,
     macdService: macdService,
+    adxService: adxService,
     auditService: auditService,
   );
 }
@@ -521,6 +528,44 @@ class FakeMacdIndicatorService extends MacdIndicatorService {
         weeklyForceRecomputeInitialDelay > Duration.zero) {
       await Future<void>.delayed(weeklyForceRecomputeInitialDelay);
     }
+
+    for (var i = 1; i <= stockCodes.length; i++) {
+      onProgress?.call(i, stockCodes.length);
+      await Future<void>.delayed(progressStepDelay);
+    }
+  }
+}
+
+class FakeAdxIndicatorService extends AdxIndicatorService {
+  FakeAdxIndicatorService({required super.repository});
+
+  int prewarmCalls = 0;
+  final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
+  final List<bool> prewarmForceRecomputeValues = <bool>[];
+  final List<int?> prewarmFetchBatchSizes = <int?>[];
+  final List<int?> prewarmPersistConcurrencyValues = <int?>[];
+  Duration progressStepDelay = const Duration(milliseconds: 200);
+
+  @override
+  AdxConfig configFor(KLineDataType dataType) {
+    return AdxIndicatorService.defaultConfigFor(dataType);
+  }
+
+  @override
+  Future<void> prewarmFromRepository({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+    required DateRange dateRange,
+    bool forceRecompute = false,
+    int? fetchBatchSize,
+    int? maxConcurrentPersistWrites,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    prewarmCalls++;
+    prewarmDataTypes.add(dataType);
+    prewarmForceRecomputeValues.add(forceRecompute);
+    prewarmFetchBatchSizes.add(fetchBatchSize);
+    prewarmPersistConcurrencyValues.add(maxConcurrentPersistWrites);
 
     for (var i = 1; i <= stockCodes.length; i++) {
       onProgress?.call(i, stockCodes.length);
