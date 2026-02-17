@@ -61,7 +61,6 @@ class MarketDataProvider extends ChangeNotifier {
   String? _stageDescription; // "拉取分时 32/156"
   int _stageProgress = 0; // 当前进度
   int _stageTotal = 0; // 总数
-  String? _lastFetchDate; // "2026-01-21" for incremental fetching
 
   // Cache keys
   static const String _dailyBarsCacheKey = 'daily_bars_cache_v1';
@@ -69,7 +68,6 @@ class MarketDataProvider extends ChangeNotifier {
   static const int _breakoutDetectMaxConcurrency = 6;
   static const String _minuteDataCacheKey = 'minute_data_cache_v1';
   static const String _minuteDataDateKey = 'minute_data_date';
-  static const String _lastFetchDateKey = 'last_fetch_date';
 
   // Watchlist codes for priority sorting
   Set<String> _watchlistCodes = {};
@@ -145,7 +143,6 @@ class MarketDataProvider extends ChangeNotifier {
   IndustryService get industryService => _industryService;
   RefreshStage get stage => _stage;
   String? get stageDescription => _stageDescription;
-  String? get lastFetchDate => _lastFetchDate;
   int get minuteDataCacheCount => _minuteDataCount;
 
   // Cache info getters
@@ -309,9 +306,6 @@ class MarketDataProvider extends ChangeNotifier {
         await prefs.remove(_dailyBarsCacheKey);
       }
 
-      // Load last fetch date
-      _lastFetchDate = prefs.getString(_lastFetchDateKey);
-
       // Load minute cache metadata
       final minuteDataDate = prefs.getString(_minuteDataDateKey);
       if (minuteDataDate != null && _dataDate == null) {
@@ -398,9 +392,6 @@ class MarketDataProvider extends ChangeNotifier {
       await prefs.setInt(_minuteDataCacheKey, _minuteDataCount);
       // Ensure legacy heavy payload is not retained in SharedPreferences.
       await prefs.remove(_dailyBarsCacheKey);
-      if (_lastFetchDate != null) {
-        await prefs.setString(_lastFetchDateKey, _lastFetchDate!);
-      }
     } catch (e) {
       debugPrint('Failed to save cache: $e');
     }
@@ -755,8 +746,6 @@ class MarketDataProvider extends ChangeNotifier {
       targetBars: _dailyCacheTargetBars,
     );
 
-    final effectiveDate = _dataDate ?? DateTime.now();
-    _lastFetchDate = _formatDateKey(effectiveDate);
     stageStopwatch.stop();
     final fetchAndPersistMs = stageStopwatch.elapsedMilliseconds;
 
@@ -1053,12 +1042,6 @@ class MarketDataProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  String _formatDateKey(DateTime date) {
-    return '${date.year.toString().padLeft(4, '0')}-'
-        '${date.month.toString().padLeft(2, '0')}-'
-        '${date.day.toString().padLeft(2, '0')}';
-  }
-
   /// 重算回踩（使用缓存的日K数据，不重新下载）
   /// 返回 null 表示成功，否则返回缺失数据的描述
   String? recalculatePullbacks() {
@@ -1263,8 +1246,6 @@ class MarketDataProvider extends ChangeNotifier {
     _dailyBarsCache.clear();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_dailyBarsCacheKey);
-    _lastFetchDate = null;
-    await prefs.remove(_lastFetchDateKey);
 
     try {
       final stockCodes = _allData

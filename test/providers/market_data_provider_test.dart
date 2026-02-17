@@ -475,6 +475,22 @@ void main() {
 
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getString('daily_bars_cache_v1'), isNull);
+      expect(
+        prefs.getString('daily_kline_checkpoint_last_success_date'),
+        isNotNull,
+      );
+      expect(
+        prefs.getString('daily_kline_checkpoint_last_mode'),
+        isNotNull,
+      );
+      expect(
+        prefs.getInt('daily_kline_checkpoint_last_success_at_ms'),
+        isNotNull,
+      );
+      expect(
+        prefs.getString('daily_kline_checkpoint_per_stock_last_success_at_ms'),
+        isNotNull,
+      );
     },
   );
 
