@@ -95,7 +95,9 @@ class DailyKlineSyncService {
     }
 
     final nowMs = now.millisecondsSinceEpoch;
-    final perStock = await _checkpointStore.loadPerStockSuccessAtMs();
+    final perStock = Map<String, int>.from(
+      await _checkpointStore.loadPerStockSuccessAtMs(),
+    );
     for (final code in successCodes) {
       perStock[code] = nowMs;
     }

@@ -6,8 +6,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/config/debug_config.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/services/daily_kline_read_service.dart';
+import 'package:stock_rtwatcher/services/daily_kline_sync_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
@@ -38,6 +41,8 @@ class MarketDataProvider extends ChangeNotifier {
   final StockService _stockService;
   final IndustryService _industryService;
   final DailyKlineCacheStore _dailyKlineCacheStore;
+  late final DailyKlineReadService _dailyKlineReadService;
+  late final DailyKlineSyncService _dailyKlineSyncService;
   PullbackService? _pullbackService;
   BreakoutService? _breakoutService;
   MacdIndicatorService? _macdService;
@@ -82,10 +87,52 @@ class MarketDataProvider extends ChangeNotifier {
     required StockService stockService,
     required IndustryService industryService,
     DailyKlineCacheStore? dailyBarsFileStorage,
+    DailyKlineCheckpointStore? dailyKlineCheckpointStore,
+    DailyKlineReadService? dailyKlineReadService,
+    DailyKlineSyncService? dailyKlineSyncService,
   }) : _pool = pool,
        _stockService = stockService,
        _industryService = industryService,
-       _dailyKlineCacheStore = dailyBarsFileStorage ?? DailyKlineCacheStore();
+       _dailyKlineCacheStore = dailyBarsFileStorage ?? DailyKlineCacheStore() {
+    final checkpointStore =
+        dailyKlineCheckpointStore ?? DailyKlineCheckpointStore();
+    _dailyKlineReadService =
+        dailyKlineReadService ??
+        DailyKlineReadService(cacheStore: _dailyKlineCacheStore);
+    _dailyKlineSyncService =
+        dailyKlineSyncService ??
+        DailyKlineSyncService(
+          checkpointStore: checkpointStore,
+          cacheStore: _dailyKlineCacheStore,
+          fetcher: _fetchDailyBarsFromPool,
+        );
+  }
+
+  Future<Map<String, List<KLine>>> _fetchDailyBarsFromPool({
+    required List<Stock> stocks,
+    required int count,
+    required DailyKlineSyncMode mode,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    final barsByStockCode = <String, List<KLine>>{};
+    var completed = 0;
+    final total = stocks.length;
+
+    await _pool.batchGetSecurityBarsStreaming(
+      stocks: stocks,
+      category: klineTypeDaily,
+      start: 0,
+      count: count,
+      onStockBars: (stockIndex, bars) {
+        final stockCode = stocks[stockIndex].code;
+        barsByStockCode[stockCode] = bars;
+        completed++;
+        onProgress?.call(completed, total);
+      },
+    );
+
+    return barsByStockCode;
+  }
 
   // Getters
   List<StockMonitorData> get allData => _allData;
@@ -409,7 +456,7 @@ class MarketDataProvider extends ChangeNotifier {
 
         if (_pullbackService != null && _allData.isNotEmpty) {
           try {
-            await _detectPullbacks(forceRefetchDaily: forceDailyRefetch);
+            await _detectPullbacks();
           } catch (e) {
             debugPrint('Pullback detection failed: $e');
           }
@@ -531,7 +578,7 @@ class MarketDataProvider extends ChangeNotifier {
       // 检测高质量回踩 (this fetches daily bars)
       if (_pullbackService != null && _allData.isNotEmpty) {
         try {
-          await _detectPullbacks(forceRefetchDaily: forceDailyRefetch);
+          await _detectPullbacks();
         } catch (e) {
           debugPrint('Pullback detection failed: $e');
         }
@@ -623,6 +670,39 @@ class MarketDataProvider extends ChangeNotifier {
     void Function(String stage, int current, int total)? onProgress,
     Set<String>? indicatorTargetStockCodes,
   }) async {
+    await syncDailyBarsForceFull(
+      onProgress: onProgress,
+      indicatorTargetStockCodes: indicatorTargetStockCodes,
+    );
+  }
+
+  Future<void> syncDailyBarsIncremental({
+    void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
+  }) async {
+    await _syncDailyBars(
+      mode: DailyKlineSyncMode.incremental,
+      onProgress: onProgress,
+      indicatorTargetStockCodes: indicatorTargetStockCodes,
+    );
+  }
+
+  Future<void> syncDailyBarsForceFull({
+    void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
+  }) async {
+    await _syncDailyBars(
+      mode: DailyKlineSyncMode.forceFull,
+      onProgress: onProgress,
+      indicatorTargetStockCodes: indicatorTargetStockCodes,
+    );
+  }
+
+  Future<void> _syncDailyBars({
+    required DailyKlineSyncMode mode,
+    void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
+  }) async {
     if (_allData.isEmpty) return;
 
     final totalStocks = _allData.length <= 0 ? 1 : _allData.length;
@@ -645,21 +725,38 @@ class MarketDataProvider extends ChangeNotifier {
     stageStopwatch.stop();
     final connectMs = stageStopwatch.elapsedMilliseconds;
 
+    final stocks = _allData.map((item) => item.stock).toList(growable: false);
+
     resetStageTimer();
-    onProgress?.call('1/4 拉取日K数据...', 0, totalStocks);
-    await _detectPullbacks(
-      forceRefetchDaily: true,
-      onDailyProgress: (current, total) {
+    final syncResult = await _dailyKlineSyncService.sync(
+      mode: mode,
+      stocks: stocks,
+      targetBars: _dailyCacheTargetBars,
+      onProgress: (stage, current, total) {
+        if (!stage.startsWith('1/4') && !stage.startsWith('2/4')) {
+          return;
+        }
         final safeTotal = total <= 0 ? totalStocks : total;
         final safeCurrent = current.clamp(0, safeTotal);
-        onProgress?.call('1/4 拉取日K数据...', safeCurrent, safeTotal);
-      },
-      onDailyFilePersistProgress: (current, total) {
-        final safeTotal = total <= 0 ? totalStocks : total;
-        final safeCurrent = current.clamp(0, safeTotal);
-        onProgress?.call('2/4 写入日K文件...', safeCurrent, safeTotal);
+        onProgress?.call(stage, safeCurrent, safeTotal);
       },
     );
+
+    if (syncResult.failureStockCodes.isNotEmpty) {
+      throw StateError(
+        '部分股票日K拉取失败(${syncResult.failureStockCodes.length}): '
+        '${syncResult.failureStockCodes.take(8).join(', ')}',
+      );
+    }
+
+    await _reloadDailyBarsOrThrow(
+      stockCodes: stocks.map((stock) => stock.code).toList(growable: false),
+      anchorDate: _dataDate ?? DateTime.now(),
+      targetBars: _dailyCacheTargetBars,
+    );
+
+    final effectiveDate = _dataDate ?? DateTime.now();
+    _lastFetchDate = _formatDateKey(effectiveDate);
     stageStopwatch.stop();
     final fetchAndPersistMs = stageStopwatch.elapsedMilliseconds;
 
@@ -757,98 +854,20 @@ class MarketDataProvider extends ChangeNotifier {
     return cursor;
   }
 
-  /// 检测高质量回踩（下载日K数据）
-  /// 增量更新：如果当天已拉取过且缓存完整，跳过重新拉取
-  Future<void> _detectPullbacks({
-    bool forceRefetchDaily = false,
-    void Function(int current, int total)? onDailyProgress,
-    void Function(int current, int total)? onDailyFilePersistProgress,
-  }) async {
+  /// 检测高质量回踩（只读日K文件缓存，不触发网络）
+  Future<void> _detectPullbacks() async {
     if (_pullbackService == null || _allData.isEmpty) return;
 
-    // 获取所有股票信息
-    final stocks = _allData.map((d) => d.stock).toList();
-
-    // 检查是否需要重新拉取日K数据。
-    // 非交易日场景下，使用分钟监控结果的 dataDate 作为“有效交易日”。
-    final effectiveDate = _dataDate ?? DateTime.now();
-    final effectiveDateKey =
-        '${effectiveDate.year.toString().padLeft(4, '0')}-'
-        '${effectiveDate.month.toString().padLeft(2, '0')}-'
-        '${effectiveDate.day.toString().padLeft(2, '0')}';
+    final stocks = _allData.map((item) => item.stock).toList(growable: false);
     final stockCodeSet = stocks.map((stock) => stock.code).toSet();
     _dailyBarsCache.removeWhere((code, _) => !stockCodeSet.contains(code));
 
-    final missingCodes = stocks
-        .where((stock) => !_dailyBarsCache.containsKey(stock.code))
-        .map((stock) => stock.code)
-        .toList(growable: false);
+    await _reloadDailyBarsOrThrow(
+      stockCodes: stocks.map((item) => item.code).toList(growable: false),
+      anchorDate: _dataDate ?? DateTime.now(),
+      targetBars: _dailyCacheTargetBars,
+    );
 
-    if (!forceRefetchDaily &&
-        _lastFetchDate == effectiveDateKey &&
-        missingCodes.isNotEmpty) {
-      await _restoreDailyBarsFromFile(
-        missingCodes,
-        anchorDate: effectiveDate,
-        targetBars: _dailyCacheTargetBars,
-      );
-    }
-
-    final cacheIncomplete = _dailyBarsCache.length < stocks.length;
-    final needFetchDaily =
-        forceRefetchDaily ||
-        _lastFetchDate != effectiveDateKey ||
-        _dailyBarsCache.isEmpty ||
-        cacheIncomplete;
-
-    if (cacheIncomplete && _dailyBarsCache.isNotEmpty) {
-      debugPrint(
-        '[MarketDataProvider] 日K缓存不完整: ${_dailyBarsCache.length}/${stocks.length}，将重新拉取',
-      );
-    }
-
-    if (needFetchDaily) {
-      // 批量获取日K数据（约1年交易日，用于指标计算）
-      _dailyBarsCache.clear();
-      var completed = 0;
-      final total = stocks.length;
-
-      await _pool.batchGetSecurityBarsStreaming(
-        stocks: stocks,
-        category: klineTypeDaily,
-        start: 0,
-        count: _dailyCacheTargetBars,
-        onStockBars: (index, bars) {
-          _dailyBarsCache[stocks[index].code] = bars;
-          completed++;
-          _updateProgress(RefreshStage.updateDailyBars, completed, total);
-          onDailyProgress?.call(completed, total);
-        },
-      );
-
-      await _persistDailyBarsToFile(
-        stockCodeSet,
-        onProgress: onDailyFilePersistProgress,
-      );
-      _lastFetchDate = effectiveDateKey;
-    } else {
-      // 跳过日K拉取，直接显示完成
-      _updateProgress(
-        RefreshStage.updateDailyBars,
-        _dailyBarsCache.length,
-        _dailyBarsCache.length,
-      );
-      onDailyProgress?.call(
-        _dailyBarsCache.length,
-        _dailyBarsCache.isEmpty ? 1 : _dailyBarsCache.length,
-      );
-      onDailyFilePersistProgress?.call(
-        _dailyBarsCache.length,
-        _dailyBarsCache.isEmpty ? 1 : _dailyBarsCache.length,
-      );
-    }
-
-    // 使用缓存数据计算回踩
     _applyPullbackDetection();
   }
 
@@ -999,8 +1018,8 @@ class MarketDataProvider extends ChangeNotifier {
     if (stockCodes.isEmpty) return;
 
     try {
-      final loaded = await _dailyKlineCacheStore.loadForStocks(
-        stockCodes,
+      final loaded = await _dailyKlineReadService.readOrThrow(
+        stockCodes: stockCodes,
         anchorDate: DateTime(anchorDate.year, anchorDate.month, anchorDate.day),
         targetBars: targetBars,
       );
@@ -1012,6 +1031,32 @@ class MarketDataProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('Failed to restore daily bars from file storage: $e');
     }
+  }
+
+  Future<void> _reloadDailyBarsOrThrow({
+    required List<String> stockCodes,
+    required DateTime anchorDate,
+    required int targetBars,
+  }) async {
+    if (stockCodes.isEmpty) {
+      _dailyBarsCache.clear();
+      return;
+    }
+
+    final loaded = await _dailyKlineReadService.readOrThrow(
+      stockCodes: stockCodes,
+      anchorDate: DateTime(anchorDate.year, anchorDate.month, anchorDate.day),
+      targetBars: targetBars,
+    );
+    _dailyBarsCache = loaded;
+    await _refreshDailyBarsDiskStats();
+    notifyListeners();
+  }
+
+  String _formatDateKey(DateTime date) {
+    return '${date.year.toString().padLeft(4, '0')}-'
+        '${date.month.toString().padLeft(2, '0')}-'
+        '${date.day.toString().padLeft(2, '0')}';
   }
 
   /// 重算回踩（使用缓存的日K数据，不重新下载）
@@ -1081,8 +1126,16 @@ class MarketDataProvider extends ChangeNotifier {
     if (_allData.isEmpty) {
       return '缺失分钟数据，请先刷新';
     }
-    if (_dailyBarsCache.isEmpty) {
-      return '缺失日K数据，请先刷新';
+    try {
+      await _reloadDailyBarsOrThrow(
+        stockCodes: _allData
+            .map((item) => item.stock.code)
+            .toList(growable: false),
+        anchorDate: _dataDate ?? DateTime.now(),
+        targetBars: _dailyCacheTargetBars,
+      );
+    } on DailyKlineReadException catch (error) {
+      return '日K读取失败: ${error.message}';
     }
     await _applyBreakoutDetection(
       targetStockCodes: targetStockCodes,

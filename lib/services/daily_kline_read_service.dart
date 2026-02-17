@@ -52,14 +52,6 @@ class DailyKlineReadService {
         );
       }
 
-      if (bars.length < targetBars) {
-        throw DailyKlineReadException(
-          stockCode: stockCode,
-          reason: DailyKlineReadFailureReason.insufficientBars,
-          message: 'Insufficient daily bars: ${bars.length} < $targetBars',
-        );
-      }
-
       for (var index = 1; index < bars.length; index++) {
         if (bars[index - 1].datetime.isAfter(bars[index].datetime)) {
           throw DailyKlineReadException(
