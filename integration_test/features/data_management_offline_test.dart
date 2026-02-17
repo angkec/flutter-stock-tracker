@@ -182,7 +182,7 @@ void main() {
         await driver.expectSnackBarContains('周线 ADX重算完成');
         expect(context.adxService.prewarmCalls, greaterThan(0));
         expect(context.adxService.prewarmDataTypes.last, KLineDataType.weekly);
-        expect(context.adxService.prewarmForceRecomputeValues.last, isFalse);
+        expect(context.adxService.prewarmForceRecomputeValues.last, isTrue);
         expect(context.adxService.prewarmFetchBatchSizes.last, 120);
         expect(context.adxService.prewarmPersistConcurrencyValues.last, 8);
       },
