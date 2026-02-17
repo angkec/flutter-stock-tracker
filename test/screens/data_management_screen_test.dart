@@ -1830,6 +1830,7 @@ void main() {
     await tester.ensureVisible(dailyRecomputeButton);
     await tester.tap(dailyRecomputeButton, warnIfMissed: false);
     await tester.pumpAndSettle();
+    expect(provider.forceDailyRefetchCount, 0);
     expect(adxService.prewarmDataTypes, contains(KLineDataType.daily));
 
     provider.dispose();

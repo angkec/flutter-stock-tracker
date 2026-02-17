@@ -135,18 +135,25 @@ class _FakeMarketDataProvider extends MarketDataProvider {
         pool: TdxPool(poolSize: 1),
         stockService: StockService(TdxPool(poolSize: 1)),
         industryService: IndustryService(),
-        dailyBarsFileStorage: DailyKlineCacheStore(
-          storage: KLineFileStorage(),
-        ),
+        dailyBarsFileStorage: DailyKlineCacheStore(storage: KLineFileStorage()),
       );
 
   final List<StockMonitorData> _allData;
+  int forceRefetchDailyBarsCallCount = 0;
 
   @override
   List<StockMonitorData> get allData => _allData;
 
   @override
   bool get isLoading => false;
+
+  @override
+  Future<void> forceRefetchDailyBars({
+    void Function(String stage, int current, int total)? onProgress,
+    Set<String>? indicatorTargetStockCodes,
+  }) async {
+    forceRefetchDailyBarsCallCount++;
+  }
 }
 
 List<KLine> _buildDailyBars({required int count, required DateTime start}) {
@@ -220,12 +227,8 @@ void main() {
 
       // 先制造“snapshot命中但缓存缺失”状态：同版本同scope预热一次，但bars为空，不写入缓存文件。
       repository.barsByType = <KLineDataType, Map<String, List<KLine>>>{
-        KLineDataType.daily: <String, List<KLine>>{
-          stockCode: const <KLine>[],
-        },
-        KLineDataType.weekly: <String, List<KLine>>{
-          stockCode: const <KLine>[],
-        },
+        KLineDataType.daily: <String, List<KLine>>{stockCode: const <KLine>[]},
+        KLineDataType.weekly: <String, List<KLine>>{stockCode: const <KLine>[]},
       };
       await adxService.prewarmFromRepository(
         stockCodes: const <String>[stockCode],
@@ -273,7 +276,9 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        await tester.tap(find.byKey(ValueKey('adx_recompute_${dataType.name}')));
+        await tester.tap(
+          find.byKey(ValueKey('adx_recompute_${dataType.name}')),
+        );
         await tester.pump();
         await tester.pumpAndSettle();
         expect(find.textContaining('ADX重算完成'), findsOneWidget);
@@ -281,6 +286,7 @@ void main() {
 
       await runRecompute(KLineDataType.daily);
       await runRecompute(KLineDataType.weekly);
+      expect(marketProvider.forceRefetchDailyBarsCallCount, 0);
 
       await tester.pumpWidget(
         MultiProvider(

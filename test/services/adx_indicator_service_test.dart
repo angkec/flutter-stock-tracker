@@ -220,34 +220,37 @@ void main() {
     },
   );
 
-  test('updateConfigFor should persist daily and weekly configs independently', () async {
-    final service = AdxIndicatorService(
-      repository: repository,
-      cacheStore: cacheStore,
-    );
-    await service.load();
+  test(
+    'updateConfigFor should persist daily and weekly configs independently',
+    () async {
+      final service = AdxIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
 
-    const dailyConfig = AdxConfig(period: 10, threshold: 28);
-    const weeklyConfig = AdxConfig(period: 20, threshold: 30);
+      const dailyConfig = AdxConfig(period: 10, threshold: 28);
+      const weeklyConfig = AdxConfig(period: 20, threshold: 30);
 
-    await service.updateConfigFor(
-      dataType: KLineDataType.daily,
-      newConfig: dailyConfig,
-    );
-    await service.updateConfigFor(
-      dataType: KLineDataType.weekly,
-      newConfig: weeklyConfig,
-    );
+      await service.updateConfigFor(
+        dataType: KLineDataType.daily,
+        newConfig: dailyConfig,
+      );
+      await service.updateConfigFor(
+        dataType: KLineDataType.weekly,
+        newConfig: weeklyConfig,
+      );
 
-    final reloaded = AdxIndicatorService(
-      repository: repository,
-      cacheStore: cacheStore,
-    );
-    await reloaded.load();
+      final reloaded = AdxIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await reloaded.load();
 
-    expect(reloaded.configFor(KLineDataType.daily), dailyConfig);
-    expect(reloaded.configFor(KLineDataType.weekly), weeklyConfig);
-  });
+      expect(reloaded.configFor(KLineDataType.daily), dailyConfig);
+      expect(reloaded.configFor(KLineDataType.weekly), weeklyConfig);
+    },
+  );
 
   test(
     'prewarmFromRepository should fetch in chunks and aggregate progress',
@@ -325,6 +328,47 @@ void main() {
         dateRange: DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1)),
       );
       expect(repository.getKlinesCallCount, 1);
+    },
+  );
+
+  test(
+    'prewarmFromRepository should rerun when snapshot matches but daily cache file is missing',
+    () async {
+      final service = AdxIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
+      repository.currentVersion = 77;
+
+      const stockCodes = <String>['600000'];
+      final range = DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1));
+
+      repository.klinesByStock = {
+        for (final code in stockCodes) code: const <KLine>[],
+      };
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.daily,
+        dateRange: range,
+      );
+      expect(repository.getKlinesCallCount, 1);
+
+      repository.klinesByStock = {
+        for (final code in stockCodes)
+          code: _buildBars(DateTime(2025, 10, 1), 120),
+      };
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.daily,
+        dateRange: range,
+      );
+
+      expect(repository.getKlinesCallCount, 2);
+      final cacheFile = File(
+        '${tempDir.path}/adx_cache/600000_daily_adx_cache.json',
+      );
+      expect(await cacheFile.exists(), isTrue);
     },
   );
 

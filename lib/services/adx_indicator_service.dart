@@ -38,8 +38,7 @@ class AdxIndicatorService extends ChangeNotifier {
 
   final DataRepository _repository;
   final AdxCacheStore _cacheStore;
-  final Map<String, _AdxMemoryEntry> _memoryCache =
-      <String, _AdxMemoryEntry>{};
+  final Map<String, _AdxMemoryEntry> _memoryCache = <String, _AdxMemoryEntry>{};
 
   AdxConfig _dailyConfig = AdxConfig.defaults;
   AdxConfig _weeklyConfig = AdxConfig.defaults;
@@ -93,7 +92,10 @@ class AdxIndicatorService extends ChangeNotifier {
     _clearMemoryForDataType(dataType);
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_configStorageKeyFor(dataType), jsonEncode(newConfig));
+    await prefs.setString(
+      _configStorageKeyFor(dataType),
+      jsonEncode(newConfig),
+    );
     notifyListeners();
   }
 
@@ -321,8 +323,17 @@ class AdxIndicatorService extends ChangeNotifier {
             prewarmSnapshot.configSignature == configSignature &&
             prewarmSnapshot.stockScopeSignature == stockScopeSignature;
         if (canSkip) {
-          onProgress?.call(1, 1);
-          return;
+          final cachedStockCodes = await _cacheStore.listStockCodes(
+            dataType: dataType,
+          );
+          final cachedStockCodeSet = cachedStockCodes.toSet();
+          final hasCompleteCache = deduplicatedStockCodes.every(
+            cachedStockCodeSet.contains,
+          );
+          if (hasCompleteCache) {
+            onProgress?.call(1, 1);
+            return;
+          }
         }
       } catch (_) {
         // Continue with full prewarm when snapshot check fails.
@@ -482,9 +493,7 @@ class AdxIndicatorService extends ChangeNotifier {
           ? 0.0
           : (100.0 * smoothedMinusDm / smoothedTr);
       final diSum = plusDi + minusDi;
-      final dx = diSum <= 0
-          ? 0.0
-          : (100.0 * (plusDi - minusDi).abs() / diSum);
+      final dx = diSum <= 0 ? 0.0 : (100.0 * (plusDi - minusDi).abs() / diSum);
 
       if (adx == null) {
         dxWindow.add(dx);

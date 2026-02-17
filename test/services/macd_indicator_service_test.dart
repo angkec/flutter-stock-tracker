@@ -543,6 +543,34 @@ void main() {
   );
 
   test(
+    'daily prewarmFromRepository should read bars via DataRepository.getKlines',
+    () async {
+      final service = MacdIndicatorService(
+        repository: repository,
+        cacheStore: cacheStore,
+      );
+      await service.load();
+
+      repository.klinesByStock = {
+        '600000': _buildBars(DateTime(2025, 10, 1), 180),
+      };
+
+      await service.prewarmFromRepository(
+        stockCodes: const <String>['600000'],
+        dataType: KLineDataType.daily,
+        dateRange: DateRange(DateTime(2025, 10, 1), DateTime(2026, 2, 1)),
+        forceRecompute: true,
+      );
+
+      expect(repository.getKlinesCallCount, 1);
+      final cacheFile = File(
+        '${tempDir.path}/macd_cache/600000_daily_macd_cache.json',
+      );
+      expect(await cacheFile.exists(), isTrue);
+    },
+  );
+
+  test(
     'prewarmFromRepository should pipeline next chunk fetch while current chunk computes',
     () async {
       final service = _DelayedPrewarmMacdService(

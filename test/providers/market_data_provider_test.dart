@@ -72,6 +72,8 @@ class _ReconnectableFakePool extends TdxPool {
 }
 
 class _FakeDataRepository implements DataRepository {
+  int getKlinesCallCount = 0;
+
   @override
   Stream<DataStatus> get statusStream => const Stream.empty();
 
@@ -84,6 +86,7 @@ class _FakeDataRepository implements DataRepository {
     required DateRange dateRange,
     required KLineDataType dataType,
   }) async {
+    getKlinesCallCount++;
     return {for (final code in stockCodes) code: const <KLine>[]};
   }
 
@@ -885,8 +888,9 @@ void main() {
 
     final fileStorage = KLineFileStorage();
     fileStorage.setBaseDirPathForTesting(tempDir.path);
+    final fakeRepository = _FakeDataRepository();
     final macdService = MacdIndicatorService(
-      repository: _FakeDataRepository(),
+      repository: fakeRepository,
       cacheStore: MacdCacheStore(storage: fileStorage),
     );
     await macdService.load();
@@ -899,5 +903,7 @@ void main() {
       '${tempDir.path}/macd_cache/600000_daily_macd_cache.json',
     );
     expect(await macdFile.exists(), isTrue);
+    expect(pool.batchFetchCalls, 1);
+    expect(fakeRepository.getKlinesCallCount, 0);
   });
 }
