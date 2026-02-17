@@ -16,6 +16,7 @@ import 'package:stock_rtwatcher/widgets/industry_heat_bar.dart';
 import 'package:stock_rtwatcher/widgets/industry_trend_chart.dart';
 import 'package:stock_rtwatcher/widgets/linked_dual_kline_view.dart';
 import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
+import 'package:stock_rtwatcher/widgets/adx_subchart.dart';
 import 'package:stock_rtwatcher/widgets/macd_subchart.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
@@ -24,6 +25,7 @@ import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
 
 /// K线图显示模式
@@ -46,6 +48,7 @@ class StockDetailScreen extends StatefulWidget {
   final List<KLine>? initialWeeklyBars;
   final List<DailyRatio>? initialRatioHistory;
   final MacdCacheStore? macdCacheStoreForTest;
+  final AdxCacheStore? adxCacheStoreForTest;
 
   const StockDetailScreen({
     super.key,
@@ -60,6 +63,7 @@ class StockDetailScreen extends StatefulWidget {
     this.initialWeeklyBars,
     this.initialRatioHistory,
     this.macdCacheStoreForTest,
+    this.adxCacheStoreForTest,
   });
 
   @override
@@ -710,6 +714,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           dailyBars: _dailyBars,
           ratios: _ratioHistory,
           macdCacheStoreForTest: widget.macdCacheStoreForTest,
+          adxCacheStoreForTest: widget.adxCacheStoreForTest,
         ),
       );
     }
@@ -743,6 +748,14 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
               : KLineDataType.weekly,
           cacheStore: widget.macdCacheStoreForTest,
           chartKey: ValueKey('stock_detail_macd_paint_${_chartMode.name}'),
+        ),
+        AdxSubChart(
+          key: ValueKey('stock_detail_adx_${_chartMode.name}'),
+          dataType: _chartMode == ChartMode.daily
+              ? KLineDataType.daily
+              : KLineDataType.weekly,
+          cacheStore: widget.adxCacheStoreForTest,
+          chartKey: ValueKey('stock_detail_adx_paint_${_chartMode.name}'),
         ),
       ],
     );
