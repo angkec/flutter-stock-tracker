@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
@@ -9,6 +11,8 @@ import 'package:stock_rtwatcher/models/macd_config.dart';
 import 'package:stock_rtwatcher/models/macd_point.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/screens/stock_detail_screen.dart';
+import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
+import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
 
 import '../support/kline_fixture_builder.dart';
 
@@ -77,6 +81,10 @@ AdxCacheSeries _buildAdxSeries({
 }
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues(const {});
+  });
+
   final stock = Stock(code: '600000', name: '浦发银行', market: 1, preClose: 10.2);
 
   testWidgets('daily mode displays cached MACD subchart section', (
@@ -285,4 +293,96 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('linked mode keeps weekly main chart readable height', (
+    tester,
+  ) async {
+    final dailyBars = buildDailyBars(
+      count: 60,
+      startDate: DateTime(2026, 1, 1),
+    );
+    final weeklyBars = buildDailyBars(
+      count: 40,
+      startDate: DateTime(2025, 1, 1),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StockDetailScreen(
+          stock: stock,
+          skipAutoConnectForTest: true,
+          showWatchlistToggle: false,
+          showIndustryHeatSection: false,
+          initialChartMode: ChartMode.linked,
+          initialDailyBars: dailyBars,
+          initialWeeklyBars: weeklyBars,
+        ),
+      ),
+    );
+
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final weeklyChart = tester.widget<KLineChartWithSubCharts>(
+      find.byKey(const ValueKey('linked_weekly_chart')),
+    );
+
+    expect(weeklyChart.chartHeight, greaterThanOrEqualTo(80));
+  });
+
+  testWidgets(
+    'stock detail provides linked layout debug menu and applies updated thresholds',
+    (tester) async {
+      final layoutService = LinkedLayoutConfigService();
+      await layoutService.load();
+      final dailyBars = buildDailyBars(
+        count: 60,
+        startDate: DateTime(2026, 1, 1),
+      );
+      final weeklyBars = buildDailyBars(
+        count: 40,
+        startDate: DateTime(2025, 1, 1),
+      );
+
+      await tester.pumpWidget(
+        ChangeNotifierProvider<LinkedLayoutConfigService>.value(
+          value: layoutService,
+          child: MaterialApp(
+            home: StockDetailScreen(
+              stock: stock,
+              skipAutoConnectForTest: true,
+              showWatchlistToggle: false,
+              showIndustryHeatSection: false,
+              initialChartMode: ChartMode.linked,
+              initialDailyBars: dailyBars,
+              initialWeeklyBars: weeklyBars,
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final moreMenu = find.byKey(
+        const ValueKey('stock_detail_more_menu_button'),
+      );
+      await tester.tap(moreMenu);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.tap(find.text('联动布局调试').last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tester.enterText(
+        find.byKey(const ValueKey('linked_layout_main_min_input')),
+        '110',
+      );
+      await tester.tap(find.text('应用'));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final weeklyChart = tester.widget<KLineChartWithSubCharts>(
+        find.byKey(const ValueKey('linked_weekly_chart')),
+      );
+      expect(weeklyChart.chartHeight, greaterThanOrEqualTo(110));
+    },
+  );
 }

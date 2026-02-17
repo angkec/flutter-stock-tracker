@@ -4,6 +4,8 @@ import 'package:stock_rtwatcher/models/linked_layout_config.dart';
 import 'package:stock_rtwatcher/models/linked_layout_result.dart';
 
 class LinkedLayoutSolver {
+  static const double _linkedStatusBarHeight = 26;
+
   static LinkedLayoutResult resolve({
     required double availableHeight,
     required int topSubchartCount,
@@ -15,7 +17,8 @@ class LinkedLayoutSolver {
 
     double requiredPaneMinHeight(int subchartCount) {
       final safeCount = math.max(0, subchartCount);
-      return normalized.mainMinHeight +
+      return normalized.infoBarHeight +
+          normalized.mainMinHeight +
           safeCount * normalized.subMinHeight +
           safeCount * normalized.subchartSpacing;
     }
@@ -29,7 +32,7 @@ class LinkedLayoutSolver {
     );
 
     final requiredContainer =
-        normalized.infoBarHeight + normalized.paneGap + requiredPaneBudget;
+        _linkedStatusBarHeight + normalized.paneGap + requiredPaneBudget;
 
     final clampedByConfig = availableHeight.clamp(
       normalized.containerMinHeight,
@@ -39,7 +42,7 @@ class LinkedLayoutSolver {
 
     final panesAvailable = math.max(
       0.0,
-      container - normalized.infoBarHeight - normalized.paneGap,
+      container - _linkedStatusBarHeight - normalized.paneGap,
     );
 
     final topPaneHeight =
@@ -54,6 +57,7 @@ class LinkedLayoutSolver {
       final safeCount = math.max(0, subchartCount);
       final spacingTotal = safeCount * normalized.subchartSpacing;
       final minimumRequired =
+          normalized.infoBarHeight +
           normalized.mainMinHeight +
           safeCount * normalized.subMinHeight +
           spacingTotal;
