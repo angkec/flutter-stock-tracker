@@ -6,10 +6,15 @@ import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/config/minute_sync_config.dart';
+import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/screens/main_screen.dart';
+import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/services/daily_kline_read_service.dart';
+import 'package:stock_rtwatcher/services/daily_kline_sync_service.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/holdings_service.dart';
 import 'package:stock_rtwatcher/services/ai_analysis_service.dart';
@@ -54,6 +59,46 @@ class MyApp extends StatelessWidget {
           },
         ),
         Provider(create: (_) => TdxPool(poolSize: 12)),
+        Provider(create: (_) => DailyKlineCacheStore()),
+        Provider(create: (_) => DailyKlineCheckpointStore()),
+        ProxyProvider<DailyKlineCacheStore, DailyKlineReadService>(
+          update: (_, cacheStore, __) =>
+              DailyKlineReadService(cacheStore: cacheStore),
+        ),
+        ProxyProvider3<
+          DailyKlineCheckpointStore,
+          DailyKlineCacheStore,
+          TdxPool,
+          DailyKlineSyncService
+        >(
+          update: (_, checkpointStore, cacheStore, pool, __) {
+            return DailyKlineSyncService(
+              checkpointStore: checkpointStore,
+              cacheStore: cacheStore,
+              fetcher: ({
+                required stocks,
+                required count,
+                required mode,
+                onProgress,
+              }) async {
+                final barsByCode = <String, List<KLine>>{};
+                var completed = 0;
+                await pool.batchGetSecurityBarsStreaming(
+                  stocks: stocks,
+                  category: klineTypeDaily,
+                  start: 0,
+                  count: count,
+                  onStockBars: (index, bars) {
+                    barsByCode[stocks[index].code] = bars;
+                    completed++;
+                    onProgress?.call(completed, stocks.length);
+                  },
+                );
+                return barsByCode;
+              },
+            );
+          },
+        ),
         ProxyProvider<TdxPool, StockService>(
           update: (_, pool, __) => StockService(pool),
         ),
@@ -211,12 +256,20 @@ class MyApp extends StatelessWidget {
                 .read<HistoricalKlineService>();
             final macdService = context.read<MacdIndicatorService>();
             final adxService = context.read<AdxIndicatorService>();
+            final dailyCacheStore = context.read<DailyKlineCacheStore>();
+            final dailyCheckpointStore = context
+                .read<DailyKlineCheckpointStore>();
+            final dailyReadService = context.read<DailyKlineReadService>();
+            final dailySyncService = context.read<DailyKlineSyncService>();
             breakoutService.setHistoricalKlineService(historicalKlineService);
             final provider = MarketDataProvider(
               pool: pool,
               stockService: stockService,
               industryService: industryService,
-              dailyBarsFileStorage: DailyKlineCacheStore(),
+              dailyBarsFileStorage: dailyCacheStore,
+              dailyKlineCheckpointStore: dailyCheckpointStore,
+              dailyKlineReadService: dailyReadService,
+              dailyKlineSyncService: dailySyncService,
             );
             provider.setPullbackService(pullbackService);
             provider.setBreakoutService(breakoutService);
