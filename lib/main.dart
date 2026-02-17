@@ -28,6 +28,7 @@ import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
+import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
@@ -75,27 +76,28 @@ class MyApp extends StatelessWidget {
             return DailyKlineSyncService(
               checkpointStore: checkpointStore,
               cacheStore: cacheStore,
-              fetcher: ({
-                required stocks,
-                required count,
-                required mode,
-                onProgress,
-              }) async {
-                final barsByCode = <String, List<KLine>>{};
-                var completed = 0;
-                await pool.batchGetSecurityBarsStreaming(
-                  stocks: stocks,
-                  category: klineTypeDaily,
-                  start: 0,
-                  count: count,
-                  onStockBars: (index, bars) {
-                    barsByCode[stocks[index].code] = bars;
-                    completed++;
-                    onProgress?.call(completed, stocks.length);
+              fetcher:
+                  ({
+                    required stocks,
+                    required count,
+                    required mode,
+                    onProgress,
+                  }) async {
+                    final barsByCode = <String, List<KLine>>{};
+                    var completed = 0;
+                    await pool.batchGetSecurityBarsStreaming(
+                      stocks: stocks,
+                      category: klineTypeDaily,
+                      start: 0,
+                      count: count,
+                      onStockBars: (index, bars) {
+                        barsByCode[stocks[index].code] = bars;
+                        completed++;
+                        onProgress?.call(completed, stocks.length);
+                      },
+                    );
+                    return barsByCode;
                   },
-                );
-                return barsByCode;
-              },
             );
           },
         ),
@@ -106,6 +108,13 @@ class MyApp extends StatelessWidget {
           create: (_) {
             final service = WatchlistService();
             service.load(); // 异步加载自选股列表
+            return service;
+          },
+        ),
+        ChangeNotifierProvider(
+          create: (_) {
+            final service = LinkedLayoutConfigService();
+            service.load(); // 异步加载联动布局调试配置
             return service;
           },
         ),
