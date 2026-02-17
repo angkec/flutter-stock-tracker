@@ -158,4 +158,62 @@ void main() {
     expect(find.textContaining('+DI'), findsWidgets);
     expect(find.textContaining('-DI'), findsWidgets);
   });
+
+  testWidgets(
+    'renders ADX when cache misses only the latest visible daily bar',
+    (tester) async {
+      final bars = buildDailyBars(count: 50, startDate: DateTime(2026, 1, 1));
+      final points = bars
+          .take(49)
+          .map(
+            (bar) => AdxPoint(
+              datetime: bar.datetime,
+              adx: 22.0,
+              plusDi: 26.0,
+              minusDi: 14.0,
+            ),
+          )
+          .toList(growable: false);
+
+      final series = AdxCacheSeries(
+        stockCode: '600000',
+        dataType: KLineDataType.daily,
+        config: const AdxConfig(period: 14, threshold: 25),
+        sourceSignature: 'test_tail_missing',
+        points: points,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 320,
+              child: KLineChartWithSubCharts(
+                stockCode: '600000',
+                bars: bars,
+                subCharts: [
+                  AdxSubChart(
+                    key: const ValueKey('daily_adx_subchart'),
+                    dataType: KLineDataType.daily,
+                    cacheStore: _FakeAdxCacheStore({'600000|daily': series}),
+                    chartKey: const ValueKey('daily_adx_paint_tail_missing'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('暂无ADX缓存，请先在数据管理同步'), findsNothing);
+
+      final paint = tester.widget<CustomPaint>(
+        find.byKey(const ValueKey('daily_adx_paint_tail_missing')),
+      );
+      final painter = paint.painter as AdxSubChartPainter;
+      expect(painter.points.length, 29);
+    },
+  );
 }

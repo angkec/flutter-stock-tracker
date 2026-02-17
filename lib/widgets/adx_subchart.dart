@@ -380,24 +380,28 @@ class _AdxSubChartBodyState extends State<_AdxSubChartBody> {
     }
 
     final visibleBars = widget.bars.sublist(safeStart, safeEnd);
-    final visiblePoints = <AdxPoint>[];
     var firstSlotIndex = -1;
+    var lastSlotIndex = -1;
     for (var slot = 0; slot < visibleBars.length; slot++) {
-      final bar = visibleBars[slot];
-      final point = dateToPoint[_dateKey(bar.datetime)];
-      if (point == null) {
-        if (firstSlotIndex >= 0) {
-          return null;
+      if (dateToPoint.containsKey(_dateKey(visibleBars[slot].datetime))) {
+        if (firstSlotIndex < 0) {
+          firstSlotIndex = slot;
         }
-        continue;
+        lastSlotIndex = slot;
       }
-      if (firstSlotIndex < 0) {
-        firstSlotIndex = slot;
+    }
+    if (firstSlotIndex < 0 || lastSlotIndex < firstSlotIndex) {
+      return null;
+    }
+
+    final visiblePoints = <AdxPoint>[];
+    for (var slot = firstSlotIndex; slot <= lastSlotIndex; slot++) {
+      final point = dateToPoint[_dateKey(visibleBars[slot].datetime)];
+      if (point == null) {
+        // Keep strict continuity inside the render window.
+        return null;
       }
       visiblePoints.add(point);
-    }
-    if (visiblePoints.isEmpty || firstSlotIndex < 0) {
-      return null;
     }
 
     return _ResolvedViewportAdx(
