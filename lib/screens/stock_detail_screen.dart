@@ -24,9 +24,13 @@ import 'package:stock_rtwatcher/models/breakout_config.dart';
 import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
+import 'package:stock_rtwatcher/models/linked_layout_config.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
+import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
+import 'package:stock_rtwatcher/services/linked_layout_solver.dart';
+import 'package:stock_rtwatcher/widgets/linked_layout_debug_sheet.dart';
 
 /// K线图显示模式
 enum ChartMode { minute, daily, weekly, linked }
@@ -485,6 +489,50 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     );
   }
 
+  PopupMenuButton<String> _buildMoreMenu() {
+    return PopupMenuButton<String>(
+      key: const ValueKey('stock_detail_more_menu_button'),
+      icon: const Icon(Icons.more_vert),
+      onSelected: (value) {
+        if (value == 'linked_layout_debug') {
+          _openLinkedLayoutDebugSheet();
+        }
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem<String>(
+          value: 'linked_layout_debug',
+          child: Text('联动布局调试'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openLinkedLayoutDebugSheet() async {
+    final service = context.read<LinkedLayoutConfigService?>();
+    if (service == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('未注入联动布局配置服务，无法打开调试面板'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => ChangeNotifierProvider<LinkedLayoutConfigService>.value(
+        value: service,
+        child: const LinkedLayoutDebugSheet(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasStockList =
@@ -509,7 +557,10 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
               ),
           ],
         ),
-        actions: [if (widget.showWatchlistToggle) _buildWatchlistToggle()],
+        actions: [
+          if (widget.showWatchlistToggle) _buildWatchlistToggle(),
+          _buildMoreMenu(),
+        ],
       ),
       body: hasStockList
           ? PageView.builder(
@@ -706,13 +757,24 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     }
 
     if (_chartMode == ChartMode.linked) {
+      final layoutConfig =
+          context.watch<LinkedLayoutConfigService?>()?.config ??
+          const LinkedLayoutConfig.balanced();
+      final resolvedLayout = LinkedLayoutSolver.resolve(
+        availableHeight: MediaQuery.sizeOf(context).height * 0.72,
+        topSubchartCount: 2,
+        bottomSubchartCount: 2,
+        config: layoutConfig,
+      );
+
       return SizedBox(
-        height: 560,
+        height: resolvedLayout.containerHeight,
         child: LinkedDualKlineView(
           stockCode: _currentStock.code,
           weeklyBars: _weeklyBars,
           dailyBars: _dailyBars,
           ratios: _ratioHistory,
+          layout: resolvedLayout,
           macdCacheStoreForTest: widget.macdCacheStoreForTest,
           adxCacheStoreForTest: widget.adxCacheStoreForTest,
         ),
