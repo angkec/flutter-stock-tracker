@@ -1,6 +1,5 @@
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stock_rtwatcher/audit/models/audit_event.dart';
 import 'package:stock_rtwatcher/audit/models/audit_operation_type.dart';
 import 'package:stock_rtwatcher/audit/models/audit_run_summary.dart';
 import 'package:stock_rtwatcher/audit/models/audit_verdict.dart';
@@ -12,7 +11,10 @@ class _FakeAuditSink implements AuditSink {
   AuditRunSummary? latest;
 
   @override
-  Future<void> append(event) async {}
+  Future<void> append(AuditEvent event) async {}
+
+  @override
+  Future<void> appendAll(List<AuditEvent> events) async {}
 
   @override
   Future<void> saveLatest(AuditRunSummary summary) async {

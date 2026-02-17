@@ -28,9 +28,24 @@ class AuditLogStore {
   }
 
   Future<void> append(AuditEvent event) async {
+    await appendAll(<AuditEvent>[event]);
+  }
+
+  Future<void> appendAll(List<AuditEvent> events) async {
+    if (events.isEmpty) {
+      return;
+    }
+
     final file = await _resolveDailyFile();
-    final encoded = jsonEncode(event.toJson());
-    await file.writeAsString('$encoded\n', mode: FileMode.append, flush: true);
+    final buffer = StringBuffer();
+    for (final event in events) {
+      buffer.writeln(jsonEncode(event.toJson()));
+    }
+    await file.writeAsString(
+      buffer.toString(),
+      mode: FileMode.append,
+      flush: true,
+    );
     await _cleanupOldFiles();
   }
 

@@ -7,10 +7,19 @@ import 'package:stock_rtwatcher/audit/services/audit_operation_runner.dart';
 class InMemoryAuditSink implements AuditSink {
   final List<AuditEvent> events = <AuditEvent>[];
   AuditRunSummary? latest;
+  int appendCalls = 0;
+  int appendAllCalls = 0;
 
   @override
   Future<void> append(AuditEvent event) async {
+    appendCalls++;
     events.add(event);
+  }
+
+  @override
+  Future<void> appendAll(List<AuditEvent> input) async {
+    appendAllCalls++;
+    events.addAll(input);
   }
 
   @override
@@ -28,6 +37,11 @@ class FailingAppendAuditSink implements AuditSink {
   }
 
   @override
+  Future<void> appendAll(List<AuditEvent> input) async {
+    throw StateError('append failed');
+  }
+
+  @override
   Future<void> saveLatest(AuditRunSummary summary) async {
     latest = summary;
   }
@@ -39,6 +53,11 @@ class FailingSaveAuditSink implements AuditSink {
   @override
   Future<void> append(AuditEvent event) async {
     events.add(event);
+  }
+
+  @override
+  Future<void> appendAll(List<AuditEvent> input) async {
+    events.addAll(input);
   }
 
   @override
@@ -74,6 +93,27 @@ void main() {
       isTrue,
     );
     expect(memory.latest?.runId, summary.runId);
+  });
+
+  test('runner should persist events through batched appendAll', () async {
+    final memory = InMemoryAuditSink();
+    final runner = AuditOperationRunner(
+      sink: memory,
+      nowProvider: () => DateTime(2026, 2, 16, 11),
+    );
+
+    await runner.run(
+      operation: AuditOperationType.dailyForceRefetch,
+      body: (ctx) async {
+        for (var i = 1; i <= 5; i++) {
+          ctx.stageProgress('fetch', current: i, total: 5);
+        }
+      },
+    );
+
+    expect(memory.appendAllCalls, 1);
+    expect(memory.appendCalls, 0);
+    expect(memory.events.length, greaterThanOrEqualTo(7));
   });
 
   test('runner should mark error event and rethrow', () async {

@@ -996,6 +996,36 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     String? baselineVerificationWarning;
     var hasVerifiedNoMissingAfterFetch = false;
     StreamSubscription<DataStatus>? statusSubscription;
+    DateTime? lastAuditProgressAt;
+    String? lastAuditProgressStage;
+    var lastAuditProgressCurrent = -1;
+    var lastAuditProgressTotal = -1;
+    const auditProgressMinInterval = Duration(milliseconds: 400);
+
+    bool shouldEmitAuditProgress(String stage, int current, int total) {
+      final now = DateTime.now();
+      final stageChanged = stage != lastAuditProgressStage;
+      final totalChanged = total != lastAuditProgressTotal;
+      final reachedEnd = current >= total;
+      final progressed = current > lastAuditProgressCurrent;
+      final reachedInterval =
+          lastAuditProgressAt == null ||
+          now.difference(lastAuditProgressAt!) >= auditProgressMinInterval;
+
+      if (!(stageChanged ||
+          totalChanged ||
+          reachedEnd ||
+          (progressed && reachedInterval))) {
+        return false;
+      }
+
+      lastAuditProgressAt = now;
+      lastAuditProgressStage = stage;
+      lastAuditProgressCurrent = current;
+      lastAuditProgressTotal = total;
+      return true;
+    }
+
     try {
       await auditService.runner.run(
         operation: AuditOperationType.historicalFetchMissing,
@@ -1030,11 +1060,17 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 total: safeTotal,
                 stage: '2/4 写入K线数据',
               );
-              audit.stageProgress(
+              if (shouldEmitAuditProgress(
                 'write_kline',
-                current: safeCurrent,
-                total: safeTotal,
-              );
+                safeCurrent,
+                safeTotal,
+              )) {
+                audit.stageProgress(
+                  'write_kline',
+                  current: safeCurrent,
+                  total: safeTotal,
+                );
+              }
               return;
             }
 
@@ -1043,11 +1079,17 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               total: safeTotal,
               stage: forceRefetch ? '1/4 强制拉取K线数据' : '1/4 拉取K线数据',
             );
-            audit.stageProgress(
+            if (shouldEmitAuditProgress(
               'fetch_kline',
-              current: safeCurrent,
-              total: safeTotal,
-            );
+              safeCurrent,
+              safeTotal,
+            )) {
+              audit.stageProgress(
+                'fetch_kline',
+                current: safeCurrent,
+                total: safeTotal,
+              );
+            }
           });
 
           debugPrint(
@@ -1066,11 +1108,17 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                       total: safeTotal,
                       stage: '1/4 强制拉取K线数据',
                     );
-                    audit.stageProgress(
+                    if (shouldEmitAuditProgress(
                       'fetch_kline',
-                      current: safeCurrent,
-                      total: safeTotal,
-                    );
+                      safeCurrent,
+                      safeTotal,
+                    )) {
+                      audit.stageProgress(
+                        'fetch_kline',
+                        current: safeCurrent,
+                        total: safeTotal,
+                      );
+                    }
                   },
                 )
               : await repository.fetchMissingData(
@@ -1085,11 +1133,17 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                       total: safeTotal,
                       stage: '1/4 拉取K线数据',
                     );
-                    audit.stageProgress(
+                    if (shouldEmitAuditProgress(
                       'fetch_kline',
-                      current: safeCurrent,
-                      total: safeTotal,
-                    );
+                      safeCurrent,
+                      safeTotal,
+                    )) {
+                      audit.stageProgress(
+                        'fetch_kline',
+                        current: safeCurrent,
+                        total: safeTotal,
+                      );
+                    }
                   },
                 );
           debugPrint('[DataManagement] K线数据已保存');
@@ -1151,11 +1205,17 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                   total: safeTotal,
                   stage: '2/4 复检缺失状态',
                 );
-                audit.stageProgress(
+                if (shouldEmitAuditProgress(
                   'verify_missing',
-                  current: safeCurrent,
-                  total: safeTotal,
-                );
+                  safeCurrent,
+                  safeTotal,
+                )) {
+                  audit.stageProgress(
+                    'verify_missing',
+                    current: safeCurrent,
+                    total: safeTotal,
+                  );
+                }
               },
             );
 
@@ -1336,6 +1396,35 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     StreamSubscription<DataStatus>? statusSubscription;
     StreamSubscription<DataUpdatedEvent>? updatedSubscription;
     String completionMessage = forceRefetch ? '周K数据已强制更新' : '周K数据已更新';
+    DateTime? lastAuditProgressAt;
+    String? lastAuditProgressStage;
+    var lastAuditProgressCurrent = -1;
+    var lastAuditProgressTotal = -1;
+    const auditProgressMinInterval = Duration(milliseconds: 400);
+
+    bool shouldEmitAuditProgress(String stage, int current, int total) {
+      final now = DateTime.now();
+      final stageChanged = stage != lastAuditProgressStage;
+      final totalChanged = total != lastAuditProgressTotal;
+      final reachedEnd = current >= total;
+      final progressed = current > lastAuditProgressCurrent;
+      final reachedInterval =
+          lastAuditProgressAt == null ||
+          now.difference(lastAuditProgressAt!) >= auditProgressMinInterval;
+
+      if (!(stageChanged ||
+          totalChanged ||
+          reachedEnd ||
+          (progressed && reachedInterval))) {
+        return false;
+      }
+
+      lastAuditProgressAt = now;
+      lastAuditProgressStage = stage;
+      lastAuditProgressCurrent = current;
+      lastAuditProgressTotal = total;
+      return true;
+    }
 
     try {
       await auditService.runner.run(
@@ -1472,11 +1561,13 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               stage:
                   '$stageTitle\n${buildStageMetrics(safeCurrent, safeTotal)}',
             );
-            audit.stageProgress(
-              stageTitle,
-              current: safeCurrent,
-              total: safeTotal,
-            );
+            if (shouldEmitAuditProgress(stageTitle, safeCurrent, safeTotal)) {
+              audit.stageProgress(
+                stageTitle,
+                current: safeCurrent,
+                total: safeTotal,
+              );
+            }
           });
           updatedSubscription = repository.dataUpdatedStream.listen((event) {
             if (event.dataType == KLineDataType.weekly) {
@@ -1559,11 +1650,13 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                       '$workingLabel...\n'
                       '速率 ${speed.toStringAsFixed(1)}只/秒 · 预计剩余 $etaLabel',
                 );
-                audit.stageProgress(
-                  stageKey,
-                  current: safeCurrent,
-                  total: safeTotal,
-                );
+                if (shouldEmitAuditProgress(stageKey, safeCurrent, safeTotal)) {
+                  audit.stageProgress(
+                    stageKey,
+                    current: safeCurrent,
+                    total: safeTotal,
+                  );
+                }
               });
             }
 
@@ -1707,12 +1800,41 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
     DateTime? writeStageStartedAt;
     var writeStageStartProgress = 0;
+    DateTime? lastAuditProgressAt;
+    String? lastAuditProgressStage;
+    var lastAuditProgressCurrent = -1;
+    var lastAuditProgressTotal = -1;
+    const auditProgressMinInterval = Duration(milliseconds: 400);
     final operation = forceFull
         ? AuditOperationType.dailyForceRefetch
         : AuditOperationType.dailyFetchIncremental;
     final stageLabel = forceFull
         ? 'daily_force_refetch'
         : 'daily_fetch_incremental';
+
+    bool shouldEmitAuditProgress(String stage, int current, int total) {
+      final now = DateTime.now();
+      final stageChanged = stage != lastAuditProgressStage;
+      final totalChanged = total != lastAuditProgressTotal;
+      final reachedEnd = current >= total;
+      final progressed = current > lastAuditProgressCurrent;
+      final reachedInterval =
+          lastAuditProgressAt == null ||
+          now.difference(lastAuditProgressAt!) >= auditProgressMinInterval;
+
+      if (!(stageChanged ||
+          totalChanged ||
+          reachedEnd ||
+          (progressed && reachedInterval))) {
+        return false;
+      }
+
+      lastAuditProgressAt = now;
+      lastAuditProgressStage = stage;
+      lastAuditProgressCurrent = current;
+      lastAuditProgressTotal = total;
+      return true;
+    }
 
     try {
       await auditService.runner.run(
@@ -1756,11 +1878,13 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 total: safeTotal,
                 stage: stageLabel,
               );
-              audit.stageProgress(
-                stage,
-                current: safeCurrent,
-                total: safeTotal,
-              );
+              if (shouldEmitAuditProgress(stage, safeCurrent, safeTotal)) {
+                audit.stageProgress(
+                  stage,
+                  current: safeCurrent,
+                  total: safeTotal,
+                );
+              }
             },
           );
           audit.record(AuditEventType.fetchResult, {

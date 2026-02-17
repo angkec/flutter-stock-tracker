@@ -7,6 +7,7 @@ import 'package:stock_rtwatcher/config/debug_config.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
+import 'package:stock_rtwatcher/data/storage/market_snapshot_store.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/daily_kline_read_service.dart';
@@ -41,6 +42,7 @@ class MarketDataProvider extends ChangeNotifier {
   final StockService _stockService;
   final IndustryService _industryService;
   final DailyKlineCacheStore _dailyKlineCacheStore;
+  final MarketSnapshotStore _marketSnapshotStore;
   late final DailyKlineReadService _dailyKlineReadService;
   late final DailyKlineSyncService _dailyKlineSyncService;
   PullbackService? _pullbackService;
@@ -64,6 +66,7 @@ class MarketDataProvider extends ChangeNotifier {
 
   // Cache keys
   static const String _dailyBarsCacheKey = 'daily_bars_cache_v1';
+  static const String _marketDataCacheKey = 'market_data_cache';
   static const int _dailyCacheTargetBars = 260;
   static const int _breakoutDetectMaxConcurrency = 6;
   static const String _minuteDataCacheKey = 'minute_data_cache_v1';
@@ -88,10 +91,12 @@ class MarketDataProvider extends ChangeNotifier {
     DailyKlineCheckpointStore? dailyKlineCheckpointStore,
     DailyKlineReadService? dailyKlineReadService,
     DailyKlineSyncService? dailyKlineSyncService,
+    MarketSnapshotStore? marketSnapshotStore,
   }) : _pool = pool,
        _stockService = stockService,
        _industryService = industryService,
-       _dailyKlineCacheStore = dailyBarsFileStorage ?? DailyKlineCacheStore() {
+       _dailyKlineCacheStore = dailyBarsFileStorage ?? DailyKlineCacheStore(),
+       _marketSnapshotStore = marketSnapshotStore ?? MarketSnapshotStore() {
     final checkpointStore =
         dailyKlineCheckpointStore ?? DailyKlineCheckpointStore();
     _dailyKlineReadService =
@@ -286,15 +291,36 @@ class MarketDataProvider extends ChangeNotifier {
   Future<void> loadFromCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final jsonStr = prefs.getString('market_data_cache');
       final timeStr = prefs.getString('market_data_time');
       final dateStr = prefs.getString('market_data_date');
+      final minuteDataDate = prefs.getString(_minuteDataDateKey);
+      final hasMinuteMetadata =
+          timeStr != null || dateStr != null || minuteDataDate != null;
+      final snapshotJson = hasMinuteMetadata
+          ? await _marketSnapshotStore.loadJson()
+          : null;
+      final legacyJson = prefs.getString(_marketDataCacheKey);
 
-      if (jsonStr != null) {
-        _allData = _parseMarketDataJson(jsonStr);
+      if (legacyJson != null) {
+        _allData = _parseMarketDataJson(legacyJson);
         _updateTime = timeStr;
         if (dateStr != null) {
           _dataDate = DateTime.tryParse(dateStr);
+        } else if (minuteDataDate != null) {
+          _dataDate = DateTime.tryParse(minuteDataDate);
+        }
+        notifyListeners();
+
+        // One-time migration from legacy SharedPreferences payload.
+        await _marketSnapshotStore.saveJson(legacyJson);
+        await prefs.remove(_marketDataCacheKey);
+      } else if (snapshotJson != null) {
+        _allData = _parseMarketDataJson(snapshotJson);
+        _updateTime = timeStr;
+        if (dateStr != null) {
+          _dataDate = DateTime.tryParse(dateStr);
+        } else if (minuteDataDate != null) {
+          _dataDate = DateTime.tryParse(minuteDataDate);
         }
         notifyListeners();
       }
@@ -307,7 +333,6 @@ class MarketDataProvider extends ChangeNotifier {
       }
 
       // Load minute cache metadata
-      final minuteDataDate = prefs.getString(_minuteDataDateKey);
       if (minuteDataDate != null && _dataDate == null) {
         _dataDate = DateTime.tryParse(minuteDataDate);
       }
@@ -381,20 +406,27 @@ class MarketDataProvider extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       final jsonList = _allData.map((e) => e.toJson()).toList();
-      await prefs.setString('market_data_cache', json.encode(jsonList));
-      if (_updateTime != null) {
-        await prefs.setString('market_data_time', _updateTime!);
-      }
-      if (_dataDate != null) {
-        await prefs.setString('market_data_date', _dataDate!.toIso8601String());
-        await prefs.setString(_minuteDataDateKey, _dataDate!.toIso8601String());
-      }
-      await prefs.setInt(_minuteDataCacheKey, _minuteDataCount);
-      // Ensure legacy heavy payload is not retained in SharedPreferences.
-      await prefs.remove(_dailyBarsCacheKey);
+      await _marketSnapshotStore.saveJson(json.encode(jsonList));
+      await _saveCacheMetadataOnly(prefs: prefs);
     } catch (e) {
       debugPrint('Failed to save cache: $e');
     }
+  }
+
+  Future<void> _saveCacheMetadataOnly({SharedPreferences? prefs}) async {
+    final targetPrefs = prefs ?? await SharedPreferences.getInstance();
+    if (_updateTime != null) {
+      await targetPrefs.setString('market_data_time', _updateTime!);
+    }
+    if (_dataDate != null) {
+      final dateIso = _dataDate!.toIso8601String();
+      await targetPrefs.setString('market_data_date', dateIso);
+      await targetPrefs.setString(_minuteDataDateKey, dateIso);
+    }
+    await targetPrefs.setInt(_minuteDataCacheKey, _minuteDataCount);
+    // Ensure legacy heavy payloads are not retained in SharedPreferences.
+    await targetPrefs.remove(_dailyBarsCacheKey);
+    await targetPrefs.remove(_marketDataCacheKey);
   }
 
   /// 刷新数据
@@ -789,7 +821,7 @@ class MarketDataProvider extends ChangeNotifier {
 
     resetStageTimer();
     onProgress?.call('4/4 保存缓存元数据...', 0, 1);
-    await _saveToCache();
+    await _saveCacheMetadataOnly();
     onProgress?.call('4/4 保存缓存元数据...', 1, 1);
     stageStopwatch.stop();
     final saveMetaMs = stageStopwatch.elapsedMilliseconds;
@@ -1265,9 +1297,16 @@ class MarketDataProvider extends ChangeNotifier {
 
   Future<void> clearMinuteDataCache() async {
     _minuteDataCount = 0;
+    _allData = [];
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_minuteDataCacheKey);
     await prefs.remove(_minuteDataDateKey);
+    await prefs.remove(_marketDataCacheKey);
+    try {
+      await _marketSnapshotStore.clear();
+    } catch (e) {
+      debugPrint('Failed to clear minute snapshot file cache: $e');
+    }
     notifyListeners();
   }
 

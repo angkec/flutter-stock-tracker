@@ -10,6 +10,7 @@ import 'package:stock_rtwatcher/audit/storage/latest_audit_index_store.dart';
 
 abstract class AuditSink {
   Future<void> append(AuditEvent event);
+  Future<void> appendAll(List<AuditEvent> events);
 
   Future<void> saveLatest(AuditRunSummary summary);
 }
@@ -28,6 +29,11 @@ class FileAuditSink implements AuditSink {
   }
 
   @override
+  Future<void> appendAll(List<AuditEvent> events) {
+    return _logStore.appendAll(events);
+  }
+
+  @override
   Future<void> saveLatest(AuditRunSummary summary) {
     return _indexStore.save(summary);
   }
@@ -40,6 +46,11 @@ class MemoryAuditSink implements AuditSink {
   @override
   Future<void> append(AuditEvent event) async {
     events.add(event);
+  }
+
+  @override
+  Future<void> appendAll(List<AuditEvent> input) async {
+    events.addAll(input);
   }
 
   @override
@@ -152,13 +163,10 @@ class AuditOperationRunner {
     );
 
     var hasAuditWriteFailure = false;
-    for (final event in events) {
-      try {
-        await _sink.append(event);
-      } catch (_) {
-        hasAuditWriteFailure = true;
-        break;
-      }
+    try {
+      await _sink.appendAll(events);
+    } catch (_) {
+      hasAuditWriteFailure = true;
     }
     if (hasAuditWriteFailure) {
       summary = _withAuditWriteWarning(summary);

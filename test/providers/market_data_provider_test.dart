@@ -16,6 +16,7 @@ import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/market_snapshot_store.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
@@ -297,6 +298,16 @@ class _RecordingBreakoutService extends BreakoutService {
   }
 }
 
+class _AlwaysTrueBreakoutService extends BreakoutService {
+  @override
+  Future<bool> isBreakoutPullback(
+    List<KLine> dailyBars, {
+    String? stockCode,
+  }) async {
+    return true;
+  }
+}
+
 class _RecordingMacdIndicatorService extends MacdIndicatorService {
   _RecordingMacdIndicatorService({required super.repository});
 
@@ -370,6 +381,12 @@ DailyKlineCacheStore _buildStorageForPath(String basePath) {
   final storage = KLineFileStorage();
   storage.setBaseDirPathForTesting(basePath);
   return DailyKlineCacheStore(storage: storage);
+}
+
+MarketSnapshotStore _buildMarketSnapshotStoreForPath(String basePath) {
+  final storage = KLineFileStorage();
+  storage.setBaseDirPathForTesting(basePath);
+  return MarketSnapshotStore(storage: storage);
 }
 
 List<KLine> _buildDailyBars(int n) {
@@ -479,18 +496,62 @@ void main() {
         prefs.getString('daily_kline_checkpoint_last_success_date'),
         isNotNull,
       );
-      expect(
-        prefs.getString('daily_kline_checkpoint_last_mode'),
-        isNotNull,
-      );
+      expect(prefs.getString('daily_kline_checkpoint_last_mode'), isNotNull);
       expect(
         prefs.getInt('daily_kline_checkpoint_last_success_at_ms'),
         isNotNull,
       );
       expect(
         prefs.getString('daily_kline_checkpoint_per_stock_last_success_at_ms'),
-        isNotNull,
+        isNull,
       );
+    },
+  );
+
+  test(
+    'forceRefetchDailyBars should clear legacy market_data_cache payload',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'daily-bars-metadata-only-',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+      final monitorData = StockMonitorData(
+        stock: stock,
+        ratio: 1.2,
+        changePercent: 0.5,
+        isBreakout: false,
+      );
+      final originalCache = jsonEncode([monitorData.toJson()]);
+
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': originalCache,
+        'market_data_date': DateTime(2026, 2, 14).toIso8601String(),
+      });
+
+      final pool = _ReconnectableFakePool(
+        dailyBarsByCode: {'600000': _buildDailyBars(260)},
+      );
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: StockService(pool),
+        industryService: IndustryService(),
+        dailyBarsFileStorage: _buildStorageForPath(tempDir.path),
+      );
+      provider
+        ..setPullbackService(PullbackService())
+        ..setBreakoutService(_AlwaysTrueBreakoutService());
+
+      await provider.loadFromCache();
+      await provider.forceRefetchDailyBars();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('market_data_cache'), isNull);
     },
   );
 
@@ -966,6 +1027,69 @@ void main() {
     expect(secondProvider.dailyBarsCacheSize, isNot('<1KB'));
     expect(secondPool.batchFetchCalls, 0);
   });
+
+  test(
+    'loadFromCache should migrate legacy market_data_cache to file',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'market-snapshot-migration-',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final tradingDay = DateTime(2026, 2, 15);
+      final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+      final monitorData = StockMonitorData(
+        stock: stock,
+        ratio: 1.2,
+        changePercent: 0.5,
+      );
+
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode([monitorData.toJson()]),
+        'market_data_date': tradingDay.toIso8601String(),
+        'minute_data_date': tradingDay.toIso8601String(),
+        'minute_data_cache_v1': 1,
+      });
+
+      final firstPool = _ReconnectableFakePool(
+        dailyBarsByCode: {'600000': _buildDailyBars(260)},
+        throwOnBatchFetch: true,
+      );
+      final firstProvider = MarketDataProvider(
+        pool: firstPool,
+        stockService: StockService(firstPool),
+        industryService: IndustryService(),
+        dailyBarsFileStorage: _buildStorageForPath(tempDir.path),
+        marketSnapshotStore: _buildMarketSnapshotStoreForPath(tempDir.path),
+      );
+      await firstProvider.loadFromCache();
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('market_data_cache'), isNull);
+
+      final secondPool = _ReconnectableFakePool(
+        dailyBarsByCode: const <String, List<KLine>>{},
+        throwOnBatchFetch: true,
+      );
+      final secondProvider = MarketDataProvider(
+        pool: secondPool,
+        stockService: StockService(secondPool),
+        industryService: IndustryService(),
+        dailyBarsFileStorage: _buildStorageForPath(tempDir.path),
+        marketSnapshotStore: _buildMarketSnapshotStoreForPath(tempDir.path),
+      );
+
+      await secondProvider.loadFromCache();
+
+      expect(secondProvider.allData.length, 1);
+      expect(secondProvider.allData.first.stock.code, '600000');
+      expect(secondPool.batchFetchCalls, 0);
+    },
+  );
 
   test('forceRefetchDailyBars should prewarm daily macd cache', () async {
     final tempDir = await Directory.systemTemp.createTemp(
