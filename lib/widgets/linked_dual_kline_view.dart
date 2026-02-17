@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/models/linked_layout_result.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_coordinator.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_models.dart';
@@ -17,6 +18,7 @@ class LinkedDualKlineView extends StatefulWidget {
     required this.weeklyBars,
     required this.dailyBars,
     required this.ratios,
+    this.layout,
     this.macdCacheStoreForTest,
     this.adxCacheStoreForTest,
   });
@@ -25,6 +27,7 @@ class LinkedDualKlineView extends StatefulWidget {
   final List<KLine> weeklyBars;
   final List<KLine> dailyBars;
   final List<DailyRatio> ratios;
+  final LinkedLayoutResult? layout;
   final MacdCacheStore? macdCacheStoreForTest;
   final AdxCacheStore? adxCacheStoreForTest;
 
@@ -107,23 +110,13 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
               flex: 42,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  const infoHeight = 24.0;
-                  const subChartSpacing = 10.0;
-                  const macdSubChartHeight = 78.0;
-                  const adxSubChartHeight = 78.0;
-                  final chartHeight =
-                      constraints.maxHeight -
-                      infoHeight -
-                      subChartSpacing -
-                      subChartSpacing -
-                      macdSubChartHeight -
-                      adxSubChartHeight;
+                  final heights = _resolveWeeklyHeights(constraints.maxHeight);
 
                   return KLineChartWithSubCharts(
                     key: const ValueKey('linked_weekly_chart'),
                     stockCode: widget.stockCode,
                     bars: widget.weeklyBars,
-                    chartHeight: chartHeight.clamp(10.0, double.infinity),
+                    chartHeight: heights.mainChartHeight,
                     linkedPane: LinkedPane.weekly,
                     onLinkedTouchEvent: _coordinator.handleTouch,
                     externalLinkedState: _coordinator.stateForPane(
@@ -131,20 +124,20 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
                     ),
                     externalLinkedBarIndex: _coordinator.mappedWeeklyIndex,
                     showWeeklySeparators: false,
-                    subChartSpacing: subChartSpacing,
+                    subChartSpacing: heights.subChartSpacing,
                     subCharts: [
                       MacdSubChart(
                         key: const ValueKey('linked_weekly_macd_subchart'),
                         dataType: KLineDataType.weekly,
                         cacheStore: widget.macdCacheStoreForTest,
-                        height: macdSubChartHeight,
+                        height: heights.macdSubChartHeight,
                         chartKey: const ValueKey('linked_weekly_macd_paint'),
                       ),
                       AdxSubChart(
                         key: const ValueKey('linked_weekly_adx_subchart'),
                         dataType: KLineDataType.weekly,
                         cacheStore: widget.adxCacheStoreForTest,
-                        height: adxSubChartHeight,
+                        height: heights.adxSubChartHeight,
                         chartKey: const ValueKey('linked_weekly_adx_paint'),
                       ),
                     ],
@@ -157,24 +150,14 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
               flex: 58,
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  const infoHeight = 24.0;
-                  const subChartSpacing = 10.0;
-                  const macdSubChartHeight = 84.0;
-                  const adxSubChartHeight = 84.0;
-                  final chartHeight =
-                      constraints.maxHeight -
-                      infoHeight -
-                      subChartSpacing -
-                      subChartSpacing -
-                      macdSubChartHeight -
-                      adxSubChartHeight;
+                  final heights = _resolveDailyHeights(constraints.maxHeight);
 
                   return KLineChartWithSubCharts(
                     key: const ValueKey('linked_daily_chart'),
                     stockCode: widget.stockCode,
                     bars: widget.dailyBars,
                     ratios: widget.ratios,
-                    chartHeight: chartHeight.clamp(50.0, double.infinity),
+                    chartHeight: heights.mainChartHeight,
                     linkedPane: LinkedPane.daily,
                     onLinkedTouchEvent: _coordinator.handleTouch,
                     externalLinkedState: _coordinator.stateForPane(
@@ -182,20 +165,20 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
                     ),
                     externalLinkedBarIndex: _coordinator.mappedDailyIndex,
                     showWeeklySeparators: true,
-                    subChartSpacing: subChartSpacing,
+                    subChartSpacing: heights.subChartSpacing,
                     subCharts: [
                       MacdSubChart(
                         key: const ValueKey('linked_daily_macd_subchart'),
                         dataType: KLineDataType.daily,
                         cacheStore: widget.macdCacheStoreForTest,
-                        height: macdSubChartHeight,
+                        height: heights.macdSubChartHeight,
                         chartKey: const ValueKey('linked_daily_macd_paint'),
                       ),
                       AdxSubChart(
                         key: const ValueKey('linked_daily_adx_subchart'),
                         dataType: KLineDataType.daily,
                         cacheStore: widget.adxCacheStoreForTest,
-                        height: adxSubChartHeight,
+                        height: heights.adxSubChartHeight,
                         chartKey: const ValueKey('linked_daily_adx_paint'),
                       ),
                     ],
@@ -208,4 +191,90 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
       },
     );
   }
+
+  _LinkedPaneHeights _resolveWeeklyHeights(double paneHeight) {
+    const defaultInfoHeight = 24.0;
+    const defaultSubChartSpacing = 10.0;
+    const defaultMacdHeight = 78.0;
+    const defaultAdxHeight = 78.0;
+
+    final layout = widget.layout;
+    if (layout == null) {
+      final chartHeight =
+          paneHeight -
+          defaultInfoHeight -
+          defaultSubChartSpacing -
+          defaultSubChartSpacing -
+          defaultMacdHeight -
+          defaultAdxHeight;
+      return _LinkedPaneHeights(
+        mainChartHeight: chartHeight.clamp(10.0, double.infinity),
+        macdSubChartHeight: defaultMacdHeight,
+        adxSubChartHeight: defaultAdxHeight,
+        subChartSpacing: defaultSubChartSpacing,
+      );
+    }
+
+    final subHeights = layout.top.subchartHeights;
+    return _LinkedPaneHeights(
+      mainChartHeight: layout.top.mainChartHeight,
+      macdSubChartHeight: subHeights.isNotEmpty
+          ? subHeights.first
+          : defaultMacdHeight,
+      adxSubChartHeight: subHeights.length > 1
+          ? subHeights[1]
+          : defaultAdxHeight,
+      subChartSpacing: defaultSubChartSpacing,
+    );
+  }
+
+  _LinkedPaneHeights _resolveDailyHeights(double paneHeight) {
+    const defaultInfoHeight = 24.0;
+    const defaultSubChartSpacing = 10.0;
+    const defaultMacdHeight = 84.0;
+    const defaultAdxHeight = 84.0;
+
+    final layout = widget.layout;
+    if (layout == null) {
+      final chartHeight =
+          paneHeight -
+          defaultInfoHeight -
+          defaultSubChartSpacing -
+          defaultSubChartSpacing -
+          defaultMacdHeight -
+          defaultAdxHeight;
+      return _LinkedPaneHeights(
+        mainChartHeight: chartHeight.clamp(50.0, double.infinity),
+        macdSubChartHeight: defaultMacdHeight,
+        adxSubChartHeight: defaultAdxHeight,
+        subChartSpacing: defaultSubChartSpacing,
+      );
+    }
+
+    final subHeights = layout.bottom.subchartHeights;
+    return _LinkedPaneHeights(
+      mainChartHeight: layout.bottom.mainChartHeight,
+      macdSubChartHeight: subHeights.isNotEmpty
+          ? subHeights.first
+          : defaultMacdHeight,
+      adxSubChartHeight: subHeights.length > 1
+          ? subHeights[1]
+          : defaultAdxHeight,
+      subChartSpacing: defaultSubChartSpacing,
+    );
+  }
+}
+
+class _LinkedPaneHeights {
+  const _LinkedPaneHeights({
+    required this.mainChartHeight,
+    required this.macdSubChartHeight,
+    required this.adxSubChartHeight,
+    required this.subChartSpacing,
+  });
+
+  final double mainChartHeight;
+  final double macdSubChartHeight;
+  final double adxSubChartHeight;
+  final double subChartSpacing;
 }
