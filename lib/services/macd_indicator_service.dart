@@ -326,6 +326,7 @@ class MacdIndicatorService extends ChangeNotifier {
     required KLineDataType dataType,
     required DateRange dateRange,
     bool forceRecompute = false,
+    bool ignoreSnapshot = false,
     int? fetchBatchSize,
     int? maxConcurrentPersistWrites,
     void Function(int current, int total)? onProgress,
@@ -342,7 +343,7 @@ class MacdIndicatorService extends ChangeNotifier {
     final configSignature = _buildConfigSignature(configFor(dataType));
 
     int? currentDataVersion;
-    if (!forceRecompute) {
+    if (!forceRecompute && !ignoreSnapshot) {
       try {
         currentDataVersion = await _repository.getCurrentVersion();
         final prewarmSnapshot = await _loadPrewarmSnapshot(dataType);

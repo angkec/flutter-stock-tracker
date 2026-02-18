@@ -644,7 +644,7 @@ void main() {
   );
 
   test(
-    'prewarmFromRepository should bypass snapshot and fetch daily bars when forceRecompute is true',
+    'prewarmFromRepository should bypass snapshot when ignoreSnapshot or forceRecompute is true',
     () async {
       final service = MacdIndicatorService(
         repository: repository,
@@ -678,9 +678,17 @@ void main() {
         stockCodes: stockCodes,
         dataType: KLineDataType.daily,
         dateRange: range,
-        forceRecompute: true,
+        ignoreSnapshot: true,
       );
       expect(repository.getKlinesCallCount, 2);
+
+      await service.prewarmFromRepository(
+        stockCodes: stockCodes,
+        dataType: KLineDataType.daily,
+        dateRange: range,
+        forceRecompute: true,
+      );
+      expect(repository.getKlinesCallCount, 3);
     },
   );
 

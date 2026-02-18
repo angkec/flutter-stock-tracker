@@ -561,6 +561,7 @@ class FakeMacdIndicatorService extends MacdIndicatorService {
     required KLineDataType dataType,
     required DateRange dateRange,
     bool forceRecompute = false,
+    bool ignoreSnapshot = false,
     int? fetchBatchSize,
     int? maxConcurrentPersistWrites,
     void Function(int current, int total)? onProgress,

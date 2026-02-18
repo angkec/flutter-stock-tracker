@@ -160,6 +160,8 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
         dataType: widget.dataType,
         dateRange: _buildRecomputeDateRange(),
         forceRecompute: false,
+        // Manual recompute should not be short-circuited by the prewarm snapshot.
+        ignoreSnapshot: true,
         fetchBatchSize: _isWeekly ? _weeklyRecomputeFetchBatchSize : null,
         maxConcurrentPersistWrites: _isWeekly
             ? _weeklyRecomputePersistConcurrency
