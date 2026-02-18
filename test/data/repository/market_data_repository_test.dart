@@ -310,6 +310,100 @@ class DelayedLoadMetadataManager extends KLineMetadataManager {
   }
 }
 
+class CountingDateCheckStorage extends DateCheckStorage {
+  CountingDateCheckStorage({required super.database});
+
+  int getPendingDatesCalls = 0;
+  int getPendingDatesBatchCalls = 0;
+  int getLatestCheckedDateCalls = 0;
+  int getLatestCheckedDateBatchCalls = 0;
+  int saveCheckStatusCalls = 0;
+  int saveCheckStatusBatchCalls = 0;
+
+  @override
+  Future<List<DateTime>> getPendingDates({
+    required String stockCode,
+    required KLineDataType dataType,
+    bool excludeToday = false,
+    DateTime? today,
+  }) {
+    getPendingDatesCalls++;
+    return super.getPendingDates(
+      stockCode: stockCode,
+      dataType: dataType,
+      excludeToday: excludeToday,
+      today: today,
+    );
+  }
+
+  @override
+  Future<Map<String, List<DateTime>>> getPendingDatesBatch({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+    DateTime? fromDate,
+    DateTime? toDate,
+    bool excludeToday = false,
+    DateTime? today,
+  }) {
+    getPendingDatesBatchCalls++;
+    return super.getPendingDatesBatch(
+      stockCodes: stockCodes,
+      dataType: dataType,
+      fromDate: fromDate,
+      toDate: toDate,
+      excludeToday: excludeToday,
+      today: today,
+    );
+  }
+
+  @override
+  Future<DateTime?> getLatestCheckedDate({
+    required String stockCode,
+    required KLineDataType dataType,
+  }) {
+    getLatestCheckedDateCalls++;
+    return super.getLatestCheckedDate(stockCode: stockCode, dataType: dataType);
+  }
+
+  @override
+  Future<Map<String, DateTime?>> getLatestCheckedDateBatch({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+  }) {
+    getLatestCheckedDateBatchCalls++;
+    return super.getLatestCheckedDateBatch(
+      stockCodes: stockCodes,
+      dataType: dataType,
+    );
+  }
+
+  @override
+  Future<void> saveCheckStatus({
+    required String stockCode,
+    required KLineDataType dataType,
+    required DateTime date,
+    required DayDataStatus status,
+    required int barCount,
+  }) {
+    saveCheckStatusCalls++;
+    return super.saveCheckStatus(
+      stockCode: stockCode,
+      dataType: dataType,
+      date: date,
+      status: status,
+      barCount: barCount,
+    );
+  }
+
+  @override
+  Future<void> saveCheckStatusBatch({
+    required List<DateCheckStatusEntry> entries,
+  }) {
+    saveCheckStatusBatchCalls++;
+    return super.saveCheckStatusBatch(entries: entries);
+  }
+}
+
 void main() {
   late MarketDataRepository repository;
   late KLineMetadataManager manager;
@@ -944,6 +1038,73 @@ void main() {
         expect(freshness['000004'], isA<Stale>());
 
         await weekdayAwareRepository.dispose();
+      },
+    );
+
+    test(
+      'checkFreshness uses batched storage reads for multi-stock input',
+      () async {
+        final countingStorage = CountingDateCheckStorage(database: database);
+        final batchingRepository = MarketDataRepository(
+          metadataManager: manager,
+          dateCheckStorage: countingStorage,
+          nowProvider: () => DateTime(2026, 1, 20, 10, 0),
+        );
+
+        final result = await batchingRepository.checkFreshness(
+          stockCodes: const ['000001', '000002', '000003'],
+          dataType: KLineDataType.oneMinute,
+        );
+
+        expect(
+          result.values.every((freshness) => freshness is Missing),
+          isTrue,
+        );
+        expect(countingStorage.getPendingDatesBatchCalls, 1);
+        expect(countingStorage.getLatestCheckedDateBatchCalls, 1);
+        expect(countingStorage.getPendingDatesCalls, 0);
+        expect(countingStorage.getLatestCheckedDateCalls, 0);
+
+        await batchingRepository.dispose();
+      },
+    );
+
+    test(
+      'findMissingMinuteDates caches outcomes via batched status writes',
+      () async {
+        final day = DateTime(2026, 1, 15);
+        await manager.saveKlineData(
+          stockCode: '000021',
+          newBars: [
+            KLine(
+              datetime: day,
+              open: 10.0,
+              close: 10.1,
+              high: 10.2,
+              low: 9.9,
+              volume: 1000,
+              amount: 10000,
+            ),
+          ],
+          dataType: KLineDataType.daily,
+        );
+
+        final countingStorage = CountingDateCheckStorage(database: database);
+        final batchingRepository = MarketDataRepository(
+          metadataManager: manager,
+          dateCheckStorage: countingStorage,
+        );
+
+        final result = await batchingRepository.findMissingMinuteDates(
+          stockCode: '000021',
+          dateRange: DateRange(day, DateTime(2026, 1, 15, 23, 59, 59)),
+        );
+
+        expect(result.missingDates, [day]);
+        expect(countingStorage.saveCheckStatusBatchCalls, 1);
+        expect(countingStorage.saveCheckStatusCalls, 0);
+
+        await batchingRepository.dispose();
       },
     );
   });

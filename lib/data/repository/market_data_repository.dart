@@ -210,18 +210,24 @@ class MarketDataRepository implements DataRepository {
     required KLineDataType dataType,
   }) async {
     final result = <String, DataFreshness>{};
+    if (stockCodes.isEmpty) {
+      return result;
+    }
+
+    final now = _nowProvider();
+    final today = DateTime(now.year, now.month, now.day);
+    final pendingDatesByCode = await _dateCheckStorage.getPendingDatesBatch(
+      stockCodes: stockCodes,
+      dataType: dataType,
+      excludeToday: true,
+      today: today,
+    );
+    final latestCheckedDateByCode = await _dateCheckStorage
+        .getLatestCheckedDateBatch(stockCodes: stockCodes, dataType: dataType);
 
     for (final stockCode in stockCodes) {
-      final now = _nowProvider();
-      final today = DateTime(now.year, now.month, now.day);
-
       // 1. Check for pending dates (excluding today)
-      final pendingDates = await _dateCheckStorage.getPendingDates(
-        stockCode: stockCode,
-        dataType: dataType,
-        excludeToday: true,
-        today: today,
-      );
+      final pendingDates = pendingDatesByCode[stockCode] ?? const <DateTime>[];
 
       if (pendingDates.isNotEmpty) {
         // Has incomplete historical dates -> Stale
@@ -232,10 +238,7 @@ class MarketDataRepository implements DataRepository {
       }
 
       // 2. Check latest checked date
-      final latestCheckedDate = await _dateCheckStorage.getLatestCheckedDate(
-        stockCode: stockCode,
-        dataType: dataType,
-      );
+      final latestCheckedDate = latestCheckedDateByCode[stockCode];
 
       if (latestCheckedDate == null) {
         // Never checked -> Missing
@@ -1818,6 +1821,7 @@ class MarketDataRepository implements DataRepository {
     }
 
     // 4. Categorize recounted dates and update cache.
+    final statusEntriesToSave = <DateCheckStatusEntry>[];
     for (final dateOnly in datesToCheck) {
       final barCount = barCountsByDate[dateOnly] ?? 0;
       final isToday = dateOnly == todayDate;
@@ -1839,14 +1843,22 @@ class MarketDataRepository implements DataRepository {
 
       // 5. Save to cache (skip inProgress)
       if (status != DayDataStatus.inProgress) {
-        await _dateCheckStorage.saveCheckStatus(
-          stockCode: stockCode,
-          dataType: KLineDataType.oneMinute,
-          date: dateOnly,
-          status: status,
-          barCount: barCount,
+        statusEntriesToSave.add(
+          DateCheckStatusEntry(
+            stockCode: stockCode,
+            dataType: KLineDataType.oneMinute,
+            date: dateOnly,
+            status: status,
+            barCount: barCount,
+          ),
         );
       }
+    }
+
+    if (statusEntriesToSave.isNotEmpty) {
+      await _dateCheckStorage.saveCheckStatusBatch(
+        entries: statusEntriesToSave,
+      );
     }
 
     completeDates.sort();

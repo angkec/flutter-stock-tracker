@@ -219,6 +219,49 @@ void main() {
       expect(latest, isNull);
     });
 
+    test(
+      'getLatestCheckedDateBatch returns latest complete date per stock',
+      () async {
+        final jan15 = DateTime(2026, 1, 15);
+        final jan16 = DateTime(2026, 1, 16);
+
+        await storage.saveCheckStatus(
+          stockCode: '000001',
+          dataType: KLineDataType.oneMinute,
+          date: jan15,
+          status: DayDataStatus.complete,
+          barCount: 240,
+        );
+        await storage.saveCheckStatus(
+          stockCode: '000001',
+          dataType: KLineDataType.oneMinute,
+          date: jan16,
+          status: DayDataStatus.complete,
+          barCount: 230,
+        );
+        await storage.saveCheckStatus(
+          stockCode: '000002',
+          dataType: KLineDataType.oneMinute,
+          date: jan16,
+          status: DayDataStatus.incomplete,
+          barCount: 120,
+        );
+
+        final latestByStock = await storage.getLatestCheckedDateBatch(
+          stockCodes: const ['000001', '000002', '000003'],
+          dataType: KLineDataType.oneMinute,
+        );
+
+        expect(
+          latestByStock.keys,
+          containsAll(<String>['000001', '000002', '000003']),
+        );
+        expect(latestByStock['000001'], jan16);
+        expect(latestByStock['000002'], isNull);
+        expect(latestByStock['000003'], isNull);
+      },
+    );
+
     test('saveCheckStatus updates existing record', () async {
       final date = DateTime(2026, 1, 15);
 
@@ -245,6 +288,44 @@ void main() {
       );
 
       expect(result[date], equals(DayDataStatus.complete));
+    });
+
+    test('saveCheckStatusBatch writes multiple statuses in one call', () async {
+      final jan15 = DateTime(2026, 1, 15);
+      final jan16 = DateTime(2026, 1, 16);
+
+      await storage.saveCheckStatusBatch(
+        entries: [
+          DateCheckStatusEntry(
+            stockCode: '000001',
+            dataType: KLineDataType.oneMinute,
+            date: DateTime(2026, 1, 15),
+            status: DayDataStatus.complete,
+            barCount: 240,
+          ),
+          DateCheckStatusEntry(
+            stockCode: '000002',
+            dataType: KLineDataType.oneMinute,
+            date: DateTime(2026, 1, 16),
+            status: DayDataStatus.incomplete,
+            barCount: 120,
+          ),
+        ],
+      );
+
+      final stock1 = await storage.getCheckedStatus(
+        stockCode: '000001',
+        dataType: KLineDataType.oneMinute,
+        dates: [jan15],
+      );
+      final stock2 = await storage.getCheckedStatus(
+        stockCode: '000002',
+        dataType: KLineDataType.oneMinute,
+        dates: [jan16],
+      );
+
+      expect(stock1[jan15], DayDataStatus.complete);
+      expect(stock2[jan16], DayDataStatus.incomplete);
     });
   });
 }

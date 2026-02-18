@@ -3,9 +3,26 @@ import 'package:stock_rtwatcher/data/models/day_data_status.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 
+class DateCheckStatusEntry {
+  const DateCheckStatusEntry({
+    required this.stockCode,
+    required this.dataType,
+    required this.date,
+    required this.status,
+    required this.barCount,
+  });
+
+  final String stockCode;
+  final KLineDataType dataType;
+  final DateTime date;
+  final DayDataStatus status;
+  final int barCount;
+}
+
 /// 日期检测状态存储
 class DateCheckStorage {
   final MarketDatabase _database;
+  static const int _inClauseChunkSize = 800;
 
   DateCheckStorage({MarketDatabase? database})
     : _database = database ?? MarketDatabase();
@@ -18,17 +35,49 @@ class DateCheckStorage {
     required DayDataStatus status,
     required int barCount,
   }) async {
-    final db = await _database.database;
-    final dateOnly = DateTime(date.year, date.month, date.day);
+    await saveCheckStatusBatch(
+      entries: [
+        DateCheckStatusEntry(
+          stockCode: stockCode,
+          dataType: dataType,
+          date: date,
+          status: status,
+          barCount: barCount,
+        ),
+      ],
+    );
+  }
 
-    await db.insert('date_check_status', {
-      'stock_code': stockCode,
-      'data_type': dataType.name,
-      'date': dateOnly.millisecondsSinceEpoch,
-      'status': status.name,
-      'bar_count': barCount,
-      'checked_at': DateTime.now().millisecondsSinceEpoch,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<void> saveCheckStatusBatch({
+    required List<DateCheckStatusEntry> entries,
+  }) async {
+    if (entries.isEmpty) {
+      return;
+    }
+
+    final db = await _database.database;
+    final checkedAtMs = DateTime.now().millisecondsSinceEpoch;
+
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final entry in entries) {
+        final dateOnly = DateTime(
+          entry.date.year,
+          entry.date.month,
+          entry.date.day,
+        );
+        batch.insert('date_check_status', {
+          'stock_code': entry.stockCode,
+          'data_type': entry.dataType.name,
+          'date': dateOnly.millisecondsSinceEpoch,
+          'status': entry.status.name,
+          'bar_count': entry.barCount,
+          'checked_at': checkedAtMs,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+
+      await batch.commit(noResult: true);
+    });
   }
 
   /// 查询多个日期的检测状态
@@ -204,22 +253,54 @@ class DateCheckStorage {
     required String stockCode,
     required KLineDataType dataType,
   }) async {
-    final db = await _database.database;
-
-    final rows = await db.rawQuery(
-      '''
-      SELECT date FROM date_check_status
-      WHERE stock_code = ? AND data_type = ? AND status = 'complete'
-      ORDER BY date DESC
-      LIMIT 1
-      ''',
-      [stockCode, dataType.name],
+    final latestByStock = await getLatestCheckedDateBatch(
+      stockCodes: [stockCode],
+      dataType: dataType,
     );
+    return latestByStock[stockCode];
+  }
 
-    if (rows.isEmpty) return null;
+  Future<Map<String, DateTime?>> getLatestCheckedDateBatch({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+  }) async {
+    if (stockCodes.isEmpty) {
+      return {};
+    }
 
-    final dateMs = rows.first['date'] as int;
-    return DateTime.fromMillisecondsSinceEpoch(dateMs);
+    final db = await _database.database;
+    final latestByStock = <String, DateTime?>{
+      for (final code in stockCodes) code: null,
+    };
+
+    for (
+      var start = 0;
+      start < stockCodes.length;
+      start += _inClauseChunkSize
+    ) {
+      final end = (start + _inClauseChunkSize).clamp(0, stockCodes.length);
+      final chunkCodes = stockCodes.sublist(start, end);
+      final placeholders = List.filled(chunkCodes.length, '?').join(',');
+      final rows = await db.rawQuery(
+        '''
+        SELECT stock_code, MAX(date) AS latest_date
+        FROM date_check_status
+        WHERE data_type = ? AND status = 'complete' AND stock_code IN ($placeholders)
+        GROUP BY stock_code
+        ''',
+        [dataType.name, ...chunkCodes],
+      );
+
+      for (final row in rows) {
+        final stockCode = row['stock_code'] as String;
+        final latestDateMs = row['latest_date'] as int;
+        latestByStock[stockCode] = DateTime.fromMillisecondsSinceEpoch(
+          latestDateMs,
+        );
+      }
+    }
+
+    return latestByStock;
   }
 
   /// 清除检测缓存
