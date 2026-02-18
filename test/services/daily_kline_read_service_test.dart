@@ -153,4 +153,44 @@ void main() {
       );
     },
   );
+
+  test(
+    'readOrThrow throws corruptedPayload when cache JSON array has invalid element schema',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'daily-read-corrupted-schema-',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final store = _buildStore(tempDir.path);
+      await store.initialize();
+
+      final cacheFile = File(
+        '${tempDir.path}/daily_cache/600000_daily_cache.json',
+      );
+      await cacheFile.create(recursive: true);
+      await cacheFile.writeAsString('[1, 2, 3]');
+
+      final service = DailyKlineReadService(cacheStore: store);
+
+      expect(
+        () => service.readOrThrow(
+          stockCodes: const ['600000'],
+          anchorDate: DateTime(2026, 12, 31),
+          targetBars: 260,
+        ),
+        throwsA(
+          isA<DailyKlineReadException>().having(
+            (e) => e.reason,
+            'reason',
+            DailyKlineReadFailureReason.corruptedPayload,
+          ),
+        ),
+      );
+    },
+  );
 }

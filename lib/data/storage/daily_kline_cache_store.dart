@@ -124,50 +124,37 @@ class DailyKlineCacheStore {
     int? targetBars,
     int? lookbackMonths,
   }) async {
-    if (stockCodes.isEmpty) return const <String, List<KLine>>{};
-    await initialize();
-
+    final loadedWithStatus = await _loadForStocksWithStatus(
+      stockCodes,
+      anchorDate: anchorDate,
+      targetBars: targetBars,
+      lookbackMonths: lookbackMonths,
+    );
     final result = <String, List<KLine>>{};
-    final target = targetBars ?? defaultTargetBars;
-    final lookback = lookbackMonths ?? defaultLookbackMonths;
-
-    final months = _recentMonths(anchorDate, lookback);
-    for (final stockCode in stockCodes) {
-      var allBars = await _loadSnapshotFile(stockCode);
-
-      if (allBars.isEmpty) {
-        allBars = await _loadFromLegacyMonthlyFiles(stockCode, months);
-      }
-
-      final deduped = _deduplicateAndSort(allBars);
-      if (deduped.isEmpty) continue;
-
-      final normalizedAnchor = DateTime(
-        anchorDate.year,
-        anchorDate.month,
-        anchorDate.day,
-        23,
-        59,
-        59,
-        999,
-        999,
-      );
-      final capped = deduped
-          .where((bar) => !bar.datetime.isAfter(normalizedAnchor))
-          .toList(growable: false);
-      if (capped.isEmpty) continue;
-
-      if (capped.length > target) {
-        result[stockCode] = capped.sublist(capped.length - target);
-      } else {
-        result[stockCode] = capped;
+    for (final entry in loadedWithStatus.entries) {
+      if (entry.value.status == DailyKlineCacheLoadStatus.ok &&
+          entry.value.bars.isNotEmpty) {
+        result[entry.key] = entry.value.bars;
       }
     }
-
     return result;
   }
 
   Future<Map<String, DailyKlineCacheLoadResult>> loadForStocksWithStatus(
+    List<String> stockCodes, {
+    required DateTime anchorDate,
+    int? targetBars,
+    int? lookbackMonths,
+  }) async {
+    return _loadForStocksWithStatus(
+      stockCodes,
+      anchorDate: anchorDate,
+      targetBars: targetBars,
+      lookbackMonths: lookbackMonths,
+    );
+  }
+
+  Future<Map<String, DailyKlineCacheLoadResult>> _loadForStocksWithStatus(
     List<String> stockCodes, {
     required DateTime anchorDate,
     int? targetBars,
@@ -198,29 +185,12 @@ class DailyKlineCacheStore {
         allBars = await _loadFromLegacyMonthlyFiles(stockCode, months);
       }
 
-      final deduped = _deduplicateAndSort(allBars);
-      if (deduped.isEmpty) {
-        result[stockCode] = const DailyKlineCacheLoadResult(
-          status: DailyKlineCacheLoadStatus.missing,
-          bars: <KLine>[],
-        );
-        continue;
-      }
-
-      final normalizedAnchor = DateTime(
-        anchorDate.year,
-        anchorDate.month,
-        anchorDate.day,
-        23,
-        59,
-        59,
-        999,
-        999,
+      final normalizedBars = _normalizeBarsForRead(
+        allBars,
+        anchorDate: anchorDate,
+        targetBars: target,
       );
-      final capped = deduped
-          .where((bar) => !bar.datetime.isAfter(normalizedAnchor))
-          .toList(growable: false);
-      if (capped.isEmpty) {
+      if (normalizedBars.isEmpty) {
         result[stockCode] = const DailyKlineCacheLoadResult(
           status: DailyKlineCacheLoadStatus.missing,
           bars: <KLine>[],
@@ -228,12 +198,9 @@ class DailyKlineCacheStore {
         continue;
       }
 
-      final bars = capped.length > target
-          ? capped.sublist(capped.length - target)
-          : capped;
       result[stockCode] = DailyKlineCacheLoadResult(
         status: DailyKlineCacheLoadStatus.ok,
-        bars: bars,
+        bars: normalizedBars,
       );
     }
 
@@ -298,14 +265,6 @@ class DailyKlineCacheStore {
     return DailyKlineCacheStats(stockCount: stockCount, totalBytes: totalBytes);
   }
 
-  Future<List<KLine>> _loadSnapshotFile(String stockCode) async {
-    final snapshot = await _loadSnapshotFileWithStatus(stockCode);
-    if (snapshot.$1 != DailyKlineCacheLoadStatus.ok) {
-      return const <KLine>[];
-    }
-    return snapshot.$2;
-  }
-
   Future<(DailyKlineCacheLoadStatus, List<KLine>)> _loadSnapshotFileWithStatus(
     String stockCode,
   ) async {
@@ -316,11 +275,19 @@ class DailyKlineCacheStore {
 
     try {
       final content = await file.readAsString();
-      final jsonList = jsonDecode(content) as List<dynamic>;
-      final bars = jsonList
-          .whereType<Map<String, dynamic>>()
-          .map((json) => KLine.fromJson(json))
-          .toList(growable: false);
+      final decoded = jsonDecode(content);
+      if (decoded is! List<dynamic>) {
+        return (DailyKlineCacheLoadStatus.corrupted, const <KLine>[]);
+      }
+
+      final bars = <KLine>[];
+      for (final item in decoded) {
+        if (item is! Map) {
+          return (DailyKlineCacheLoadStatus.corrupted, const <KLine>[]);
+        }
+        final json = Map<String, dynamic>.from(item);
+        bars.add(KLine.fromJson(json));
+      }
       return (DailyKlineCacheLoadStatus.ok, bars);
     } catch (_) {
       return (DailyKlineCacheLoadStatus.corrupted, const <KLine>[]);
@@ -349,6 +316,35 @@ class DailyKlineCacheStore {
   Future<String> _cacheFilePath(String stockCode) async {
     await initialize();
     return '$_cacheDirectoryPath/${stockCode}_daily_cache.json';
+  }
+
+  List<KLine> _normalizeBarsForRead(
+    List<KLine> source, {
+    required DateTime anchorDate,
+    required int targetBars,
+  }) {
+    final deduped = _deduplicateAndSort(source);
+    if (deduped.isEmpty) return const <KLine>[];
+
+    final normalizedAnchor = DateTime(
+      anchorDate.year,
+      anchorDate.month,
+      anchorDate.day,
+      23,
+      59,
+      59,
+      999,
+      999,
+    );
+    final cappedByAnchor = deduped
+        .where((bar) => !bar.datetime.isAfter(normalizedAnchor))
+        .toList(growable: false);
+    if (cappedByAnchor.isEmpty) return const <KLine>[];
+
+    if (cappedByAnchor.length > targetBars) {
+      return cappedByAnchor.sublist(cappedByAnchor.length - targetBars);
+    }
+    return cappedByAnchor;
   }
 
   List<KLine> _deduplicateAndSort(List<KLine> source) {
