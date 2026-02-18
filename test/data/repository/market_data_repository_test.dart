@@ -3822,5 +3822,42 @@ void main() {
       expect(result.errors.containsKey('000003'), isTrue);
       expect(result.errors['000003'], 'persist failed: timeout');
     });
+
+    test('propagates fetch-side errors into final FetchResult errors', () async {
+      final tradingDay = DateTime(2026, 2, 13);
+
+      fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
+        stockCode: '000001',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+      fakePlanner.plansByStock['000002'] = MinuteFetchPlan(
+        stockCode: '000002',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+
+      fakeAdapter.barsToReturn = {
+        '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
+        '000002': const [],
+      };
+      fakeAdapter.errorsToReturn = {
+        '000002': 'fetch failed: timeout',
+      };
+      fakeWriter.resultToReturn = const MinuteWriteResult(
+        updatedStocks: ['000001'],
+        totalRecords: 1,
+      );
+
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001', '000002'],
+        dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(result.successCount, 1);
+      expect(result.failureCount, 1);
+      expect(result.errors['000002'], 'fetch failed: timeout');
+    });
   });
 }
