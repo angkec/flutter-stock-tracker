@@ -24,7 +24,7 @@ import 'package:stock_rtwatcher/services/tdx_pool.dart';
 const int _dailyTargetBars = 260;
 const int _weeklyTargetBars = 100;
 const int _weeklyRangeDays = 760;
-const int _minuteRangeDays = 30;
+const int _minuteTradingDays = 7;
 const int _minuteMinCompleteBars = 220;
 const int _minuteReadConcurrency = 6;
 const int _poolSize = 12;
@@ -238,6 +238,7 @@ void main() {
       final minuteIncompleteOrder = <String>[];
 
       final minuteTradingDates = <DateTime>{};
+      List<DateTime> minuteTradingDatesRecent = const [];
 
       Object? caughtError;
       StackTrace? caughtStack;
@@ -376,9 +377,6 @@ void main() {
 
         final dailyValidateStopwatch = Stopwatch()..start();
         var dailyTotalRecords = 0;
-        final minuteStartDay = anchorDay.subtract(
-          const Duration(days: _minuteRangeDays),
-        );
 
         for (final stockCode in stockCodes) {
           final loaded = await dailyCacheStore.loadForStocksWithStatus(
@@ -398,7 +396,7 @@ void main() {
 
           for (final bar in bars) {
             final day = _dateOnly(bar.datetime);
-            if (!day.isBefore(minuteStartDay) && !day.isAfter(anchorDay)) {
+            if (!day.isAfter(anchorDay)) {
               minuteTradingDates.add(day);
             }
           }
@@ -408,6 +406,11 @@ void main() {
         stageDurations['daily_validate'] = dailyValidateStopwatch.elapsed;
         stageRecords['daily'] = dailyTotalRecords;
         dailyStageStopwatch.stop();
+        minuteTradingDatesRecent = _selectRecentTradingDates(
+          minuteTradingDates,
+          _minuteTradingDays,
+          fallbackEnd: anchorDay,
+        );
         print(
           '[E2E] Stage daily done, duration=${_formatDuration(dailyStageStopwatch.elapsed)}',
         );
@@ -469,8 +472,9 @@ void main() {
         // Stage 3: Minute refetch
         print('[E2E] Stage minute start');
         final minuteStageStopwatch = Stopwatch()..start();
+        final minuteRangeStart = minuteTradingDatesRecent.first;
         minuteRange = DateRange(
-          now.subtract(const Duration(days: _minuteRangeDays)),
+          minuteRangeStart,
           DateTime(now.year, now.month, now.day, 23, 59, 59, 999, 999),
         );
         final minuteStopwatch = Stopwatch()..start();
@@ -499,14 +503,8 @@ void main() {
 
         final minuteValidateStopwatch = Stopwatch()..start();
         final today = anchorDay;
-        var tradingDates = minuteTradingDates.toList()..sort();
-        tradingDates = tradingDates.where((date) => date != today).toList();
-        if (tradingDates.isEmpty) {
-          tradingDates = _weekdayDates(
-            _dateOnly(activeMinuteRange.start),
-            _dateOnly(activeMinuteRange.end),
-          ).where((date) => date != today).toList();
-        }
+        final tradingDates =
+            minuteTradingDatesRecent.where((date) => date != today).toList();
 
         final workerCount = min(_minuteReadConcurrency, stockCodes.length);
         var nextIndex = 0;
@@ -644,7 +642,7 @@ void main() {
         buffer.writeln('- daily target bars: $_dailyTargetBars');
         buffer.writeln('- weekly target bars: $_weeklyTargetBars');
         buffer.writeln('- weekly range days: $_weeklyRangeDays');
-        buffer.writeln('- minute range days: $_minuteRangeDays');
+        buffer.writeln('- minute trading days: $_minuteTradingDays');
         buffer.writeln('- minute min complete bars/day: $_minuteMinCompleteBars');
         buffer.writeln('- minute today excluded: true');
         buffer.writeln('');
