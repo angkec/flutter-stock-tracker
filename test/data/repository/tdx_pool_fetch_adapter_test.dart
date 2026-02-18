@@ -5,13 +5,19 @@ import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 class FakeTdxPool extends TdxPool {
-  FakeTdxPool(this._barsByCode) : super(poolSize: 2);
+  FakeTdxPool(
+    this._barsByCode, {
+    this.shouldConnect = true,
+    this.throwOnBatch = false,
+  }) : super(poolSize: 2);
 
   final Map<String, List<KLine>> _barsByCode;
+  final bool shouldConnect;
+  final bool throwOnBatch;
   final List<Stock> requestedStocks = [];
 
   @override
-  Future<bool> ensureConnected() async => true;
+  Future<bool> ensureConnected() async => shouldConnect;
 
   @override
   Future<bool> autoConnect() async => true;
@@ -24,6 +30,9 @@ class FakeTdxPool extends TdxPool {
     required int count,
     required void Function(int stockIndex, List<KLine> bars) onStockBars,
   }) async {
+    if (throwOnBatch) {
+      throw StateError('batch failure');
+    }
     requestedStocks.addAll(stocks);
     for (var index = 0; index < stocks.length; index++) {
       final code = stocks[index].code;
@@ -84,5 +93,46 @@ void main() {
       expect(result['000001']!.length, 1);
       expect(result['300001'], isEmpty);
     });
+
+    test(
+      'fetchMinuteBarsWithResult reports empty responses per stock',
+      () async {
+        final pool = FakeTdxPool({
+          '000001': [sampleBar(DateTime(2026, 2, 14, 9, 30))],
+        });
+        final adapter = TdxPoolFetchAdapter(pool: pool);
+
+        final result = await adapter.fetchMinuteBarsWithResult(
+          stockCodes: const ['000001', '300001'],
+          start: 0,
+          count: 800,
+        );
+
+        expect(result.barsByStock['000001']!.length, 1);
+        expect(result.barsByStock['300001'], isEmpty);
+        expect(result.errorsByStock, isEmpty);
+        expect(result.emptyStockCodes.contains('300001'), isTrue);
+      },
+    );
+
+    test(
+      'fetchMinuteBarsWithResult reports per-stock errors when pool connection fails',
+      () async {
+        final pool = FakeTdxPool(const {}, shouldConnect: false);
+        final adapter = TdxPoolFetchAdapter(pool: pool);
+
+        final result = await adapter.fetchMinuteBarsWithResult(
+          stockCodes: const ['000001', '600000'],
+          start: 0,
+          count: 800,
+        );
+
+        expect(result.barsByStock['000001'], isEmpty);
+        expect(result.barsByStock['600000'], isEmpty);
+        expect(result.errorsByStock.keys, containsAll(['000001', '600000']));
+        expect(result.errorsByStock['000001'], isNotEmpty);
+        expect(result.errorsByStock['600000'], isNotEmpty);
+      },
+    );
   });
 }

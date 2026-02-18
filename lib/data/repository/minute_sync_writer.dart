@@ -6,12 +6,30 @@ import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/minute_sync_state_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 
+class MinuteWriteStockOutcome {
+  final String stockCode;
+  final bool success;
+  final bool updated;
+  final int recordCount;
+  final String? error;
+
+  const MinuteWriteStockOutcome({
+    required this.stockCode,
+    required this.success,
+    required this.updated,
+    required this.recordCount,
+    this.error,
+  });
+}
+
 class MinuteWriteResult {
   final List<String> updatedStocks;
   final int totalRecords;
   final int persistDurationMs;
   final int versionDurationMs;
   final int totalDurationMs;
+  final Map<String, MinuteWriteStockOutcome> outcomesByStock;
+  final Map<String, String> errorsByStock;
 
   const MinuteWriteResult({
     required this.updatedStocks,
@@ -19,6 +37,8 @@ class MinuteWriteResult {
     this.persistDurationMs = 0,
     this.versionDurationMs = 0,
     this.totalDurationMs = 0,
+    this.outcomesByStock = const {},
+    this.errorsByStock = const {},
   });
 }
 
@@ -104,9 +124,24 @@ class MinuteSyncWriter {
 
     var totalRecords = 0;
     final updatedStocks = <String>[];
+    final outcomesByStock = <String, MinuteWriteStockOutcome>{};
+    final errorsByStock = <String, String>{};
 
     for (final outcome in outcomes) {
-      if (outcome == null || !outcome.updated) {
+      if (outcome == null) {
+        continue;
+      }
+      outcomesByStock[outcome.stockCode] = MinuteWriteStockOutcome(
+        stockCode: outcome.stockCode,
+        success: outcome.success,
+        updated: outcome.updated,
+        recordCount: outcome.recordCount,
+        error: outcome.error,
+      );
+      if (outcome.error != null && outcome.error!.isNotEmpty) {
+        errorsByStock[outcome.stockCode] = outcome.error!;
+      }
+      if (!outcome.updated) {
         continue;
       }
       updatedStocks.add(outcome.stockCode);
@@ -131,6 +166,8 @@ class MinuteSyncWriter {
       persistDurationMs: persistStopwatch.elapsedMilliseconds,
       versionDurationMs: versionDurationMs,
       totalDurationMs: totalStopwatch.elapsedMilliseconds,
+      outcomesByStock: outcomesByStock,
+      errorsByStock: errorsByStock,
     );
   }
 
@@ -149,6 +186,7 @@ class MinuteSyncWriter {
 
       return _StockPersistOutcome(
         stockCode: stockCode,
+        success: true,
         updated: true,
         recordCount: bars.length,
       );
@@ -157,8 +195,10 @@ class MinuteSyncWriter {
       await _syncStateStorage.markFetchFailure(stockCode, error.toString());
       return _StockPersistOutcome(
         stockCode: stockCode,
+        success: false,
         updated: false,
         recordCount: 0,
+        error: error.toString(),
       );
     }
   }
@@ -166,12 +206,16 @@ class MinuteSyncWriter {
 
 class _StockPersistOutcome {
   final String stockCode;
+  final bool success;
   final bool updated;
   final int recordCount;
+  final String? error;
 
   const _StockPersistOutcome({
     required this.stockCode,
+    required this.success,
     required this.updated,
     required this.recordCount,
+    this.error,
   });
 }

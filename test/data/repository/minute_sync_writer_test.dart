@@ -11,6 +11,34 @@ import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/minute_sync_state_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 
+class FailingSaveMetadataManager extends KLineMetadataManager {
+  final Set<String> failingStockCodes;
+
+  FailingSaveMetadataManager({
+    required super.database,
+    required super.fileStorage,
+    required this.failingStockCodes,
+  });
+
+  @override
+  Future<void> saveKlineData({
+    required String stockCode,
+    required List<KLine> newBars,
+    required KLineDataType dataType,
+    bool bumpVersion = true,
+  }) async {
+    if (failingStockCodes.contains(stockCode)) {
+      throw StateError('persist fail: $stockCode');
+    }
+    await super.saveKlineData(
+      stockCode: stockCode,
+      newBars: newBars,
+      dataType: dataType,
+      bumpVersion: bumpVersion,
+    );
+  }
+}
+
 void main() {
   late MarketDatabase database;
   late KLineFileStorage fileStorage;
@@ -182,5 +210,45 @@ void main() {
       expect(sync000001.consecutiveFailures, 0);
       expect(sync000002, isNull);
     });
+
+    test(
+      'writeBatch reports per-stock outcomes for persist failures',
+      () async {
+        final failingManager = FailingSaveMetadataManager(
+          database: database,
+          fileStorage: fileStorage,
+          failingStockCodes: {'000002'},
+        );
+        final failingWriter = MinuteSyncWriter(
+          metadataManager: failingManager,
+          syncStateStorage: syncStateStorage,
+        );
+
+        final result = await failingWriter.writeBatch(
+          barsByStock: {
+            '000001': [buildBar(DateTime(2026, 2, 13, 9, 30))],
+            '000002': [buildBar(DateTime(2026, 2, 13, 9, 31))],
+          },
+          dataType: KLineDataType.oneMinute,
+          fetchedTradingDay: DateTime(2026, 2, 13),
+        );
+
+        expect(result.updatedStocks, ['000001']);
+        expect(result.totalRecords, 1);
+        expect(result.outcomesByStock.keys, containsAll(['000001', '000002']));
+        expect(result.outcomesByStock['000001']!.success, isTrue);
+        expect(result.outcomesByStock['000002']!.success, isFalse);
+        expect(result.errorsByStock.containsKey('000002'), isTrue);
+        expect(
+          result.errorsByStock['000002'],
+          contains('persist fail: 000002'),
+        );
+
+        final sync000002 = await syncStateStorage.getByStockCode('000002');
+        expect(sync000002, isNotNull);
+        expect(sync000002!.consecutiveFailures, 1);
+        expect(sync000002.lastError, contains('persist fail: 000002'));
+      },
+    );
   });
 }

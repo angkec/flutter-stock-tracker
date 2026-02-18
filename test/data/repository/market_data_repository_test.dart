@@ -130,6 +130,7 @@ class FakeMinuteFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
   final List<int> startsByCall = [];
   final List<List<String>> stockCodesByCall = [];
   Map<String, List<KLine>> barsToReturn = {};
+  Map<String, String> errorsToReturn = {};
 
   @override
   Future<Map<String, List<KLine>>> fetchMinuteBars({
@@ -155,6 +156,28 @@ class FakeMinuteFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
     return {
       for (final code in stockCodes) code: barsToReturn[code] ?? const [],
     };
+  }
+
+  @override
+  Future<MinuteFetchResult> fetchMinuteBarsWithResult({
+    required List<String> stockCodes,
+    required int start,
+    required int count,
+    ProgressCallback? onProgress,
+  }) async {
+    final bars = await fetchMinuteBars(
+      stockCodes: stockCodes,
+      start: start,
+      count: count,
+      onProgress: onProgress,
+    );
+    return MinuteFetchResult(
+      barsByStock: bars,
+      errorsByStock: {
+        for (final code in stockCodes)
+          if (errorsToReturn.containsKey(code)) code: errorsToReturn[code]!,
+      },
+    );
   }
 
   @override
@@ -3164,6 +3187,22 @@ void main() {
       fakeWriter.resultToReturn = const MinuteWriteResult(
         updatedStocks: ['000001'],
         totalRecords: 1,
+        outcomesByStock: {
+          '000001': MinuteWriteStockOutcome(
+            stockCode: '000001',
+            success: true,
+            updated: true,
+            recordCount: 1,
+          ),
+          '000002': MinuteWriteStockOutcome(
+            stockCode: '000002',
+            success: false,
+            updated: false,
+            recordCount: 0,
+            error: 'persist failed: disk full',
+          ),
+        },
+        errorsByStock: {'000002': 'persist failed: disk full'},
       );
 
       final result = await repository.fetchMissingData(
@@ -3637,5 +3676,151 @@ void main() {
         expect(result.totalRecords, 6);
       },
     );
+
+    test(
+      'empty bars for one stock should not be counted as successful update',
+      () async {
+        final tradingDay = DateTime(2026, 2, 13);
+
+        fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
+          stockCode: '000001',
+          mode: MinuteSyncMode.bootstrap,
+          datesToFetch: [tradingDay],
+        );
+        fakePlanner.plansByStock['000002'] = MinuteFetchPlan(
+          stockCode: '000002',
+          mode: MinuteSyncMode.bootstrap,
+          datesToFetch: [tradingDay],
+        );
+
+        fakeAdapter.barsToReturn = {
+          '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
+          '000002': const [],
+        };
+        fakeWriter.resultToReturn = const MinuteWriteResult(
+          updatedStocks: ['000001'],
+          totalRecords: 1,
+        );
+
+        final result = await repository.fetchMissingData(
+          stockCodes: ['000001', '000002'],
+          dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+          dataType: KLineDataType.oneMinute,
+        );
+
+        expect(result.successCount, 1);
+        expect(result.failureCount, 1);
+        expect(result.errors.containsKey('000002'), isTrue);
+      },
+    );
+
+    test('per-stock persist failure should increase failureCount', () async {
+      final tradingDay = DateTime(2026, 2, 13);
+
+      fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
+        stockCode: '000001',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+      fakePlanner.plansByStock['000002'] = MinuteFetchPlan(
+        stockCode: '000002',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+
+      fakeAdapter.barsToReturn = {
+        '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
+        '000002': [buildMinuteBar(DateTime(2026, 2, 13, 9, 31))],
+      };
+      fakeWriter.resultToReturn = const MinuteWriteResult(
+        updatedStocks: ['000001'],
+        totalRecords: 1,
+        outcomesByStock: {
+          '000001': MinuteWriteStockOutcome(
+            stockCode: '000001',
+            success: true,
+            updated: true,
+            recordCount: 1,
+          ),
+          '000002': MinuteWriteStockOutcome(
+            stockCode: '000002',
+            success: false,
+            updated: false,
+            recordCount: 0,
+            error: 'persist failed: disk full',
+          ),
+        },
+        errorsByStock: {'000002': 'persist failed: disk full'},
+      );
+
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001', '000002'],
+        dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(result.successCount, 1);
+      expect(result.failureCount, 1);
+      expect(result.errors.containsKey('000002'), isTrue);
+      expect(result.errors['000002'], 'persist failed: disk full');
+    });
+
+    test('result should report partial success accurately', () async {
+      final tradingDay = DateTime(2026, 2, 13);
+
+      fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
+        stockCode: '000001',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+      fakePlanner.plansByStock['000002'] = MinuteFetchPlan(
+        stockCode: '000002',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+      fakePlanner.plansByStock['000003'] = MinuteFetchPlan(
+        stockCode: '000003',
+        mode: MinuteSyncMode.bootstrap,
+        datesToFetch: [tradingDay],
+      );
+
+      fakeAdapter.barsToReturn = {
+        '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
+        '000002': const [],
+        '000003': [buildMinuteBar(DateTime(2026, 2, 13, 9, 32))],
+      };
+      fakeWriter.resultToReturn = const MinuteWriteResult(
+        updatedStocks: ['000001'],
+        totalRecords: 1,
+        outcomesByStock: {
+          '000001': MinuteWriteStockOutcome(
+            stockCode: '000001',
+            success: true,
+            updated: true,
+            recordCount: 1,
+          ),
+          '000003': MinuteWriteStockOutcome(
+            stockCode: '000003',
+            success: false,
+            updated: false,
+            recordCount: 0,
+            error: 'persist failed: timeout',
+          ),
+        },
+        errorsByStock: {'000003': 'persist failed: timeout'},
+      );
+
+      final result = await repository.fetchMissingData(
+        stockCodes: ['000001', '000002', '000003'],
+        dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+        dataType: KLineDataType.oneMinute,
+      );
+
+      expect(result.successCount, 1);
+      expect(result.failureCount, 2);
+      expect(result.errors.containsKey('000002'), isTrue);
+      expect(result.errors.containsKey('000003'), isTrue);
+      expect(result.errors['000003'], 'persist failed: timeout');
+    });
   });
 }

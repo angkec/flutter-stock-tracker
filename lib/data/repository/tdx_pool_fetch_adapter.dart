@@ -18,12 +18,77 @@ class TdxPoolFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
     required int count,
     ProgressCallback? onProgress,
   }) async {
-    return fetchBars(
+    final result = await fetchMinuteBarsWithResult(
       stockCodes: stockCodes,
-      category: klineType1Min,
       start: start,
       count: count,
       onProgress: onProgress,
+    );
+    return result.barsByStock;
+  }
+
+  @override
+  Future<MinuteFetchResult> fetchMinuteBarsWithResult({
+    required List<String> stockCodes,
+    required int start,
+    required int count,
+    ProgressCallback? onProgress,
+  }) async {
+    if (stockCodes.isEmpty) {
+      return MinuteFetchResult(barsByStock: const {});
+    }
+
+    final barsByStock = <String, List<KLine>>{
+      for (final code in stockCodes) code: <KLine>[],
+    };
+    final errorsByStock = <String, String>{};
+
+    final connected = await _pool.ensureConnected();
+    if (!connected) {
+      for (final code in stockCodes) {
+        errorsByStock[code] = 'Unable to connect to TDX pool';
+      }
+      return MinuteFetchResult(
+        barsByStock: barsByStock,
+        errorsByStock: errorsByStock,
+      );
+    }
+
+    final stocks = stockCodes
+        .map(
+          (code) =>
+              Stock(code: code, name: code, market: _mapCodeToMarket(code)),
+        )
+        .toList();
+
+    var completed = 0;
+    final completedCodes = <String>{};
+    try {
+      await _pool.batchGetSecurityBarsStreaming(
+        stocks: stocks,
+        category: klineType1Min,
+        start: start,
+        count: count,
+        onStockBars: (stockIndex, bars) {
+          final code = stocks[stockIndex].code;
+          barsByStock[code] = bars;
+          completedCodes.add(code);
+          completed++;
+          onProgress?.call(completed, stocks.length);
+        },
+      );
+    } catch (error) {
+      final errorMessage = 'Minute pool fetch failed: $error';
+      for (final code in stockCodes) {
+        if (!completedCodes.contains(code)) {
+          errorsByStock[code] = errorMessage;
+        }
+      }
+    }
+
+    return MinuteFetchResult(
+      barsByStock: barsByStock,
+      errorsByStock: errorsByStock,
     );
   }
 

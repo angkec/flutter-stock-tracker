@@ -919,6 +919,7 @@ class MarketDataRepository implements DataRepository {
     final barsByStock = <String, List<KLine>>{
       for (final code in stocksToFetch) code: <KLine>[],
     };
+    final fetchErrorsByStock = <String, String>{};
 
     final fetchStopwatch = Stopwatch()..start();
     var completedFetchUnits = 0;
@@ -936,36 +937,41 @@ class MarketDataRepository implements DataRepository {
       }
 
       final batchStart = batchIndex * _minuteSyncConfig.poolBatchCount;
-      final batchBarsByStock = await _minuteFetchAdapter.fetchMinuteBars(
-        stockCodes: activeStocks,
-        start: batchStart,
-        count: _minuteSyncConfig.poolBatchCount,
-        onProgress: (current, total) {
-          final safeTotal = total <= 0 ? activeStocks.length : total;
-          final stockIndex = current <= 0
-              ? 0
-              : current - 1 < safeTotal
-              ? current - 1
-              : safeTotal - 1;
+      final batchFetchResult = await _minuteFetchAdapter
+          .fetchMinuteBarsWithResult(
+            stockCodes: activeStocks,
+            start: batchStart,
+            count: _minuteSyncConfig.poolBatchCount,
+            onProgress: (current, total) {
+              final safeTotal = total <= 0 ? activeStocks.length : total;
+              final stockIndex = current <= 0
+                  ? 0
+                  : current - 1 < safeTotal
+                  ? current - 1
+                  : safeTotal - 1;
 
-          final overallCurrent = completedFetchUnits + current;
-          _statusController.add(
-            DataFetching(
-              current: overallCurrent,
-              total: totalFetchUnits,
-              currentStock: activeStocks[stockIndex],
-            ),
+              final overallCurrent = completedFetchUnits + current;
+              _statusController.add(
+                DataFetching(
+                  current: overallCurrent,
+                  total: totalFetchUnits,
+                  currentStock: activeStocks[stockIndex],
+                ),
+              );
+              onProgress?.call(overallCurrent, totalFetchUnits);
+            },
           );
-          onProgress?.call(overallCurrent, totalFetchUnits);
-        },
-      );
 
       var hasNonEmptyBars = false;
       for (final stockCode in activeStocks) {
-        final bars = batchBarsByStock[stockCode] ?? const <KLine>[];
+        final bars = batchFetchResult.barsByStock[stockCode] ?? const <KLine>[];
         if (bars.isNotEmpty) {
           hasNonEmptyBars = true;
           barsByStock[stockCode]!.addAll(bars);
+        }
+        final fetchError = batchFetchResult.errorsByStock[stockCode];
+        if (fetchError != null && fetchError.isNotEmpty) {
+          fetchErrorsByStock.putIfAbsent(stockCode, () => fetchError);
         }
       }
 
@@ -1022,18 +1028,58 @@ class MarketDataRepository implements DataRepository {
     );
     writeStopwatch.stop();
 
+    final successfulFetchedStocks = <String>{};
+    if (writeResult.outcomesByStock.isNotEmpty) {
+      for (final entry in writeResult.outcomesByStock.entries) {
+        final outcome = entry.value;
+        if (outcome.success && outcome.updated) {
+          successfulFetchedStocks.add(entry.key);
+        }
+      }
+    } else {
+      successfulFetchedStocks.addAll(writeResult.updatedStocks);
+    }
+
+    final successfulStockCount = stocksToFetch
+        .where((code) => successfulFetchedStocks.contains(code))
+        .length;
+    final failedFetchedStockCount = stocksToFetch.length - successfulStockCount;
+
+    final errorsByStock = <String, String>{};
+    for (final stockCode in stocksToFetch) {
+      if (successfulFetchedStocks.contains(stockCode)) {
+        continue;
+      }
+
+      var error =
+          writeResult.errorsByStock[stockCode] ??
+          writeResult.outcomesByStock[stockCode]?.error ??
+          fetchErrorsByStock[stockCode];
+
+      if (error == null || error.isEmpty) {
+        final bars = barsByStock[stockCode] ?? const <KLine>[];
+        error = bars.isEmpty
+            ? 'No minute bars returned'
+            : 'Failed to persist minute bars';
+      }
+      errorsByStock[stockCode] = error;
+    }
+
     final finalizeStopwatch = Stopwatch()..start();
-    for (final stockCode in writeResult.updatedStocks) {
+    final updatedStocksForEvent = writeResult.updatedStocks.isNotEmpty
+        ? writeResult.updatedStocks
+        : successfulFetchedStocks.toList(growable: false);
+    for (final stockCode in updatedStocksForEvent) {
       _invalidateCache(stockCode, KLineDataType.oneMinute);
     }
 
     stopwatch.stop();
     final currentVersion = await _metadataManager.getCurrentVersion();
 
-    if (writeResult.updatedStocks.isNotEmpty) {
+    if (updatedStocksForEvent.isNotEmpty) {
       _dataUpdatedController.add(
         DataUpdatedEvent(
-          stockCodes: writeResult.updatedStocks,
+          stockCodes: updatedStocksForEvent,
           dateRange: dateRange,
           dataType: KLineDataType.oneMinute,
           dataVersion: currentVersion,
@@ -1051,7 +1097,7 @@ class MarketDataRepository implements DataRepository {
           : (stocksToFetch.length * 60000 / durationMs).round();
       debugPrint(
         '[MinutePipeline] done fetched=${stocksToFetch.length} '
-        'updated=${writeResult.updatedStocks.length} records=${writeResult.totalRecords} '
+        'updated=${updatedStocksForEvent.length} records=${writeResult.totalRecords} '
         'durationMs=$durationMs stocksPerMin=$perMinute',
       );
       debugPrint(
@@ -1070,9 +1116,10 @@ class MarketDataRepository implements DataRepository {
 
     return FetchResult(
       totalStocks: stockCodes.length,
-      successCount: stockCodes.length,
-      failureCount: 0,
-      errors: const {},
+      successCount:
+          (stockCodes.length - stocksToFetch.length) + successfulStockCount,
+      failureCount: failedFetchedStockCount,
+      errors: errorsByStock,
       totalRecords: writeResult.totalRecords,
       duration: stopwatch.elapsed,
     );
@@ -1884,12 +1931,36 @@ class _LegacyMinuteFetchAdapter implements MinuteFetchAdapter {
     required int count,
     ProgressCallback? onProgress,
   }) async {
+    final result = await fetchMinuteBarsWithResult(
+      stockCodes: stockCodes,
+      start: start,
+      count: count,
+      onProgress: onProgress,
+    );
+    return result.barsByStock;
+  }
+
+  @override
+  Future<MinuteFetchResult> fetchMinuteBarsWithResult({
+    required List<String> stockCodes,
+    required int start,
+    required int count,
+    ProgressCallback? onProgress,
+  }) async {
     final result = <String, List<KLine>>{};
+    final errorsByStock = <String, String>{};
 
     if (!_client.isConnected) {
       final connected = await _client.autoConnect();
       if (!connected) {
-        return {for (final code in stockCodes) code: <KLine>[]};
+        for (final code in stockCodes) {
+          result[code] = <KLine>[];
+          errorsByStock[code] = 'Unable to connect to TDX server';
+        }
+        return MinuteFetchResult(
+          barsByStock: result,
+          errorsByStock: errorsByStock,
+        );
       }
     }
 
@@ -1905,13 +1976,14 @@ class _LegacyMinuteFetchAdapter implements MinuteFetchAdapter {
           start: start,
           count: count,
         );
-      } catch (_) {
+      } catch (error) {
         result[stockCode] = [];
+        errorsByStock[stockCode] = 'Failed to fetch minute bars: $error';
       }
 
       onProgress?.call(index + 1, stockCodes.length);
     }
 
-    return result;
+    return MinuteFetchResult(barsByStock: result, errorsByStock: errorsByStock);
   }
 }
