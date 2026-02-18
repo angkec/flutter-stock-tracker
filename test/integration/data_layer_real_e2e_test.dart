@@ -475,9 +475,7 @@ void main() {
         // Stage 3: Minute refetch
         print('[E2E] Stage minute start');
         final minuteStageStopwatch = Stopwatch()..start();
-        final minuteRangeStart = minuteTradingDatesRecent.isNotEmpty
-            ? minuteTradingDatesRecent.first
-            : now.subtract(const Duration(days: _minuteTradingDays));
+        final minuteRangeStart = minuteTradingDatesRecent.first;
         minuteRange = DateRange(
           minuteRangeStart,
           DateTime(now.year, now.month, now.day, 23, 59, 59, 999, 999),
