@@ -745,6 +745,53 @@ void main() {
       },
     );
 
+    test(
+      'evicts oldest cached ranges when many distinct ranges are requested',
+      () async {
+        final countingManager = _CountingTradingDateMetadataManager(
+          database: database,
+          fileStorage: fileStorage,
+        );
+        final baseDay = DateTime(2026, 1, 1);
+        const totalRanges = 160;
+
+        await countingManager.saveKlineData(
+          stockCode: '000003',
+          newBars: [
+            for (var i = 0; i < totalRanges; i++)
+              _createKLine(baseDay.add(Duration(days: i)), 10.0 + i * 0.01),
+          ],
+          dataType: KLineDataType.daily,
+        );
+
+        final ranges = List<DateRange>.generate(totalRanges, (index) {
+          final day = baseDay.add(Duration(days: index));
+          return DateRange(day, day);
+        });
+
+        for (final range in ranges) {
+          await countingManager.getTradingDates(range);
+        }
+
+        final loadCallsAfterPriming = countingManager.dailyLoadCalls;
+        expect(loadCallsAfterPriming, equals(totalRanges));
+
+        await countingManager.getTradingDates(ranges.last);
+        expect(
+          countingManager.dailyLoadCalls,
+          equals(loadCallsAfterPriming),
+          reason: 'most recent range should still be cached',
+        );
+
+        await countingManager.getTradingDates(ranges.first);
+        expect(
+          countingManager.dailyLoadCalls,
+          greaterThan(loadCallsAfterPriming),
+          reason: 'oldest range should be evicted instead of growing unbounded',
+        );
+      },
+    );
+
     test('returns unique dates from daily kline data', () async {
       // Save daily data for two different days
       final jan15 = DateTime(2026, 1, 15);

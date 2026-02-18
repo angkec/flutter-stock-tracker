@@ -1,5 +1,6 @@
 // lib/data/storage/kline_metadata_manager.dart
 
+import 'dart:collection';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
@@ -78,10 +79,12 @@ class KLineFileMetadata {
 /// Manages K-line data storage with coordinated file and database updates
 class KLineMetadataManager {
   static const int _inClauseChunkSize = 800;
+  static const int _maxTradingDateRangeCacheEntries = 128;
 
   final MarketDatabase _db;
   final KLineFileStorage _fileStorage;
-  final Map<String, List<DateTime>> _tradingDateRangeCache = {};
+  final LinkedHashMap<String, List<DateTime>> _tradingDateRangeCache =
+      LinkedHashMap<String, List<DateTime>>();
   final Map<String, Future<List<DateTime>>> _tradingDateRangeInFlight = {};
   int? _tradingDateCacheVersion;
 
@@ -525,7 +528,7 @@ class KLineMetadataManager {
       final computed = await loadFuture;
       final materialized = List<DateTime>.unmodifiable(computed);
       if (_tradingDateCacheVersion == currentVersion) {
-        _tradingDateRangeCache[cacheKey] = materialized;
+        _cacheTradingDateRange(cacheKey, materialized);
       }
       return List<DateTime>.from(materialized);
     } finally {
@@ -593,6 +596,18 @@ class KLineMetadataManager {
       return;
     }
     _invalidateTradingDateRangeCache(nextVersion: currentVersion);
+  }
+
+  void _cacheTradingDateRange(String key, List<DateTime> dates) {
+    if (_tradingDateRangeCache.containsKey(key)) {
+      _tradingDateRangeCache[key] = dates;
+      return;
+    }
+
+    while (_tradingDateRangeCache.length >= _maxTradingDateRangeCacheEntries) {
+      _tradingDateRangeCache.remove(_tradingDateRangeCache.keys.first);
+    }
+    _tradingDateRangeCache[key] = dates;
   }
 
   void _invalidateTradingDateRangeCache({int? nextVersion}) {
