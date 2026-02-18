@@ -36,15 +36,26 @@ class DailyKlineReadService {
     required DateTime anchorDate,
     required int targetBars,
   }) async {
-    final loaded = await _cacheStore.loadForStocks(
+    final loaded = await _cacheStore.loadForStocksWithStatus(
       stockCodes,
       anchorDate: anchorDate,
       targetBars: targetBars,
     );
 
+    final result = <String, List<KLine>>{};
     for (final stockCode in stockCodes) {
-      final bars = loaded[stockCode];
-      if (bars == null || bars.isEmpty) {
+      final loadResult = loaded[stockCode];
+      if (loadResult?.status == DailyKlineCacheLoadStatus.corrupted) {
+        throw DailyKlineReadException(
+          stockCode: stockCode,
+          reason: DailyKlineReadFailureReason.corruptedPayload,
+          message: 'Daily cache file is corrupted',
+        );
+      }
+
+      if (loadResult == null ||
+          loadResult.status == DailyKlineCacheLoadStatus.missing ||
+          loadResult.bars.isEmpty) {
         throw DailyKlineReadException(
           stockCode: stockCode,
           reason: DailyKlineReadFailureReason.missingFile,
@@ -52,6 +63,7 @@ class DailyKlineReadService {
         );
       }
 
+      final bars = loadResult.bars;
       for (var index = 1; index < bars.length; index++) {
         if (bars[index - 1].datetime.isAfter(bars[index].datetime)) {
           throw DailyKlineReadException(
@@ -61,8 +73,19 @@ class DailyKlineReadService {
           );
         }
       }
+
+      if (bars.length < targetBars) {
+        throw DailyKlineReadException(
+          stockCode: stockCode,
+          reason: DailyKlineReadFailureReason.insufficientBars,
+          message:
+              'Daily bars shorter than target: got ${bars.length}, expected $targetBars',
+        );
+      }
+
+      result[stockCode] = bars;
     }
 
-    return loaded;
+    return result;
   }
 }

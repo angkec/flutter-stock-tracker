@@ -79,4 +79,78 @@ void main() {
       ),
     );
   });
+
+  test(
+    'readOrThrow throws corruptedPayload when cache JSON is invalid',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'daily-read-corrupted-',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final store = _buildStore(tempDir.path);
+      await store.initialize();
+
+      final cacheFile = File(
+        '${tempDir.path}/daily_cache/600000_daily_cache.json',
+      );
+      await cacheFile.create(recursive: true);
+      await cacheFile.writeAsString('{not-json');
+
+      final service = DailyKlineReadService(cacheStore: store);
+
+      expect(
+        () => service.readOrThrow(
+          stockCodes: const ['600000'],
+          anchorDate: DateTime(2026, 12, 31),
+          targetBars: 260,
+        ),
+        throwsA(
+          isA<DailyKlineReadException>().having(
+            (e) => e.reason,
+            'reason',
+            DailyKlineReadFailureReason.corruptedPayload,
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
+    'readOrThrow throws insufficientBars when bars are fewer than target',
+    () async {
+      final tempDir = await Directory.systemTemp.createTemp(
+        'daily-read-insufficient-',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final store = _buildStore(tempDir.path);
+      await store.saveAll({'600000': _buildBars(120)});
+
+      final service = DailyKlineReadService(cacheStore: store);
+
+      expect(
+        () => service.readOrThrow(
+          stockCodes: const ['600000'],
+          anchorDate: DateTime(2026, 12, 31),
+          targetBars: 260,
+        ),
+        throwsA(
+          isA<DailyKlineReadException>().having(
+            (e) => e.reason,
+            'reason',
+            DailyKlineReadFailureReason.insufficientBars,
+          ),
+        ),
+      );
+    },
+  );
 }

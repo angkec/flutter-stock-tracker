@@ -17,6 +17,15 @@ class DailyKlineCacheStats {
   });
 }
 
+enum DailyKlineCacheLoadStatus { ok, missing, corrupted }
+
+class DailyKlineCacheLoadResult {
+  const DailyKlineCacheLoadResult({required this.status, required this.bars});
+
+  final DailyKlineCacheLoadStatus status;
+  final List<KLine> bars;
+}
+
 class DailyKlineCacheStore {
   DailyKlineCacheStore({
     KLineFileStorage? storage,
@@ -158,6 +167,79 @@ class DailyKlineCacheStore {
     return result;
   }
 
+  Future<Map<String, DailyKlineCacheLoadResult>> loadForStocksWithStatus(
+    List<String> stockCodes, {
+    required DateTime anchorDate,
+    int? targetBars,
+    int? lookbackMonths,
+  }) async {
+    if (stockCodes.isEmpty) {
+      return const <String, DailyKlineCacheLoadResult>{};
+    }
+    await initialize();
+
+    final result = <String, DailyKlineCacheLoadResult>{};
+    final target = targetBars ?? defaultTargetBars;
+    final lookback = lookbackMonths ?? defaultLookbackMonths;
+
+    final months = _recentMonths(anchorDate, lookback);
+    for (final stockCode in stockCodes) {
+      final snapshot = await _loadSnapshotFileWithStatus(stockCode);
+      if (snapshot.$1 == DailyKlineCacheLoadStatus.corrupted) {
+        result[stockCode] = const DailyKlineCacheLoadResult(
+          status: DailyKlineCacheLoadStatus.corrupted,
+          bars: <KLine>[],
+        );
+        continue;
+      }
+
+      var allBars = snapshot.$2;
+      if (allBars.isEmpty) {
+        allBars = await _loadFromLegacyMonthlyFiles(stockCode, months);
+      }
+
+      final deduped = _deduplicateAndSort(allBars);
+      if (deduped.isEmpty) {
+        result[stockCode] = const DailyKlineCacheLoadResult(
+          status: DailyKlineCacheLoadStatus.missing,
+          bars: <KLine>[],
+        );
+        continue;
+      }
+
+      final normalizedAnchor = DateTime(
+        anchorDate.year,
+        anchorDate.month,
+        anchorDate.day,
+        23,
+        59,
+        59,
+        999,
+        999,
+      );
+      final capped = deduped
+          .where((bar) => !bar.datetime.isAfter(normalizedAnchor))
+          .toList(growable: false);
+      if (capped.isEmpty) {
+        result[stockCode] = const DailyKlineCacheLoadResult(
+          status: DailyKlineCacheLoadStatus.missing,
+          bars: <KLine>[],
+        );
+        continue;
+      }
+
+      final bars = capped.length > target
+          ? capped.sublist(capped.length - target)
+          : capped;
+      result[stockCode] = DailyKlineCacheLoadResult(
+        status: DailyKlineCacheLoadStatus.ok,
+        bars: bars,
+      );
+    }
+
+    return result;
+  }
+
   Future<void> clearForStocks(
     List<String> stockCodes, {
     required DateTime anchorDate,
@@ -217,20 +299,31 @@ class DailyKlineCacheStore {
   }
 
   Future<List<KLine>> _loadSnapshotFile(String stockCode) async {
+    final snapshot = await _loadSnapshotFileWithStatus(stockCode);
+    if (snapshot.$1 != DailyKlineCacheLoadStatus.ok) {
+      return const <KLine>[];
+    }
+    return snapshot.$2;
+  }
+
+  Future<(DailyKlineCacheLoadStatus, List<KLine>)> _loadSnapshotFileWithStatus(
+    String stockCode,
+  ) async {
     final file = File(await _cacheFilePath(stockCode));
     if (!await file.exists()) {
-      return const <KLine>[];
+      return (DailyKlineCacheLoadStatus.missing, const <KLine>[]);
     }
 
     try {
       final content = await file.readAsString();
       final jsonList = jsonDecode(content) as List<dynamic>;
-      return jsonList
+      final bars = jsonList
           .whereType<Map<String, dynamic>>()
           .map((json) => KLine.fromJson(json))
           .toList(growable: false);
+      return (DailyKlineCacheLoadStatus.ok, bars);
     } catch (_) {
-      return const <KLine>[];
+      return (DailyKlineCacheLoadStatus.corrupted, const <KLine>[]);
     }
   }
 
