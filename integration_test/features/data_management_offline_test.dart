@@ -69,6 +69,10 @@ void main() {
 
       await driver.expectSnackBarContains('日K数据已增量拉取');
       expect(context.marketProvider.dailyIncrementalSyncCount, 1);
+      final latest = context.auditService.latest;
+      expect(latest, isNotNull);
+      expect(latest!.unknownStateCount, 0);
+      expect(latest.reasonCodes, isNot(contains('unknown_state')));
     });
 
     testWidgets('daily force-full sync completes with staged progress', (
@@ -85,6 +89,10 @@ void main() {
 
       await driver.expectSnackBarContains('日K数据已强制全量拉取');
       expect(context.marketProvider.dailyForceFullSyncCount, 1);
+      final latest = context.auditService.latest;
+      expect(latest, isNotNull);
+      expect(latest!.unknownStateCount, 0);
+      expect(latest.reasonCodes, isNot(contains('unknown_state')));
     });
 
     testWidgets('new trading day intraday partial path remains computable', (

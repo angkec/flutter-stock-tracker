@@ -11,16 +11,33 @@ typedef DailyKlineFetcher =
       void Function(int current, int total)? onProgress,
     });
 
+enum DailySyncCompletenessState { intradayPartial, finalOverride, unknownRetry }
+
+extension DailySyncCompletenessStateX on DailySyncCompletenessState {
+  String get wireValue {
+    switch (this) {
+      case DailySyncCompletenessState.intradayPartial:
+        return 'intraday_partial';
+      case DailySyncCompletenessState.finalOverride:
+        return 'final_override';
+      case DailySyncCompletenessState.unknownRetry:
+        return 'unknown_retry';
+    }
+  }
+}
+
 class DailyKlineSyncResult {
   const DailyKlineSyncResult({
     required this.successStockCodes,
     required this.failureStockCodes,
     required this.failureReasons,
+    required this.completenessState,
   });
 
   final List<String> successStockCodes;
   final List<String> failureStockCodes;
   final Map<String, String> failureReasons;
+  final DailySyncCompletenessState completenessState;
 }
 
 class DailyKlineSyncService {
@@ -115,11 +132,30 @@ class DailyKlineSyncService {
 
     onProgress?.call('4/4 保存缓存检查点...', 1, 1);
 
+    final completenessState = _resolveCompletenessState(
+      mode: mode,
+      hasFailures: failureCodes.isNotEmpty,
+    );
+
     return DailyKlineSyncResult(
       successStockCodes: successCodes,
       failureStockCodes: failureCodes,
       failureReasons: failureReasons,
+      completenessState: completenessState,
     );
+  }
+
+  DailySyncCompletenessState _resolveCompletenessState({
+    required DailyKlineSyncMode mode,
+    required bool hasFailures,
+  }) {
+    if (hasFailures) {
+      return DailySyncCompletenessState.unknownRetry;
+    }
+    if (mode == DailyKlineSyncMode.forceFull) {
+      return DailySyncCompletenessState.finalOverride;
+    }
+    return DailySyncCompletenessState.intradayPartial;
   }
 
   Future<List<Stock>> _resolveTargets({

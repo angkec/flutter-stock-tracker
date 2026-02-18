@@ -79,6 +79,8 @@ class MarketDataProvider extends ChangeNotifier {
   Map<String, List<KLine>> _dailyBarsCache = {};
   int _dailyBarsDiskCacheCount = 0;
   int _dailyBarsDiskCacheBytes = 0;
+  DailySyncCompletenessState _lastDailySyncCompletenessState =
+      DailySyncCompletenessState.unknownRetry;
 
   // 分时数据计数（不保留完整对象，避免 Android OOM）
   int _minuteDataCount = 0;
@@ -163,6 +165,10 @@ class MarketDataProvider extends ChangeNotifier {
   }
 
   String get dailyBarsCacheSize => _formatSize(_effectiveDailyBarsSize);
+  DailySyncCompletenessState get lastDailySyncCompletenessState =>
+      _lastDailySyncCompletenessState;
+  String get lastDailySyncCompletenessStateWire =>
+      _lastDailySyncCompletenessState.wireValue;
   String get minuteDataCacheSize => _formatSize(_minuteDataCount * 240 * 40);
   String? get industryDataCacheSize => _industryService.isLoaded
       ? _formatSize(_estimateIndustryDataSize())
@@ -749,6 +755,7 @@ class MarketDataProvider extends ChangeNotifier {
     final connectMs = stageStopwatch.elapsedMilliseconds;
 
     final stocks = _allData.map((item) => item.stock).toList(growable: false);
+    _lastDailySyncCompletenessState = DailySyncCompletenessState.unknownRetry;
 
     resetStageTimer();
     final syncResult = await _dailyKlineSyncService.sync(
@@ -764,6 +771,7 @@ class MarketDataProvider extends ChangeNotifier {
         onProgress?.call(stage, safeCurrent, safeTotal);
       },
     );
+    _lastDailySyncCompletenessState = syncResult.completenessState;
 
     if (syncResult.failureStockCodes.isNotEmpty) {
       throw StateError(

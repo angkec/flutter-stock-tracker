@@ -138,6 +138,7 @@ void main() {
 
       expect(result.successStockCodes, ['000001']);
       expect(result.failureStockCodes, ['300001']);
+      expect(result.completenessState, DailySyncCompletenessState.unknownRetry);
       expect(cacheStore.lastSaved.keys, ['000001']);
       expect(
         (await checkpointStore.loadPerStockSuccessAtMs())['000001'],
@@ -160,7 +161,7 @@ void main() {
       nowProvider: () => DateTime(2026, 2, 17, 10),
     );
 
-    await service.sync(
+    final result = await service.sync(
       mode: DailyKlineSyncMode.forceFull,
       stocks: [
         Stock(code: '600000', name: 'A', market: 1),
@@ -171,5 +172,43 @@ void main() {
 
     expect(fetcher.lastMode, DailyKlineSyncMode.forceFull);
     expect(fetcher.lastRequestedCodes, ['600000', '000001']);
+    expect(result.completenessState, DailySyncCompletenessState.finalOverride);
   });
+
+  test(
+    'incremental sync returns intraday_partial completeness for successful run',
+    () async {
+      final service = DailyKlineSyncService(
+        checkpointStore: _FakeCheckpointStore(),
+        cacheStore: _FakeCacheStore(),
+        fetcher:
+            ({
+              required List<Stock> stocks,
+              required int count,
+              required DailyKlineSyncMode mode,
+              void Function(int current, int total)? onProgress,
+            }) async {
+              return {
+                for (final stock in stocks)
+                  stock.code: [_bar(DateTime(2026, 2, 17))],
+              };
+            },
+        nowProvider: () => DateTime(2026, 2, 17, 10),
+      );
+
+      final result = await service.sync(
+        mode: DailyKlineSyncMode.incremental,
+        stocks: [
+          Stock(code: '600000', name: 'A', market: 1),
+          Stock(code: '000001', name: 'B', market: 0),
+        ],
+        targetBars: 260,
+      );
+
+      expect(
+        result.completenessState,
+        DailySyncCompletenessState.intradayPartial,
+      );
+    },
+  );
 }

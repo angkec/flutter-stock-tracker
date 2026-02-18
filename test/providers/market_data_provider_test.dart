@@ -246,6 +246,11 @@ class _FakeDailyKlineSyncService extends DailyKlineSyncService {
 
   int syncCallCount = 0;
   DailyKlineSyncMode? lastMode;
+  DailySyncCompletenessState completenessState =
+      DailySyncCompletenessState.intradayPartial;
+  List<String> successStockCodes = const <String>[];
+  List<String> failureStockCodes = const <String>[];
+  Map<String, String> failureReasons = const <String, String>{};
 
   @override
   Future<DailyKlineSyncResult> sync({
@@ -256,10 +261,11 @@ class _FakeDailyKlineSyncService extends DailyKlineSyncService {
   }) async {
     syncCallCount++;
     lastMode = mode;
-    return const DailyKlineSyncResult(
-      successStockCodes: <String>[],
-      failureStockCodes: <String>[],
-      failureReasons: <String, String>{},
+    return DailyKlineSyncResult(
+      successStockCodes: successStockCodes,
+      failureStockCodes: failureStockCodes,
+      failureReasons: failureReasons,
+      completenessState: completenessState,
     );
   }
 }
@@ -1184,6 +1190,46 @@ void main() {
     expect(error, contains('missing'));
     expect(readService.readCallCount, greaterThanOrEqualTo(1));
   });
+
+  test(
+    'daily sync should surface returned completeness state on provider',
+    () async {
+      final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+      final monitorData = StockMonitorData(
+        stock: stock,
+        ratio: 1.1,
+        changePercent: 0.3,
+      );
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode([monitorData.toJson()]),
+        'market_data_date': DateTime(2026, 2, 17).toIso8601String(),
+        'minute_data_date': DateTime(2026, 2, 17).toIso8601String(),
+        'minute_data_cache_v1': 1,
+      });
+
+      final pool = _ReconnectableFakePool(dailyBarsByCode: const {});
+      final syncService = _FakeDailyKlineSyncService()
+        ..completenessState = DailySyncCompletenessState.finalOverride;
+      final readService = _FakeDailyKlineReadService()
+        ..payloadByCode['600000'] = _buildDailyBars(260);
+
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: StockService(pool),
+        industryService: IndustryService(),
+        dailyKlineReadService: readService,
+        dailyKlineSyncService: syncService,
+      );
+
+      await provider.loadFromCache();
+      await provider.syncDailyBarsForceFull();
+
+      expect(
+        provider.lastDailySyncCompletenessState,
+        DailySyncCompletenessState.finalOverride,
+      );
+    },
+  );
 
   test(
     'refresh should not trigger daily sync unless explicit action is called',

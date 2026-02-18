@@ -1896,7 +1896,9 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
             'data_changed': true,
             'scope_count': provider.allData.length,
           });
-          audit.record(AuditEventType.completenessState, {'state': 'unknown'});
+          audit.record(AuditEventType.completenessState, {
+            'state': provider.lastDailySyncCompletenessStateWire,
+          });
           audit.stageCompleted(stageLabel);
         },
       );
