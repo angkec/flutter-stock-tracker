@@ -159,7 +159,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
         stockCodes: stockCodes,
         dataType: widget.dataType,
         dateRange: _buildRecomputeDateRange(),
-        forceRecompute: true,
+        forceRecompute: false,
         fetchBatchSize: _isWeekly ? _weeklyRecomputeFetchBatchSize : null,
         maxConcurrentPersistWrites: _isWeekly
             ? _weeklyRecomputePersistConcurrency
