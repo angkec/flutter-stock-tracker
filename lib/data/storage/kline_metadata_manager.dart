@@ -81,6 +81,9 @@ class KLineMetadataManager {
 
   final MarketDatabase _db;
   final KLineFileStorage _fileStorage;
+  final Map<String, List<DateTime>> _tradingDateRangeCache = {};
+  final Map<String, Future<List<DateTime>>> _tradingDateRangeInFlight = {};
+  int? _tradingDateCacheVersion;
 
   KLineMetadataManager({
     MarketDatabase? database,
@@ -221,10 +224,14 @@ class KLineMetadataManager {
         });
       }
     });
+
+    _invalidateTradingDateRangeCache();
   }
 
   Future<int> incrementDataVersion(String description) async {
-    return await _db.incrementVersion(description);
+    final version = await _db.incrementVersion(description);
+    _invalidateTradingDateRangeCache();
+    return version;
   }
 
   /// Get all metadata for a stock and data type
@@ -258,9 +265,12 @@ class KLineMetadataManager {
 
     final database = await _db.database;
 
-    for (var start = 0; start < stockCodes.length; start += _inClauseChunkSize) {
-      final end =
-          (start + _inClauseChunkSize).clamp(0, stockCodes.length);
+    for (
+      var start = 0;
+      start < stockCodes.length;
+      start += _inClauseChunkSize
+    ) {
+      final end = (start + _inClauseChunkSize).clamp(0, stockCodes.length);
       final chunk = stockCodes.sublist(start, end);
       if (chunk.isEmpty) {
         continue;
@@ -450,6 +460,10 @@ class KLineMetadataManager {
         debugPrint('Warning: Failed to delete file $filePath: $e');
       }
     }
+
+    if (metadataToDelete.isNotEmpty) {
+      _invalidateTradingDateRangeCache();
+    }
   }
 
   /// Get the current data version
@@ -476,13 +490,55 @@ class KLineMetadataManager {
   ///
   /// 某天只要有任意股票有日K数据，就认为是交易日
   Future<List<DateTime>> getTradingDates(DateRange range) async {
-    // Get all stock codes with daily data
+    final normalizedRange = _normalizeToDayRange(range);
+    final currentVersion = await getCurrentVersion();
+    _syncTradingDateCacheVersion(currentVersion);
+
+    final cacheKey = _buildTradingDateCacheKey(
+      startDay: DateTime(
+        normalizedRange.start.year,
+        normalizedRange.start.month,
+        normalizedRange.start.day,
+      ),
+      endDay: DateTime(
+        normalizedRange.end.year,
+        normalizedRange.end.month,
+        normalizedRange.end.day,
+      ),
+      dataVersion: currentVersion,
+    );
+
+    final cached = _tradingDateRangeCache[cacheKey];
+    if (cached != null) {
+      return List<DateTime>.from(cached);
+    }
+
+    final inFlight = _tradingDateRangeInFlight[cacheKey];
+    if (inFlight != null) {
+      return List<DateTime>.from(await inFlight);
+    }
+
+    final loadFuture = _computeTradingDates(normalizedRange);
+    _tradingDateRangeInFlight[cacheKey] = loadFuture;
+
+    try {
+      final computed = await loadFuture;
+      final materialized = List<DateTime>.unmodifiable(computed);
+      if (_tradingDateCacheVersion == currentVersion) {
+        _tradingDateRangeCache[cacheKey] = materialized;
+      }
+      return List<DateTime>.from(materialized);
+    } finally {
+      _tradingDateRangeInFlight.remove(cacheKey);
+    }
+  }
+
+  Future<List<DateTime>> _computeTradingDates(DateRange range) async {
     final stockCodes = await getAllStockCodes(dataType: KLineDataType.daily);
     if (stockCodes.isEmpty) return [];
 
     final tradingDates = <DateTime>{};
 
-    // Load actual K-line data and extract dates
     for (final stockCode in stockCodes) {
       final klines = await loadKlineData(
         stockCode: stockCode,
@@ -500,7 +556,49 @@ class KLineMetadataManager {
       }
     }
 
-    return tradingDates.toList()..sort();
+    final sorted = tradingDates.toList()..sort();
+    return sorted;
+  }
+
+  DateRange _normalizeToDayRange(DateRange range) {
+    final startDay = DateTime(
+      range.start.year,
+      range.start.month,
+      range.start.day,
+    );
+    final endDay = DateTime(
+      range.end.year,
+      range.end.month,
+      range.end.day,
+      23,
+      59,
+      59,
+      999,
+      999,
+    );
+    return DateRange(startDay, endDay);
+  }
+
+  String _buildTradingDateCacheKey({
+    required DateTime startDay,
+    required DateTime endDay,
+    required int dataVersion,
+  }) {
+    return '${startDay.millisecondsSinceEpoch}_'
+        '${endDay.millisecondsSinceEpoch}_$dataVersion';
+  }
+
+  void _syncTradingDateCacheVersion(int currentVersion) {
+    if (_tradingDateCacheVersion == currentVersion) {
+      return;
+    }
+    _invalidateTradingDateRangeCache(nextVersion: currentVersion);
+  }
+
+  void _invalidateTradingDateRangeCache({int? nextVersion}) {
+    _tradingDateRangeCache.clear();
+    _tradingDateRangeInFlight.clear();
+    _tradingDateCacheVersion = nextVersion;
   }
 
   /// 统计指定日期的K线数量

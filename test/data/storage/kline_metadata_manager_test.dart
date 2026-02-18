@@ -10,6 +10,31 @@ import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 
+class _CountingTradingDateMetadataManager extends KLineMetadataManager {
+  _CountingTradingDateMetadataManager({
+    required super.database,
+    required super.fileStorage,
+  });
+
+  int dailyLoadCalls = 0;
+
+  @override
+  Future<List<KLine>> loadKlineData({
+    required String stockCode,
+    required KLineDataType dataType,
+    required DateRange dateRange,
+  }) async {
+    if (dataType == KLineDataType.daily) {
+      dailyLoadCalls++;
+    }
+    return super.loadKlineData(
+      stockCode: stockCode,
+      dataType: dataType,
+      dateRange: dateRange,
+    );
+  }
+}
+
 void main() {
   late KLineMetadataManager manager;
   late MarketDatabase database;
@@ -675,6 +700,51 @@ void main() {
   });
 
   group('getTradingDates', () {
+    test(
+      'reuses cached trading dates for the same range and refreshes after version bump',
+      () async {
+        final countingManager = _CountingTradingDateMetadataManager(
+          database: database,
+          fileStorage: fileStorage,
+        );
+        final jan15 = DateTime(2026, 1, 15);
+        final jan16 = DateTime(2026, 1, 16);
+        final range = DateRange(jan15, jan16);
+
+        await countingManager.saveKlineData(
+          stockCode: '000001',
+          newBars: [_createKLine(jan15, 10.0)],
+          dataType: KLineDataType.daily,
+        );
+        await countingManager.saveKlineData(
+          stockCode: '000002',
+          newBars: [_createKLine(jan16, 11.0)],
+          dataType: KLineDataType.daily,
+        );
+
+        final first = await countingManager.getTradingDates(range);
+        final loadCallsAfterFirst = countingManager.dailyLoadCalls;
+
+        final second = await countingManager.getTradingDates(range);
+        expect(second, equals(first));
+        expect(
+          countingManager.dailyLoadCalls,
+          equals(loadCallsAfterFirst),
+          reason:
+              'same range should reuse in-process cached/materialized result',
+        );
+
+        await countingManager.incrementDataVersion('test bump');
+        await countingManager.getTradingDates(range);
+
+        expect(
+          countingManager.dailyLoadCalls,
+          greaterThan(loadCallsAfterFirst),
+          reason: 'cache should be invalidated when data version changes',
+        );
+      },
+    );
+
     test('returns unique dates from daily kline data', () async {
       // Save daily data for two different days
       final jan15 = DateTime(2026, 1, 15);
