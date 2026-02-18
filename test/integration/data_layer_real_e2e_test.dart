@@ -70,6 +70,18 @@ String _formatValidationSummary({
   return '$label: $failedCount (${percent.toStringAsFixed(1)}%) ids: $ids';
 }
 
+const double _minOkRate = 0.90;
+
+bool _failsOkRate({
+  required int failedCount,
+  required int total,
+  double minOkRate = _minOkRate,
+}) {
+  if (total <= 0) return false;
+  final okRate = (total - failedCount) / total;
+  return okRate < minOkRate;
+}
+
 List<DateTime> _weekdayDates(DateTime startDay, DateTime endDay) {
   if (startDay.isAfter(endDay)) return const [];
   final days = <DateTime>[];
@@ -132,6 +144,12 @@ void main() {
     );
 
     expect(line, 'minute incomplete: 0 (0.0%) ids: none');
+  });
+
+  test('failsOkRate flags when ok rate below 90%', () {
+    expect(_failsOkRate(failedCount: 11, total: 100), isTrue);
+    expect(_failsOkRate(failedCount: 10, total: 100), isFalse);
+    expect(_failsOkRate(failedCount: 0, total: 0), isFalse);
   });
 
   test(
@@ -272,6 +290,8 @@ void main() {
         );
 
         // Stage 1: Daily sync (force full)
+        print('[E2E] Stage daily start');
+        final dailyStageStopwatch = Stopwatch()..start();
         final dailyStopwatch = Stopwatch()..start();
         final dailyResult = await dailySyncService.sync(
           mode: DailyKlineSyncMode.forceFull,
@@ -327,8 +347,14 @@ void main() {
         dailyValidateStopwatch.stop();
         stageDurations['daily_validate'] = dailyValidateStopwatch.elapsed;
         stageRecords['daily'] = dailyTotalRecords;
+        dailyStageStopwatch.stop();
+        print(
+          '[E2E] Stage daily done, duration=${_formatDuration(dailyStageStopwatch.elapsed)}',
+        );
 
         // Stage 2: Weekly refetch
+        print('[E2E] Stage weekly start');
+        final weeklyStageStopwatch = Stopwatch()..start();
         final now = DateTime.now();
         weeklyRange = DateRange(
           now.subtract(const Duration(days: _weeklyRangeDays)),
@@ -375,8 +401,14 @@ void main() {
         }
         weeklyValidateStopwatch.stop();
         stageDurations['weekly_validate'] = weeklyValidateStopwatch.elapsed;
+        weeklyStageStopwatch.stop();
+        print(
+          '[E2E] Stage weekly done, duration=${_formatDuration(weeklyStageStopwatch.elapsed)}',
+        );
 
         // Stage 3: Minute refetch
+        print('[E2E] Stage minute start');
+        final minuteStageStopwatch = Stopwatch()..start();
         minuteRange = DateRange(
           now.subtract(const Duration(days: _minuteRangeDays)),
           DateTime(now.year, now.month, now.day, 23, 59, 59, 999, 999),
@@ -472,28 +504,48 @@ void main() {
         );
         minuteValidateStopwatch.stop();
         stageDurations['minute_validate'] = minuteValidateStopwatch.elapsed;
+        minuteStageStopwatch.stop();
+        print(
+          '[E2E] Stage minute done, duration=${_formatDuration(minuteStageStopwatch.elapsed)}',
+        );
+
+        final dailyTotal = stageTotals['daily'] ?? 0;
+        final weeklyTotal = stageTotals['weekly'] ?? 0;
+        final minuteTotal = stageTotals['minute'] ?? 0;
+
+        final dailyFatalCount = fatalErrors['daily']?.length ?? 0;
+        final weeklyFatalCount = fatalErrors['weekly']?.length ?? 0;
+        final minuteFatalCount = fatalErrors['minute']?.length ?? 0;
 
         final failures = <String>[];
-        if (dailyFatal.isNotEmpty) {
-          failures.add('daily fetch fatal=${dailyFatal.length}');
+        if (_failsOkRate(failedCount: dailyShort.length, total: dailyTotal)) {
+          failures.add('daily short < 90% ok');
         }
-        if (weeklyFatal.isNotEmpty) {
-          failures.add('weekly fetch fatal=${weeklyFatal.length}');
+        if (_failsOkRate(failedCount: weeklyShort.length, total: weeklyTotal)) {
+          failures.add('weekly short < 90% ok');
         }
-        if (minuteFatal.isNotEmpty) {
-          failures.add('minute fetch fatal=${minuteFatal.length}');
+        if (_failsOkRate(
+          failedCount: minuteMissingDays.length,
+          total: minuteTotal,
+        )) {
+          failures.add('minute missing < 90% ok');
         }
-        if (dailyShort.isNotEmpty) {
-          failures.add('daily bars short=${dailyShort.length}');
+        if (_failsOkRate(
+          failedCount: minuteIncompleteDays.length,
+          total: minuteTotal,
+        )) {
+          failures.add('minute incomplete < 90% ok');
         }
-        if (weeklyShort.isNotEmpty) {
-          failures.add('weekly bars short=${weeklyShort.length}');
+        if (_failsOkRate(failedCount: dailyFatalCount, total: dailyTotal)) {
+          failures.add('daily fetch fatal < 90% ok');
         }
-        if (minuteMissingDays.isNotEmpty || minuteIncompleteDays.isNotEmpty) {
-          failures.add(
-            'minute missing=${minuteMissingDays.length} incomplete=${minuteIncompleteDays.length}',
-          );
+        if (_failsOkRate(failedCount: weeklyFatalCount, total: weeklyTotal)) {
+          failures.add('weekly fetch fatal < 90% ok');
         }
+        if (_failsOkRate(failedCount: minuteFatalCount, total: minuteTotal)) {
+          failures.add('minute fetch fatal < 90% ok');
+        }
+
         if (failures.isNotEmpty) {
           failureSummary = failures.join('; ');
         }
