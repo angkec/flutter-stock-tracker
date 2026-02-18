@@ -1,9 +1,37 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stock_rtwatcher/data/storage/atomic_file_writer.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+
+class _RenameFailure implements Exception {
+  const _RenameFailure();
+}
+
+class _RenameFailingAtomicFileWriter extends AtomicFileWriter {
+  const _RenameFailingAtomicFileWriter();
+
+  @override
+  Future<void> writeAtomic({
+    required File targetFile,
+    required List<int> content,
+    AtomicWritePreRenameHook? onBeforeRenameForTest,
+    AtomicRenameHook? renameForTest,
+    AtomicTempTokenHook? tempTokenForTest,
+  }) {
+    return super.writeAtomic(
+      targetFile: targetFile,
+      content: content,
+      onBeforeRenameForTest: onBeforeRenameForTest,
+      tempTokenForTest: tempTokenForTest,
+      renameForTest: (_, __) async {
+        throw const _RenameFailure();
+      },
+    );
+  }
+}
 
 List<KLine> _buildDailyBars(DateTime start, int count) {
   return List.generate(count, (index) {
@@ -109,6 +137,32 @@ void main() {
 
       expect(stats.stockCount, 2);
       expect(stats.totalBytes, greaterThan(0));
+    },
+  );
+
+  test(
+    'saveAll preserves existing file when atomic writer rename fails',
+    () async {
+      final cacheFile = File(
+        '${tempDir.path}/daily_cache/600000_daily_cache.json',
+      );
+      await cacheFile.parent.create(recursive: true);
+      const originalContent = '[{"legacy":true}]';
+      await cacheFile.writeAsString(originalContent, flush: true);
+
+      final failingStore = DailyKlineCacheStore(
+        storage: storage,
+        atomicWriter: const _RenameFailingAtomicFileWriter(),
+      );
+
+      await expectLater(
+        failingStore.saveAll({
+          '600000': _buildDailyBars(DateTime(2026, 1, 1), 5),
+        }),
+        throwsA(isA<_RenameFailure>()),
+      );
+
+      expect(await cacheFile.readAsString(), originalContent);
     },
   );
 }

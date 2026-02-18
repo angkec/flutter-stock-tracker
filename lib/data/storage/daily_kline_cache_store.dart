@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/storage/atomic_file_writer.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 
@@ -19,12 +20,15 @@ class DailyKlineCacheStats {
 class DailyKlineCacheStore {
   DailyKlineCacheStore({
     KLineFileStorage? storage,
+    AtomicFileWriter? atomicWriter,
     this.defaultTargetBars = 260,
     this.defaultLookbackMonths = 18,
     this.defaultMaxConcurrentWrites = 8,
-  }) : _storage = storage ?? KLineFileStorage();
+  }) : _storage = storage ?? KLineFileStorage(),
+       _atomicWriter = atomicWriter ?? const AtomicFileWriter();
 
   final KLineFileStorage _storage;
+  final AtomicFileWriter _atomicWriter;
   final int defaultTargetBars;
   final int defaultLookbackMonths;
   final int defaultMaxConcurrentWrites;
@@ -96,19 +100,13 @@ class DailyKlineCacheStore {
     }
 
     final file = File(await _cacheFilePath(stockCode));
-    final tempFile = File(
-      '${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
-    );
-
     final payload = jsonEncode(
       deduped.map((bar) => bar.toJson()).toList(growable: false),
     );
-    await tempFile.writeAsString(payload, flush: true);
-
-    if (await file.exists()) {
-      await file.delete();
-    }
-    await tempFile.rename(file.path);
+    await _atomicWriter.writeAtomic(
+      targetFile: file,
+      content: utf8.encode(payload),
+    );
   }
 
   Future<Map<String, List<KLine>>> loadForStocks(

@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:stock_rtwatcher/data/storage/atomic_file_writer.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 
 /// Persists minute snapshot payload as a JSON file to avoid large
@@ -7,11 +9,14 @@ import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 class MarketSnapshotStore {
   MarketSnapshotStore({
     KLineFileStorage? storage,
+    AtomicFileWriter? atomicWriter,
     this.subDirectoryName = 'market_snapshot',
     this.fileName = 'minute_market_snapshot_v1.json',
-  }) : _storage = storage ?? KLineFileStorage();
+  }) : _storage = storage ?? KLineFileStorage(),
+       _atomicWriter = atomicWriter ?? const AtomicFileWriter();
 
   final KLineFileStorage _storage;
+  final AtomicFileWriter _atomicWriter;
   final String subDirectoryName;
   final String fileName;
 
@@ -25,15 +30,10 @@ class MarketSnapshotStore {
     }
 
     final file = await _resolveFile();
-    final tempFile = File(
-      '${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
+    await _atomicWriter.writeAtomic(
+      targetFile: file,
+      content: utf8.encode(payload),
     );
-    await tempFile.writeAsString(payload, flush: true);
-
-    if (await file.exists()) {
-      await file.delete();
-    }
-    await tempFile.rename(file.path);
   }
 
   Future<String?> loadJson() async {

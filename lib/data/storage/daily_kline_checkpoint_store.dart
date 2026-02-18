@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:stock_rtwatcher/data/storage/atomic_file_writer.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 
 enum DailyKlineSyncMode { incremental, forceFull }
@@ -19,10 +20,14 @@ class DailyKlineGlobalCheckpoint {
 }
 
 class DailyKlineCheckpointStore {
-  DailyKlineCheckpointStore({KLineFileStorage? storage})
-    : _storage = storage ?? KLineFileStorage();
+  DailyKlineCheckpointStore({
+    KLineFileStorage? storage,
+    AtomicFileWriter? atomicWriter,
+  }) : _storage = storage ?? KLineFileStorage(),
+       _atomicWriter = atomicWriter ?? const AtomicFileWriter();
 
   final KLineFileStorage _storage;
+  final AtomicFileWriter _atomicWriter;
 
   static const String _lastDateKey = 'daily_kline_checkpoint_last_success_date';
   static const String _lastModeKey = 'daily_kline_checkpoint_last_mode';
@@ -72,14 +77,10 @@ class DailyKlineCheckpointStore {
 
   Future<void> savePerStockSuccessAtMs(Map<String, int> value) async {
     final file = await _resolvePerStockCheckpointFile();
-    final tempFile = File(
-      '${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
+    await _atomicWriter.writeAtomic(
+      targetFile: file,
+      content: utf8.encode(jsonEncode(value)),
     );
-    await tempFile.writeAsString(jsonEncode(value), flush: true);
-    if (await file.exists()) {
-      await file.delete();
-    }
-    await tempFile.rename(file.path);
 
     final prefs = await SharedPreferences.getInstance();
     // Drop legacy SharedPreferences payload to avoid large SP JSON writes.

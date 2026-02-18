@@ -2,10 +2,38 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/storage/atomic_file_writer.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
 import 'package:stock_rtwatcher/models/macd_config.dart';
 import 'package:stock_rtwatcher/models/macd_point.dart';
+
+class _RenameFailure implements Exception {
+  const _RenameFailure();
+}
+
+class _RenameFailingAtomicFileWriter extends AtomicFileWriter {
+  const _RenameFailingAtomicFileWriter();
+
+  @override
+  Future<void> writeAtomic({
+    required File targetFile,
+    required List<int> content,
+    AtomicWritePreRenameHook? onBeforeRenameForTest,
+    AtomicRenameHook? renameForTest,
+    AtomicTempTokenHook? tempTokenForTest,
+  }) {
+    return super.writeAtomic(
+      targetFile: targetFile,
+      content: content,
+      onBeforeRenameForTest: onBeforeRenameForTest,
+      tempTokenForTest: tempTokenForTest,
+      renameForTest: (_, __) async {
+        throw const _RenameFailure();
+      },
+    );
+  }
+}
 
 List<MacdPoint> _buildPoints(DateTime start, int count) {
   return List.generate(count, (index) {
@@ -177,6 +205,36 @@ void main() {
       expect(weeklyCodes, isNot(contains('600002')));
       expect(dailyCodes, contains('600002'));
       expect(dailyCodes, isNot(contains('600000')));
+    },
+  );
+
+  test(
+    'saveSeries preserves existing file when atomic writer rename fails',
+    () async {
+      final file = File(
+        '${tempDir.path}/macd_cache/600000_daily_macd_cache.json',
+      );
+      await file.parent.create(recursive: true);
+      const originalContent = '{"stockCode":"600000","legacy":true}';
+      await file.writeAsString(originalContent, flush: true);
+
+      final failingStore = MacdCacheStore(
+        storage: storage,
+        atomicWriter: const _RenameFailingAtomicFileWriter(),
+      );
+
+      await expectLater(
+        failingStore.saveSeries(
+          stockCode: '600000',
+          dataType: KLineDataType.daily,
+          config: MacdConfig.defaults,
+          sourceSignature: 'sig',
+          points: _buildPoints(DateTime(2026, 1, 1), 5),
+        ),
+        throwsA(isA<_RenameFailure>()),
+      );
+
+      expect(await file.readAsString(), originalContent);
     },
   );
 }

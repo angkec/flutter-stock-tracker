@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/storage/atomic_file_writer.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/models/macd_config.dart';
 import 'package:stock_rtwatcher/models/macd_point.dart';
@@ -57,10 +58,13 @@ class MacdCacheSeries {
 class MacdCacheStore {
   MacdCacheStore({
     KLineFileStorage? storage,
+    AtomicFileWriter? atomicWriter,
     this.defaultMaxConcurrentWrites = 6,
-  }) : _storage = storage ?? KLineFileStorage();
+  }) : _storage = storage ?? KLineFileStorage(),
+       _atomicWriter = atomicWriter ?? const AtomicFileWriter();
 
   final KLineFileStorage _storage;
+  final AtomicFileWriter _atomicWriter;
   final int defaultMaxConcurrentWrites;
   bool _initialized = false;
   String? _cacheDirectoryPath;
@@ -196,15 +200,10 @@ class MacdCacheStore {
 
   Future<void> _saveSingle(MacdCacheSeries series) async {
     final file = File(await _cacheFilePath(series.stockCode, series.dataType));
-    final tmpFile = File(
-      '${file.path}.${DateTime.now().microsecondsSinceEpoch}.tmp',
+    await _atomicWriter.writeAtomic(
+      targetFile: file,
+      content: utf8.encode(jsonEncode(series.toJson())),
     );
-
-    await tmpFile.writeAsString(jsonEncode(series.toJson()), flush: true);
-    if (await file.exists()) {
-      await file.delete();
-    }
-    await tmpFile.rename(file.path);
   }
 
   Future<String> _cacheFilePath(
