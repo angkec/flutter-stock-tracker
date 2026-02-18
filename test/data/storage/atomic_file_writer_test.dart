@@ -4,10 +4,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/data/storage/atomic_file_writer.dart';
 
-class _ForcedFailure implements Exception {
+class ForcedFailure implements Exception {
   final String message;
 
-  const _ForcedFailure(this.message);
+  const ForcedFailure(this.message);
 
   @override
   String toString() => 'ForcedFailure: $message';
@@ -18,7 +18,7 @@ void main() {
   late Directory testDir;
 
   setUp(() async {
-    writer = AtomicFileWriter();
+    writer = const AtomicFileWriter();
     testDir = await Directory.systemTemp.createTemp('atomic_file_writer_test_');
   });
 
@@ -28,19 +28,22 @@ void main() {
     }
   });
 
-  File _targetFile() => File('${testDir.path}/state.json');
+  File targetFileForTest() => File('${testDir.path}/state.json');
 
-  Future<void> _writeInitialContent(File file) async {
+  Future<void> writeInitialContent(File file) async {
     await file.parent.create(recursive: true);
     await file.writeAsString('original', flush: true);
   }
 
-  Future<List<FileSystemEntity>> _tmpArtifacts() async {
-    return testDir.list().where((entity) => entity.path.endsWith('.tmp')).toList();
+  Future<List<FileSystemEntity>> tmpArtifacts() async {
+    return testDir
+        .list()
+        .where((entity) => entity.path.endsWith('.tmp'))
+        .toList();
   }
 
   test('writeAtomic writes new content successfully', () async {
-    final file = _targetFile();
+    final file = targetFileForTest();
 
     await writer.writeAtomic(targetFile: file, content: utf8.encode('next'));
 
@@ -49,40 +52,63 @@ void main() {
   });
 
   test('existing file remains unchanged if write fails before rename', () async {
-    final file = _targetFile();
-    await _writeInitialContent(file);
+    final file = targetFileForTest();
+    await writeInitialContent(file);
 
     await expectLater(
       writer.writeAtomic(
         targetFile: file,
         content: utf8.encode('updated'),
         onBeforeRenameForTest: (_) async {
-          throw const _ForcedFailure('before rename');
+          throw const ForcedFailure('before rename');
         },
       ),
-      throwsA(isA<_ForcedFailure>()),
+      throwsA(isA<ForcedFailure>()),
     );
 
     expect(await file.readAsString(), 'original');
-    expect(await _tmpArtifacts(), isEmpty);
+    expect(await tmpArtifacts(), isEmpty);
   });
 
   test('existing file remains unchanged if rename throws', () async {
-    final file = _targetFile();
-    await _writeInitialContent(file);
+    final file = targetFileForTest();
+    await writeInitialContent(file);
 
     await expectLater(
       writer.writeAtomic(
         targetFile: file,
         content: utf8.encode('updated'),
         renameForTest: (_, __) async {
-          throw const _ForcedFailure('rename');
+          throw const ForcedFailure('rename');
         },
       ),
-      throwsA(isA<_ForcedFailure>()),
+      throwsA(isA<ForcedFailure>()),
     );
 
     expect(await file.readAsString(), 'original');
-    expect(await _tmpArtifacts(), isEmpty);
+    expect(await tmpArtifacts(), isEmpty);
+  });
+
+  test('repeated writes do not leave tmp artifacts', () async {
+    final file = targetFileForTest();
+
+    await Future.wait(
+      List.generate(
+        50,
+        (index) => writer.writeAtomic(
+          targetFile: file,
+          content: utf8.encode('value-$index'),
+          tempTokenForTest: (attempt) {
+            if (attempt == 0) {
+              return 'forced-collision';
+            }
+            return 'forced-collision-$index-$attempt';
+          },
+        ),
+      ),
+    );
+
+    expect(await file.exists(), isTrue);
+    expect(await tmpArtifacts(), isEmpty);
   });
 }
