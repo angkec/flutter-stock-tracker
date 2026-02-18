@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
+import 'package:stock_rtwatcher/services/watchlist_service.dart';
 
 /// 应该显示暂无自选股提示
 Future<void> shouldShowEmptyWatchlistHint(WidgetTester tester) async {
@@ -42,17 +43,19 @@ Future<void> shouldShowAlreadyExistsSnackbar(WidgetTester tester) async {
 
 /// 自选列表包含 {code}
 Future<void> watchlistContains(WidgetTester tester, String code) async {
-  // 通过 SharedPreferences mock 直接设置
-  final prefs = await SharedPreferences.getInstance();
-  final current = prefs.getStringList('watchlist') ?? [];
-  if (!current.contains(code)) {
-    current.add(code);
-    await prefs.setStringList('watchlist', current);
+  final context = tester.element(find.byType(MaterialApp).first);
+  final service = Provider.of<WatchlistService>(context, listen: false);
+  if (!service.contains(code)) {
+    await service.addStock(code);
   }
+  await tester.pumpAndSettle();
 }
 
 /// 自选列表应该包含该股票
-Future<void> watchlistShouldContainStock(WidgetTester tester, String code) async {
+Future<void> watchlistShouldContainStock(
+  WidgetTester tester,
+  String code,
+) async {
   // 验证 UI 中显示了该股票代码
   // 注意：可能需要等待数据加载
   await tester.pumpAndSettle(const Duration(seconds: 1));
@@ -60,7 +63,10 @@ Future<void> watchlistShouldContainStock(WidgetTester tester, String code) async
 }
 
 /// 自选列表不应包含该股票
-Future<void> watchlistShouldNotContainStock(WidgetTester tester, String code) async {
+Future<void> watchlistShouldNotContainStock(
+  WidgetTester tester,
+  String code,
+) async {
   await tester.pumpAndSettle();
   expect(find.text(code), findsNothing);
 }

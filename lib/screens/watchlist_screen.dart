@@ -64,34 +64,34 @@ class WatchlistScreenState extends State<WatchlistScreen>
 
     final watchlistService = context.read<WatchlistService>();
     if (!WatchlistService.isValidCode(code)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('无效的股票代码')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('无效的股票代码')));
       return;
     }
 
     if (watchlistService.contains(code)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('该股票已在自选列表中')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('该股票已在自选列表中')));
       return;
     }
 
     watchlistService.addStock(code);
     _codeController.clear();
     _syncWatchlistCodes();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已添加 $code')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已添加 $code')));
   }
 
   void _removeStock(String code) {
     final watchlistService = context.read<WatchlistService>();
     watchlistService.removeStock(code);
     _syncWatchlistCodes();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已移除 $code')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已移除 $code')));
   }
 
   void _showAIAnalysis() {
@@ -105,9 +105,9 @@ class WatchlistScreenState extends State<WatchlistScreen>
         .toList();
 
     if (stocks.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先添加自选股')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先添加自选股')));
       return;
     }
 
@@ -125,9 +125,7 @@ class WatchlistScreenState extends State<WatchlistScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
-      ),
+      builder: (context) => const Center(child: CircularProgressIndicator()),
     );
 
     try {
@@ -140,9 +138,9 @@ class WatchlistScreenState extends State<WatchlistScreen>
       Navigator.of(context).pop();
 
       if (recognizedCodes.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('未识别到股票代码')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('未识别到股票代码')));
         return;
       }
 
@@ -167,9 +165,9 @@ class WatchlistScreenState extends State<WatchlistScreen>
       // Dismiss loading indicator if still showing
       if (mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('识别失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('识别失败: $e')));
       }
     }
   }
@@ -190,10 +188,7 @@ class WatchlistScreenState extends State<WatchlistScreen>
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [
-                _buildWatchlistTab(),
-                _buildHoldingsTab(),
-              ],
+              children: [_buildWatchlistTab(), _buildHoldingsTab()],
             ),
           ),
         ],
@@ -227,8 +222,10 @@ class WatchlistScreenState extends State<WatchlistScreen>
                   decoration: const InputDecoration(
                     hintText: '输入股票代码',
                     isDense: true,
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     border: OutlineInputBorder(),
                   ),
                   keyboardType: TextInputType.number,
@@ -240,10 +237,7 @@ class WatchlistScreenState extends State<WatchlistScreen>
                 ),
               ),
               const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _addStock,
-                child: const Text('添加'),
-              ),
+              ElevatedButton(onPressed: _addStock, child: const Text('添加')),
               const SizedBox(width: 8),
               IconButton(
                 icon: const Icon(Icons.auto_awesome),
@@ -343,35 +337,44 @@ class WatchlistScreenState extends State<WatchlistScreen>
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 16),
-            Text(
-              '暂无自选股',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('暂无自选股', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            Text(
-              '在上方输入股票代码添加',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            Text('在上方输入股票代码添加', style: Theme.of(context).textTheme.bodySmall),
           ],
         ),
       );
     } else {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.refresh,
-              size: 64,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+      return Column(
+        children: [
+          const SizedBox(height: 24),
+          Icon(
+            Icons.refresh,
+            size: 48,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(height: 8),
+          Text('点击刷新按钮获取数据', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text('长按下方股票可从自选移除', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 12),
+          Expanded(
+            child: ListView.separated(
+              itemCount: watchlistService.watchlist.length,
+              separatorBuilder: (_, __) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final code = watchlistService.watchlist[index];
+                return ListTile(
+                  title: Text(
+                    code,
+                    style: const TextStyle(fontFamily: 'monospace'),
+                  ),
+                  trailing: const Icon(Icons.delete_outline),
+                  onLongPress: () => _removeStock(code),
+                );
+              },
             ),
-            const SizedBox(height: 16),
-            Text(
-              '点击刷新按钮获取数据',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-          ],
-        ),
+          ),
+        ],
       );
     }
   }
@@ -387,15 +390,9 @@ class WatchlistScreenState extends State<WatchlistScreen>
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
           const SizedBox(height: 16),
-          Text(
-            '暂无持仓',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text('暂无持仓', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          Text(
-            '点击上方按钮从截图导入持仓',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
+          Text('点击上方按钮从截图导入持仓', style: Theme.of(context).textTheme.bodySmall),
         ],
       ),
     );

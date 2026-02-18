@@ -49,7 +49,7 @@ void main() {
       // And the watchlist is cleared
       await theWatchlistIsCleared(tester);
       // When I enter an invalid stock code
-      await iEnterStockCode(tester, 'invalid');
+      await iEnterStockCode(tester, '123456');
       // And I tap the add button
       await iTapAddButton(tester);
       // Then I should see the invalid code snackbar
@@ -61,11 +61,9 @@ void main() {
       await theAppIsRunning(tester);
       // And the watchlist is cleared
       await theWatchlistIsCleared(tester);
-      // When I enter a stock code
-      await iEnterStockCode(tester, '600519');
-      // And I tap the add button
-      await iTapAddButton(tester);
-      // And I enter the same stock code again
+      // And the watchlist contains a stock
+      await watchlistContains(tester, '600519');
+      // When I enter the same stock code
       await iEnterStockCode(tester, '600519');
       // And I tap the add button
       await iTapAddButton(tester);

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:stock_rtwatcher/main.dart';
+import 'package:stock_rtwatcher/services/watchlist_service.dart';
 
 /// 应用已启动
 Future<void> theAppIsRunning(WidgetTester tester) async {
@@ -14,8 +16,13 @@ Future<void> theAppIsRunning(WidgetTester tester) async {
 
 /// 自选股列表已清空
 Future<void> theWatchlistIsCleared(WidgetTester tester) async {
-  SharedPreferences.setMockInitialValues({'watchlist': <String>[]});
-  // 不需要重启，因为在 theAppIsRunning 中会加载
+  final context = tester.element(find.byType(MaterialApp).first);
+  final service = Provider.of<WatchlistService>(context, listen: false);
+  final codes = List<String>.from(service.watchlist);
+  for (final code in codes) {
+    await service.removeStock(code);
+  }
+  await tester.pumpAndSettle();
 }
 
 /// 我重启应用

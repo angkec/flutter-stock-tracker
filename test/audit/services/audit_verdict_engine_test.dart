@@ -27,6 +27,27 @@ void main() {
     expect(verdict.reasonCodes, contains('unknown_state'));
   });
 
+  test('fails on unknown_retry completeness state', () {
+    final verdict = engine.evaluate(
+      runId: 'run-unknown-retry',
+      operation: AuditOperationType.dailyForceRefetch,
+      startedAt: DateTime(2026, 2, 16, 9),
+      completedAt: DateTime(2026, 2, 16, 9, 0, 3),
+      events: [
+        AuditEvent(
+          ts: DateTime(2026, 2, 16, 9, 0, 1),
+          runId: 'run-unknown-retry',
+          operation: AuditOperationType.dailyForceRefetch,
+          eventType: AuditEventType.completenessState,
+          payload: const {'state': 'unknown_retry'},
+        ),
+      ],
+    );
+
+    expect(verdict.verdict.name, 'fail');
+    expect(verdict.reasonCodes, contains('unknown_state'));
+  });
+
   test('does not fail on high latency alone', () {
     final verdict = engine.evaluate(
       runId: 'run-latency',

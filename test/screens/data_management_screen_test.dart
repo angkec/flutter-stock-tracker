@@ -318,6 +318,7 @@ class _FakeMacdIndicatorService extends MacdIndicatorService {
   int prewarmFromRepositoryCount = 0;
   final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
   final List<bool> prewarmForceRecomputeValues = <bool>[];
+  final List<bool> prewarmIgnoreSnapshotValues = <bool>[];
   final List<List<String>> prewarmStockCodeBatches = <List<String>>[];
   final List<int?> prewarmFetchBatchSizes = <int?>[];
   final List<int?> prewarmPersistConcurrencyValues = <int?>[];
@@ -338,6 +339,7 @@ class _FakeMacdIndicatorService extends MacdIndicatorService {
     prewarmFromRepositoryCount++;
     prewarmDataTypes.add(dataType);
     prewarmForceRecomputeValues.add(forceRecompute);
+    prewarmIgnoreSnapshotValues.add(ignoreSnapshot);
     prewarmStockCodeBatches.add(List<String>.from(stockCodes, growable: false));
     prewarmFetchBatchSizes.add(fetchBatchSize);
     prewarmPersistConcurrencyValues.add(maxConcurrentPersistWrites);
@@ -1797,7 +1799,8 @@ void main() {
     await tester.tap(dailyRecomputeButton, warnIfMissed: false);
     await tester.pumpAndSettle();
     expect(macdService.prewarmDataTypes, contains(KLineDataType.daily));
-    expect(macdService.prewarmForceRecomputeValues, <bool>[true]);
+    expect(macdService.prewarmForceRecomputeValues, <bool>[false]);
+    expect(macdService.prewarmIgnoreSnapshotValues, <bool>[true]);
 
     provider.dispose();
     klineService.dispose();
@@ -1858,7 +1861,8 @@ void main() {
     expect(find.textContaining('预计剩余'), findsOneWidget);
     await tester.pumpAndSettle();
     expect(macdService.prewarmDataTypes, contains(KLineDataType.weekly));
-    expect(macdService.prewarmForceRecomputeValues, contains(true));
+    expect(macdService.prewarmForceRecomputeValues, contains(false));
+    expect(macdService.prewarmIgnoreSnapshotValues, contains(true));
 
     provider.dispose();
     klineService.dispose();

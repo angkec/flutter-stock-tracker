@@ -63,19 +63,27 @@ DailyKlineCacheStore _buildStorageForPath(String basePath) {
 }
 
 List<KLine> _buildDailyBars(int n) {
-  final start = DateTime(2026, 1, 1);
-  return List.generate(n, (index) {
-    final dt = start.add(Duration(days: index));
-    return KLine(
-      datetime: dt,
-      open: 10,
-      close: 10.2,
-      high: 10.3,
-      low: 9.9,
-      volume: 1000.0 + index,
-      amount: 10000.0 + index,
-    );
-  });
+  final bars = <KLine>[];
+  final anchor = DateTime(2026, 2, 18);
+  var cursor = anchor.subtract(Duration(days: n * 2));
+  while (bars.length < n) {
+    if (cursor.weekday <= DateTime.friday) {
+      final index = bars.length;
+      bars.add(
+        KLine(
+          datetime: cursor,
+          open: 10,
+          close: 10.2,
+          high: 10.3,
+          low: 9.9,
+          volume: 1000.0 + index,
+          amount: 10000.0 + index,
+        ),
+      );
+    }
+    cursor = cursor.add(const Duration(days: 1));
+  }
+  return bars;
 }
 
 void main() {

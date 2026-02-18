@@ -49,7 +49,7 @@ class AuditVerdictEngine {
           break;
         case AuditEventType.completenessState:
           final state = event.payload['state']?.toString();
-          if (state == 'unknown') {
+          if (state == 'unknown' || state == 'unknown_retry') {
             unknownStateCount += 1;
             reasonCodes.add('unknown_state');
           }
