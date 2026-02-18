@@ -57,6 +57,19 @@ String _formatTopCounts(Map<String, int> values, {int limit = 12}) {
   return top.join(', ');
 }
 
+String _formatValidationSummary({
+  required String label,
+  required int failedCount,
+  required int stageTotal,
+  required List<String> order,
+  int sampleLimit = 10,
+}) {
+  final percent =
+      stageTotal <= 0 ? 0.0 : (failedCount * 100 / stageTotal.toDouble());
+  final ids = order.isEmpty ? 'none' : order.take(sampleLimit).join(', ');
+  return '$label: $failedCount (${percent.toStringAsFixed(1)}%) ids: $ids';
+}
+
 List<DateTime> _weekdayDates(DateTime startDay, DateTime endDay) {
   if (startDay.isAfter(endDay)) return const [];
   final days = <DateTime>[];
@@ -77,6 +90,50 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
+  test('formatValidationSummary returns percent and first-seen ids', () {
+    final order = <String>[
+      '000001',
+      '000002',
+      '000003',
+      '000004',
+      '000005',
+      '000006',
+      '000007',
+      '000008',
+      '000009',
+      '000010',
+      '000011',
+      '000012',
+    ];
+
+    final line = _formatValidationSummary(
+      label: 'daily short',
+      failedCount: 12,
+      stageTotal: 120,
+      order: order,
+      sampleLimit: 10,
+    );
+
+    expect(
+      line,
+      'daily short: 12 (10.0%) ids: '
+      '000001, 000002, 000003, 000004, 000005, '
+      '000006, 000007, 000008, 000009, 000010',
+    );
+  });
+
+  test('formatValidationSummary returns none when empty', () {
+    final line = _formatValidationSummary(
+      label: 'minute incomplete',
+      failedCount: 0,
+      stageTotal: 2500,
+      order: const <String>[],
+      sampleLimit: 10,
+    );
+
+    expect(line, 'minute incomplete: 0 (0.0%) ids: none');
+  });
+
   test(
     'data layer real e2e (full stock, real network)',
     () async {
@@ -96,6 +153,11 @@ void main() {
       final weeklyShort = <String, int>{};
       final minuteMissingDays = <String, int>{};
       final minuteIncompleteDays = <String, int>{};
+
+      final dailyShortOrder = <String>[];
+      final weeklyShortOrder = <String>[];
+      final minuteMissingOrder = <String>[];
+      final minuteIncompleteOrder = <String>[];
 
       final minuteTradingDates = <DateTime>{};
 
@@ -248,7 +310,10 @@ void main() {
           dailyTotalRecords += bars.length;
 
           if (bars.length < _dailyTargetBars) {
-            dailyShort[stockCode] = bars.length;
+            if (!dailyShort.containsKey(stockCode)) {
+              dailyShort[stockCode] = bars.length;
+              dailyShortOrder.add(stockCode);
+            }
           }
 
           for (final bar in bars) {
@@ -302,7 +367,10 @@ void main() {
         for (final stockCode in stockCodes) {
           final bars = weeklyBarsByStock[stockCode] ?? const <KLine>[];
           if (bars.length < _weeklyTargetBars) {
-            weeklyShort[stockCode] = bars.length;
+            if (!weeklyShort.containsKey(stockCode)) {
+              weeklyShort[stockCode] = bars.length;
+              weeklyShortOrder.add(stockCode);
+            }
           }
         }
         weeklyValidateStopwatch.stop();
@@ -385,10 +453,16 @@ void main() {
             }
 
             if (missing > 0) {
-              minuteMissingDays[stockCode] = missing;
+              if (!minuteMissingDays.containsKey(stockCode)) {
+                minuteMissingDays[stockCode] = missing;
+                minuteMissingOrder.add(stockCode);
+              }
             }
             if (incomplete > 0) {
-              minuteIncompleteDays[stockCode] = incomplete;
+              if (!minuteIncompleteDays.containsKey(stockCode)) {
+                minuteIncompleteDays[stockCode] = incomplete;
+                minuteIncompleteOrder.add(stockCode);
+              }
             }
           }
         }
@@ -499,18 +573,42 @@ void main() {
         writeStage('weekly');
         writeStage('minute');
 
+        final dailyTotal = stageTotals['daily'] ?? 0;
+        final weeklyTotal = stageTotals['weekly'] ?? 0;
+        final minuteTotal = stageTotals['minute'] ?? 0;
+
         buffer.writeln('## Validation Results');
         buffer.writeln(
-          '- daily short: ${dailyShort.length} (sample: ${_formatTopCounts(dailyShort)})',
+          _formatValidationSummary(
+            label: 'daily short',
+            failedCount: dailyShort.length,
+            stageTotal: dailyTotal,
+            order: dailyShortOrder,
+          ),
         );
         buffer.writeln(
-          '- weekly short: ${weeklyShort.length} (sample: ${_formatTopCounts(weeklyShort)})',
+          _formatValidationSummary(
+            label: 'weekly short',
+            failedCount: weeklyShort.length,
+            stageTotal: weeklyTotal,
+            order: weeklyShortOrder,
+          ),
         );
         buffer.writeln(
-          '- minute missing: ${minuteMissingDays.length} (sample: ${_formatTopCounts(minuteMissingDays)})',
+          _formatValidationSummary(
+            label: 'minute missing',
+            failedCount: minuteMissingDays.length,
+            stageTotal: minuteTotal,
+            order: minuteMissingOrder,
+          ),
         );
         buffer.writeln(
-          '- minute incomplete: ${minuteIncompleteDays.length} (sample: ${_formatTopCounts(minuteIncompleteDays)})',
+          _formatValidationSummary(
+            label: 'minute incomplete',
+            failedCount: minuteIncompleteDays.length,
+            stageTotal: minuteTotal,
+            order: minuteIncompleteOrder,
+          ),
         );
 
         if (weeklyRange != null) {
