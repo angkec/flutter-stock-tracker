@@ -97,6 +97,23 @@ List<DateTime> _weekdayDates(DateTime startDay, DateTime endDay) {
   return days;
 }
 
+List<DateTime> _selectRecentTradingDates(
+  Iterable<DateTime> dates,
+  int count, {
+  required DateTime fallbackEnd,
+}) {
+  final normalized = dates.map(_dateOnly).toSet().toList()..sort();
+  if (normalized.isNotEmpty) {
+    final startIndex = max(0, normalized.length - count);
+    return normalized.sublist(startIndex);
+  }
+  final fallbackStart = fallbackEnd.subtract(Duration(days: count + 7));
+  final weekdays =
+      _weekdayDates(_dateOnly(fallbackStart), _dateOnly(fallbackEnd));
+  if (weekdays.length <= count) return weekdays;
+  return weekdays.sublist(weekdays.length - count);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -150,6 +167,49 @@ void main() {
     expect(_failsOkRate(failedCount: 11, total: 100), isTrue);
     expect(_failsOkRate(failedCount: 10, total: 100), isFalse);
     expect(_failsOkRate(failedCount: 0, total: 0), isFalse);
+  });
+
+  test('selectRecentTradingDates returns last N sorted dates', () {
+    final dates = <DateTime>[
+      DateTime(2024, 1, 2),
+      DateTime(2024, 1, 1),
+      DateTime(2024, 1, 5),
+      DateTime(2024, 1, 4),
+      DateTime(2024, 1, 3),
+      DateTime(2024, 1, 8),
+      DateTime(2024, 1, 7),
+      DateTime(2024, 1, 6),
+    ];
+
+    final picked = _selectRecentTradingDates(
+      dates,
+      7,
+      fallbackEnd: DateTime(2024, 1, 8),
+    );
+
+    expect(picked, [
+      DateTime(2024, 1, 2),
+      DateTime(2024, 1, 3),
+      DateTime(2024, 1, 4),
+      DateTime(2024, 1, 5),
+      DateTime(2024, 1, 6),
+      DateTime(2024, 1, 7),
+      DateTime(2024, 1, 8),
+    ]);
+  });
+
+  test('selectRecentTradingDates falls back to weekdays', () {
+    final picked = _selectRecentTradingDates(
+      const [],
+      3,
+      fallbackEnd: DateTime(2024, 1, 8),
+    );
+
+    expect(picked, [
+      DateTime(2024, 1, 4),
+      DateTime(2024, 1, 5),
+      DateTime(2024, 1, 8),
+    ]);
   });
 
   test(
