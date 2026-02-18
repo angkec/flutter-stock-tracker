@@ -377,9 +377,6 @@ void main() {
 
         final dailyValidateStopwatch = Stopwatch()..start();
         var dailyTotalRecords = 0;
-        final minuteStartDay = anchorDay.subtract(
-          const Duration(days: _minuteTradingDays),
-        );
 
         for (final stockCode in stockCodes) {
           final loaded = await dailyCacheStore.loadForStocksWithStatus(
@@ -399,7 +396,7 @@ void main() {
 
           for (final bar in bars) {
             final day = _dateOnly(bar.datetime);
-            if (!day.isBefore(minuteStartDay) && !day.isAfter(anchorDay)) {
+            if (!day.isAfter(anchorDay)) {
               minuteTradingDates.add(day);
             }
           }
