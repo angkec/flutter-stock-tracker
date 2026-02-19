@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/atomic_file_writer.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
+import 'package:stock_rtwatcher/data/storage/kline_monthly_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 
 class DailyKlineCacheStats {
@@ -30,14 +32,19 @@ class DailyKlineCacheStore {
   DailyKlineCacheStore({
     KLineFileStorage? storage,
     AtomicFileWriter? atomicWriter,
+    KLineMonthlyStorage? monthlyStorage,
     this.defaultTargetBars = 260,
     this.defaultLookbackMonths = 18,
     this.defaultMaxConcurrentWrites = 8,
   }) : _storage = storage ?? KLineFileStorage(),
-       _atomicWriter = atomicWriter ?? const AtomicFileWriter();
+       _atomicWriter = atomicWriter ?? const AtomicFileWriter(),
+       _monthlyStorage = monthlyStorage ?? KLineFileStorageV2();
 
   final KLineFileStorage _storage;
   final AtomicFileWriter _atomicWriter;
+  final KLineMonthlyStorage _monthlyStorage;
+
+  KLineMonthlyStorage get monthlyStorage => _monthlyStorage;
   final int defaultTargetBars;
   final int defaultLookbackMonths;
   final int defaultMaxConcurrentWrites;
@@ -300,7 +307,7 @@ class DailyKlineCacheStore {
   ) async {
     final allBars = <KLine>[];
     for (final month in months) {
-      final monthly = await _storage.loadMonthlyKlineFile(
+      final monthly = await _monthlyStorage.loadMonthlyKlineFile(
         stockCode,
         KLineDataType.daily,
         month.$1,
