@@ -37,6 +37,8 @@ class KLineChartWithSubCharts extends StatefulWidget {
     this.showWeeklySeparators = false,
     this.subCharts = const <KLineSubChart>[],
     this.subChartSpacing = 10,
+    this.emaShortSeries,
+    this.emaLongSeries,
   });
 
   final String stockCode;
@@ -54,6 +56,8 @@ class KLineChartWithSubCharts extends StatefulWidget {
   final bool showWeeklySeparators;
   final List<KLineSubChart> subCharts;
   final double subChartSpacing;
+  final List<double?>? emaShortSeries;
+  final List<double?>? emaLongSeries;
 
   @override
   State<KLineChartWithSubCharts> createState() =>
@@ -99,6 +103,8 @@ class _KLineChartWithSubChartsState extends State<KLineChartWithSubCharts> {
           showWeeklySeparators: widget.showWeeklySeparators,
           onViewportChanged: _handleViewportChanged,
           onSelectionChanged: _handleSelectionChanged,
+          emaShortSeries: widget.emaShortSeries,
+          emaLongSeries: widget.emaLongSeries,
         ),
         for (var index = 0; index < widget.subCharts.length; index++) ...[
           SizedBox(height: widget.subChartSpacing),

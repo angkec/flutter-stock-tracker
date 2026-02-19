@@ -27,7 +27,9 @@ import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/models/linked_layout_config.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
+import 'package:stock_rtwatcher/models/ema_point.dart';
 import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
 import 'package:stock_rtwatcher/services/linked_layout_solver.dart';
 import 'package:stock_rtwatcher/widgets/linked_layout_debug_sheet.dart';
@@ -53,6 +55,7 @@ class StockDetailScreen extends StatefulWidget {
   final List<DailyRatio>? initialRatioHistory;
   final MacdCacheStore? macdCacheStoreForTest;
   final AdxCacheStore? adxCacheStoreForTest;
+  final EmaCacheStore? emaCacheStoreForTest;
 
   const StockDetailScreen({
     super.key,
@@ -68,6 +71,7 @@ class StockDetailScreen extends StatefulWidget {
     this.initialRatioHistory,
     this.macdCacheStoreForTest,
     this.adxCacheStoreForTest,
+    this.emaCacheStoreForTest,
   });
 
   @override
@@ -88,6 +92,12 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   List<KLine> _weeklyBars = [];
   List<KLine> _todayBars = []; // 当日分钟数据
   List<DailyRatio> _ratioHistory = [];
+
+  // EMA 覆盖线序列（与对应 bars 等长，无值位置为 null）
+  List<double?>? _dailyEmaShort;
+  List<double?>? _dailyEmaLong;
+  List<double?>? _weeklyEmaShort;
+  List<double?>? _weeklyEmaLong;
 
   bool _isLoadingKLine = false;
   bool _isLoadingRatio = false;
@@ -124,6 +134,12 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       _dailyBars = widget.initialDailyBars ?? const <KLine>[];
       _weeklyBars = widget.initialWeeklyBars ?? const <KLine>[];
       _ratioHistory = widget.initialRatioHistory ?? const <DailyRatio>[];
+      // Load EMA overlays even in test mode (uses emaCacheStoreForTest if set)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _loadEmaOverlays(daily: _dailyBars, weekly: _weeklyBars);
+        }
+      });
       return;
     }
 
@@ -250,6 +266,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         _isLoadingKLine = false;
       });
 
+      // 异步加载 EMA 缓存（不阻塞 K 线显示）
+      _loadEmaOverlays(daily: daily, weekly: weekly);
+
       // 预加载突破检测结果（异步，不阻塞UI）
       _preloadDetectionResults();
     } catch (e) {
@@ -259,6 +278,75 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         _isLoadingKLine = false;
       });
     }
+  }
+
+  Future<void> _loadEmaOverlays({
+    required List<KLine> daily,
+    required List<KLine> weekly,
+  }) async {
+    final store =
+        widget.emaCacheStoreForTest ?? EmaCacheStore();
+    final code = _currentStock.code;
+
+    final results = await Future.wait([
+      store.loadSeries(stockCode: code, dataType: KLineDataType.daily),
+      store.loadSeries(stockCode: code, dataType: KLineDataType.weekly),
+    ]);
+
+    if (!mounted) return;
+
+    final dailySeries = results[0];
+    final weeklySeries = results[1];
+
+    setState(() {
+      if (dailySeries != null) {
+        final aligned = _alignEmaToBars(daily, dailySeries);
+        _dailyEmaShort = aligned.$1;
+        _dailyEmaLong = aligned.$2;
+      } else {
+        _dailyEmaShort = null;
+        _dailyEmaLong = null;
+      }
+      if (weeklySeries != null) {
+        final aligned = _alignEmaToBars(weekly, weeklySeries);
+        _weeklyEmaShort = aligned.$1;
+        _weeklyEmaLong = aligned.$2;
+      } else {
+        _weeklyEmaShort = null;
+        _weeklyEmaLong = null;
+      }
+    });
+  }
+
+  /// Aligns EMA points to bars by date. Returns (shortSeries, longSeries),
+  /// each list is the same length as [bars], with null where no EMA point
+  /// matches that bar's date.
+  (List<double?>, List<double?>) _alignEmaToBars(
+    List<KLine> bars,
+    EmaCacheSeries series,
+  ) {
+    // Build a date-keyed map from EMA points
+    final pointMap = <String, EmaPoint>{};
+    for (final p in series.points) {
+      final key =
+          '${p.datetime.year}-${p.datetime.month}-${p.datetime.day}';
+      pointMap[key] = p;
+    }
+
+    final shortList = List<double?>.filled(bars.length, null);
+    final longList = List<double?>.filled(bars.length, null);
+
+    for (var i = 0; i < bars.length; i++) {
+      final d = bars[i].datetime;
+      final key = '${d.year}-${d.month}-${d.day}';
+      final point = pointMap[key];
+      if (point != null) {
+        shortList[i] = point.emaShort;
+        longList[i] = point.emaLong;
+      }
+    }
+
+    return (shortList, longList);
   }
 
   DateRange _buildWeeklyDateRange() {
@@ -777,6 +865,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           layout: resolvedLayout,
           macdCacheStoreForTest: widget.macdCacheStoreForTest,
           adxCacheStoreForTest: widget.adxCacheStoreForTest,
+          emaCacheStoreForTest: widget.emaCacheStoreForTest,
         ),
       );
     }
@@ -802,6 +891,12 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       onScaling: (isScaling) {
         setState(() => _isChartScaling = isScaling);
       },
+      emaShortSeries: _chartMode == ChartMode.daily
+          ? _dailyEmaShort
+          : _weeklyEmaShort,
+      emaLongSeries: _chartMode == ChartMode.daily
+          ? _dailyEmaLong
+          : _weeklyEmaLong,
       subCharts: [
         MacdSubChart(
           key: ValueKey('stock_detail_macd_${_chartMode.name}'),

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
+import 'package:stock_rtwatcher/models/ema_point.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/linked_layout_result.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_coordinator.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_models.dart';
 import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
@@ -21,6 +23,7 @@ class LinkedDualKlineView extends StatefulWidget {
     this.layout,
     this.macdCacheStoreForTest,
     this.adxCacheStoreForTest,
+    this.emaCacheStoreForTest,
   });
 
   final String stockCode;
@@ -30,6 +33,7 @@ class LinkedDualKlineView extends StatefulWidget {
   final LinkedLayoutResult? layout;
   final MacdCacheStore? macdCacheStoreForTest;
   final AdxCacheStore? adxCacheStoreForTest;
+  final EmaCacheStore? emaCacheStoreForTest;
 
   @override
   State<LinkedDualKlineView> createState() => _LinkedDualKlineViewState();
@@ -38,6 +42,11 @@ class LinkedDualKlineView extends StatefulWidget {
 class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
   late LinkedCrosshairCoordinator _coordinator;
 
+  List<double?>? _weeklyEmaShort;
+  List<double?>? _weeklyEmaLong;
+  List<double?>? _dailyEmaShort;
+  List<double?>? _dailyEmaLong;
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +54,7 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
       weeklyBars: widget.weeklyBars,
       dailyBars: widget.dailyBars,
     );
+    _loadEmaOverlays();
   }
 
   @override
@@ -57,6 +67,7 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
         weeklyBars: widget.weeklyBars,
         dailyBars: widget.dailyBars,
       );
+      _loadEmaOverlays();
     }
   }
 
@@ -64,6 +75,60 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
   void dispose() {
     _coordinator.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadEmaOverlays() async {
+    final store = widget.emaCacheStoreForTest ?? EmaCacheStore();
+    final code = widget.stockCode;
+
+    final results = await Future.wait([
+      store.loadSeries(stockCode: code, dataType: KLineDataType.weekly),
+      store.loadSeries(stockCode: code, dataType: KLineDataType.daily),
+    ]);
+
+    if (!mounted) return;
+
+    final weeklySeries = results[0];
+    final dailySeries = results[1];
+
+    setState(() {
+      if (weeklySeries != null) {
+        final aligned = _alignEmaToBars(widget.weeklyBars, weeklySeries);
+        _weeklyEmaShort = aligned.$1;
+        _weeklyEmaLong = aligned.$2;
+      }
+      if (dailySeries != null) {
+        final aligned = _alignEmaToBars(widget.dailyBars, dailySeries);
+        _dailyEmaShort = aligned.$1;
+        _dailyEmaLong = aligned.$2;
+      }
+    });
+  }
+
+  (List<double?>, List<double?>) _alignEmaToBars(
+    List<KLine> bars,
+    EmaCacheSeries series,
+  ) {
+    final pointMap = <String, EmaPoint>{};
+    for (final p in series.points) {
+      final key = '${p.datetime.year}-${p.datetime.month}-${p.datetime.day}';
+      pointMap[key] = p;
+    }
+
+    final shortList = List<double?>.filled(bars.length, null);
+    final longList = List<double?>.filled(bars.length, null);
+
+    for (var i = 0; i < bars.length; i++) {
+      final d = bars[i].datetime;
+      final key = '${d.year}-${d.month}-${d.day}';
+      final point = pointMap[key];
+      if (point != null) {
+        shortList[i] = point.emaShort;
+        longList[i] = point.emaLong;
+      }
+    }
+
+    return (shortList, longList);
   }
 
   @override
@@ -125,6 +190,8 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
                     externalLinkedBarIndex: _coordinator.mappedWeeklyIndex,
                     showWeeklySeparators: false,
                     subChartSpacing: heights.subChartSpacing,
+                    emaShortSeries: _weeklyEmaShort,
+                    emaLongSeries: _weeklyEmaLong,
                     subCharts: [
                       MacdSubChart(
                         key: const ValueKey('linked_weekly_macd_subchart'),
@@ -166,6 +233,8 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
                     externalLinkedBarIndex: _coordinator.mappedDailyIndex,
                     showWeeklySeparators: true,
                     subChartSpacing: heights.subChartSpacing,
+                    emaShortSeries: _dailyEmaShort,
+                    emaLongSeries: _dailyEmaLong,
                     subCharts: [
                       MacdSubChart(
                         key: const ValueKey('linked_daily_macd_subchart'),
