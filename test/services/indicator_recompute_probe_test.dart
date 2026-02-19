@@ -149,6 +149,9 @@ void main() {
     ];
 
     final tempDir = await Directory.systemTemp.createTemp('macd_probe_');
+    addTearDown(() async {
+      await tempDir.delete(recursive: true);
+    });
     final storage = KLineFileStorage()
       ..setBaseDirPathForTesting(tempDir.path);
     final cacheStore = MacdCacheStore(storage: storage);
