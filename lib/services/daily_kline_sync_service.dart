@@ -129,7 +129,9 @@ class DailyKlineSyncService {
         try {
           await _monthlyWriter!(persistPayload);
           if (kDebugMode) {
-            debugPrint('[DailySync] monthly persist done');
+            debugPrint(
+              '[DailySync] monthly persist done stocks=${persistPayload.length}',
+            );
           }
         } catch (error, stackTrace) {
           debugPrint('[DailySync] monthly persist failed: $error');
