@@ -1,10 +1,13 @@
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 
 class DailyKlineMonthlyWriterImpl {
   DailyKlineMonthlyWriterImpl({KLineMetadataManager? manager})
-    : _manager = manager ?? KLineMetadataManager();
+    : _manager =
+          manager ??
+          KLineMetadataManager(dailyFileStorage: KLineFileStorageV2());
 
   final KLineMetadataManager _manager;
 

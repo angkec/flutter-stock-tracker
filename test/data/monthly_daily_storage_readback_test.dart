@@ -6,6 +6,7 @@ import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/database_schema.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
@@ -174,5 +175,32 @@ void main() {
       ..sort((a, b) => a.compareTo(b));
 
     expect(loadedDates, orderedEquals(sortedDates));
+  });
+
+  test('daily metadata manager uses v2 file paths', () async {
+    final v2 = KLineFileStorageV2()..setBaseDirPathForTesting('v2');
+    final manager = KLineMetadataManager(dailyFileStorage: v2);
+
+    await manager.saveKlineData(
+      stockCode: '000001',
+      newBars: [
+        KLine(
+          datetime: DateTime(2026, 2, 18),
+          open: 10,
+          close: 11,
+          high: 12,
+          low: 9,
+          volume: 100,
+          amount: 200,
+        ),
+      ],
+      dataType: KLineDataType.daily,
+    );
+
+    final meta = await manager.getMetadata(
+      stockCode: '000001',
+      dataType: KLineDataType.daily,
+    );
+    expect(meta.first.filePath.contains('klines_v2'), isTrue);
   });
 }
