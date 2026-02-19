@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
@@ -8,6 +9,12 @@ typedef DailyKlineFetcher =
       required List<Stock> stocks,
       required int count,
       required DailyKlineSyncMode mode,
+      void Function(int current, int total)? onProgress,
+    });
+
+typedef DailyKlineMonthlyWriter =
+    Future<void> Function(
+      Map<String, List<KLine>> barsByStock, {
       void Function(int current, int total)? onProgress,
     });
 
@@ -45,15 +52,18 @@ class DailyKlineSyncService {
     required DailyKlineCheckpointStore checkpointStore,
     required DailyKlineCacheStore cacheStore,
     required DailyKlineFetcher fetcher,
+    DailyKlineMonthlyWriter? monthlyWriter,
     DateTime Function()? nowProvider,
   }) : _checkpointStore = checkpointStore,
        _cacheStore = cacheStore,
        _fetcher = fetcher,
+       _monthlyWriter = monthlyWriter,
        _nowProvider = nowProvider ?? DateTime.now;
 
   final DailyKlineCheckpointStore _checkpointStore;
   final DailyKlineCacheStore _cacheStore;
   final DailyKlineFetcher _fetcher;
+  final DailyKlineMonthlyWriter? _monthlyWriter;
   final DateTime Function() _nowProvider;
 
   Future<DailyKlineSyncResult> sync({
@@ -109,6 +119,18 @@ class DailyKlineSyncService {
           onProgress?.call('2/4 写入日K文件...', boundedCurrent, boundedTotal);
         },
       );
+
+      if (_monthlyWriter != null) {
+        if (kDebugMode) {
+          debugPrint(
+            '[DailySync] monthly persist start stocks=${persistPayload.length}',
+          );
+        }
+        await _monthlyWriter!(persistPayload);
+        if (kDebugMode) {
+          debugPrint('[DailySync] monthly persist done');
+        }
+      }
     }
 
     final nowMs = now.millisecondsSinceEpoch;

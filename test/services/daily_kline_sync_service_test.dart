@@ -93,6 +93,19 @@ class _RecordingFetcher {
   }
 }
 
+class _RecordingMonthlyWriter {
+  Map<String, List<KLine>> lastPayload = const <String, List<KLine>>{};
+  int callCount = 0;
+
+  Future<void> call(
+    Map<String, List<KLine>> barsByStock, {
+    void Function(int current, int total)? onProgress,
+  }) async {
+    callCount++;
+    lastPayload = Map.of(barsByStock);
+  }
+}
+
 void main() {
   test(
     'incremental sync fetches stale stocks and returns partial failures',
@@ -150,6 +163,42 @@ void main() {
       );
     },
   );
+
+  test('incremental sync forwards successful payload to monthly writer', () async {
+    final monthlyWriter = _RecordingMonthlyWriter();
+    final service = DailyKlineSyncService(
+      checkpointStore: _FakeCheckpointStore(),
+      cacheStore: _FakeCacheStore(),
+      fetcher:
+          ({
+            required List<Stock> stocks,
+            required int count,
+            required DailyKlineSyncMode mode,
+            void Function(int current, int total)? onProgress,
+          }) async {
+            return {
+              '000001': [_bar(DateTime(2026, 2, 17))],
+              // 300001 intentionally omitted to simulate failure
+            };
+          },
+      monthlyWriter: monthlyWriter.call,
+      nowProvider: () => DateTime(2026, 2, 17, 10),
+    );
+
+    final result = await service.sync(
+      mode: DailyKlineSyncMode.incremental,
+      stocks: [
+        Stock(code: '000001', name: 'A', market: 0),
+        Stock(code: '300001', name: 'B', market: 0),
+      ],
+      targetBars: 260,
+    );
+
+    expect(result.successStockCodes, ['000001']);
+    expect(result.failureStockCodes, ['300001']);
+    expect(monthlyWriter.callCount, 1);
+    expect(monthlyWriter.lastPayload.keys, ['000001']);
+  });
 
   test('forceFull sync ignores checkpoints and targets all stocks', () async {
     final fetcher = _RecordingFetcher();
