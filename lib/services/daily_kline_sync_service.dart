@@ -126,9 +126,17 @@ class DailyKlineSyncService {
             '[DailySync] monthly persist start stocks=${persistPayload.length}',
           );
         }
-        await _monthlyWriter!(persistPayload);
-        if (kDebugMode) {
-          debugPrint('[DailySync] monthly persist done');
+        try {
+          await _monthlyWriter!(persistPayload);
+          if (kDebugMode) {
+            debugPrint('[DailySync] monthly persist done');
+          }
+        } catch (error, stackTrace) {
+          debugPrint('[DailySync] monthly persist failed: $error');
+          if (kDebugMode) {
+            debugPrint(stackTrace.toString());
+          }
+          rethrow;
         }
       }
     }

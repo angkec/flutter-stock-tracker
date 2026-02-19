@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
@@ -201,6 +202,61 @@ void main() {
     expect(monthlyWriter.lastPayload.keys, ['000001']);
     expect(monthlyWriter.lastPayload, cacheStore.lastSaved);
   });
+
+  test(
+    'incremental sync rethrows monthly writer failure and keeps cache',
+    () async {
+      final logs = <String>[];
+      final originalDebugPrint = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) {
+          logs.add(message);
+        }
+      };
+      addTearDown(() {
+        debugPrint = originalDebugPrint;
+      });
+
+      final cacheStore = _FakeCacheStore();
+      final service = DailyKlineSyncService(
+        checkpointStore: _FakeCheckpointStore(),
+        cacheStore: cacheStore,
+        fetcher:
+            ({
+              required List<Stock> stocks,
+              required int count,
+              required DailyKlineSyncMode mode,
+              void Function(int current, int total)? onProgress,
+            }) async {
+              return {
+                '000001': [_bar(DateTime(2026, 2, 17))],
+              };
+            },
+        monthlyWriter: (
+          Map<String, List<KLine>> barsByStock, {
+          void Function(int current, int total)? onProgress,
+        }) async {
+          throw StateError('monthly failure');
+        },
+        nowProvider: () => DateTime(2026, 2, 17, 10),
+      );
+
+      await expectLater(
+        service.sync(
+          mode: DailyKlineSyncMode.incremental,
+          stocks: [Stock(code: '000001', name: 'A', market: 0)],
+          targetBars: 260,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(cacheStore.lastSaved.keys, ['000001']);
+      expect(
+        logs.any((message) => message.contains('monthly persist failed')),
+        isTrue,
+      );
+    },
+  );
 
   test('forceFull sync ignores checkpoints and targets all stocks', () async {
     final fetcher = _RecordingFetcher();
