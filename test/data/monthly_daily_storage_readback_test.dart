@@ -1,26 +1,63 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/database_schema.dart';
-import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 
+class _TestPathProviderPlatform extends PathProviderPlatform {
+  _TestPathProviderPlatform(this.basePath);
+
+  final String basePath;
+
+  @override
+  Future<String?> getTemporaryPath() async => basePath;
+
+  @override
+  Future<String?> getApplicationSupportPath() async => basePath;
+
+  @override
+  Future<String?> getLibraryPath() async => basePath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => basePath;
+
+  @override
+  Future<String?> getApplicationCachePath() async => basePath;
+
+  @override
+  Future<String?> getExternalStoragePath() async => basePath;
+
+  @override
+  Future<List<String>?> getExternalCachePaths() async => <String>[basePath];
+
+  @override
+  Future<List<String>?> getExternalStoragePaths({
+    StorageDirectory? type,
+  }) async => <String>[basePath];
+
+  @override
+  Future<String?> getDownloadsPath() async => basePath;
+}
+
 void main() {
   late Directory tempDir;
+  late PathProviderPlatform originalPathProvider;
   late MarketDatabase database;
-  late KLineFileStorage storage;
+  late KLineFileStorageV2 storage;
   late KLineMetadataManager manager;
 
   setUpAll(() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
     TestWidgetsFlutterBinding.ensureInitialized();
+    originalPathProvider = PathProviderPlatform.instance;
   });
 
   Future<void> deleteTestDatabase() async {
@@ -41,8 +78,9 @@ void main() {
     tempDir = await Directory.systemTemp.createTemp(
       'monthly-daily-storage-readback-',
     );
+    PathProviderPlatform.instance = _TestPathProviderPlatform(tempDir.path);
 
-    storage = KLineFileStorage()..setBaseDirPathForTesting(tempDir.path);
+    storage = KLineFileStorageV2();
     await storage.initialize();
 
     database = MarketDatabase();
@@ -50,7 +88,6 @@ void main() {
 
     manager = KLineMetadataManager(
       database: database,
-      fileStorage: storage,
     );
   });
 
@@ -64,6 +101,7 @@ void main() {
       await tempDir.delete(recursive: true);
     }
 
+    PathProviderPlatform.instance = originalPathProvider;
     await deleteTestDatabase();
   });
 
@@ -112,13 +150,12 @@ void main() {
     MarketDatabase.resetInstance();
     await deleteTestDatabase();
 
-    storage = KLineFileStorage()..setBaseDirPathForTesting(tempDir.path);
+    storage = KLineFileStorageV2();
     await storage.initialize();
     database = MarketDatabase();
     await database.database;
     manager = KLineMetadataManager(
       database: database,
-      fileStorage: storage,
     );
 
     final sortedBars = [...bars]
@@ -127,7 +164,7 @@ void main() {
     final lastBar = sortedBars.last;
     final yearMonth =
         '${firstBar.datetime.year}${firstBar.datetime.month.toString().padLeft(2, '0')}';
-    final filePath = storage.getFilePath(
+    final filePath = await storage.getFilePathAsync(
       stockCode,
       KLineDataType.daily,
       firstBar.datetime.year,
@@ -177,9 +214,8 @@ void main() {
     expect(loadedDates, orderedEquals(sortedDates));
   });
 
-  test('daily metadata manager uses v2 file paths', () async {
-    final v2 = KLineFileStorageV2()..setBaseDirPathForTesting('v2');
-    final manager = KLineMetadataManager(dailyFileStorage: v2);
+  test('daily metadata manager defaults to v2 file paths', () async {
+    final manager = KLineMetadataManager(database: database);
 
     await manager.saveKlineData(
       stockCode: '000001',

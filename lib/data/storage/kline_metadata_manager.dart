@@ -10,6 +10,7 @@ import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/storage/kline_append_result.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/kline_monthly_storage.dart';
 
 /// Metadata for a K-line file
@@ -85,12 +86,11 @@ class KLineMetadataManager {
 
   final MarketDatabase _db;
   final KLineMonthlyStorage _fileStorage;
-  final KLineMonthlyStorage? _dailyFileStorage;
+  final KLineMonthlyStorage _dailyFileStorage;
   final LinkedHashMap<String, List<DateTime>> _tradingDateRangeCache =
       LinkedHashMap<String, List<DateTime>>();
   final Map<String, Future<List<DateTime>>> _tradingDateRangeInFlight = {};
   int? _tradingDateCacheVersion;
-  bool _dailyStoragePrepared = false;
 
   KLineMetadataManager({
     MarketDatabase? database,
@@ -98,27 +98,13 @@ class KLineMetadataManager {
     KLineMonthlyStorage? dailyFileStorage,
   }) : _db = database ?? MarketDatabase(),
        _fileStorage = fileStorage ?? KLineFileStorage(),
-       _dailyFileStorage = dailyFileStorage;
+       _dailyFileStorage = dailyFileStorage ?? KLineFileStorageV2();
 
   KLineMonthlyStorage _resolveStorage(KLineDataType dataType) {
-    if (dataType == KLineDataType.daily && _dailyFileStorage != null) {
-      return _dailyFileStorage!;
+    if (dataType == KLineDataType.daily) {
+      return _dailyFileStorage;
     }
     return _fileStorage;
-  }
-
-  Future<void> _prepareDailyStorageIfNeeded() async {
-    if (_dailyStoragePrepared || _dailyFileStorage == null) {
-      return;
-    }
-
-    final baseDir = await _dailyFileStorage!.getBaseDirectoryPath();
-    if (!baseDir.contains('klines_v2')) {
-      _dailyFileStorage!.setBaseDirPathForTesting(
-        '$baseDir/market_data/klines_v2',
-      );
-    }
-    _dailyStoragePrepared = true;
   }
 
   /// Save K-line data with metadata update in a transaction
@@ -136,9 +122,6 @@ class KLineMetadataManager {
     if (newBars.isEmpty) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (dataType == KLineDataType.daily) {
-      await _prepareDailyStorageIfNeeded();
-    }
     final storage = _resolveStorage(dataType);
 
     // Group new bars by year-month
@@ -374,9 +357,6 @@ class KLineMetadataManager {
     required KLineDataType dataType,
     required DateRange dateRange,
   }) async {
-    if (dataType == KLineDataType.daily) {
-      await _prepareDailyStorageIfNeeded();
-    }
     final metadata = await getMetadata(
       stockCode: stockCode,
       dataType: dataType,
@@ -660,9 +640,6 @@ class KLineMetadataManager {
     required KLineDataType dataType,
     required DateTime date,
   }) async {
-    if (dataType == KLineDataType.daily) {
-      await _prepareDailyStorageIfNeeded();
-    }
     final dateOnly = DateTime(date.year, date.month, date.day);
     final nextDay = dateOnly.add(const Duration(days: 1));
 
