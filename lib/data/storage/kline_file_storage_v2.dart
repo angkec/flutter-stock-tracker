@@ -266,14 +266,14 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
     String newFilePath,
     List<int> encoded,
   ) async {
+    final newFile = File(newFilePath);
+    if (await newFile.exists()) {
+      return;
+    }
     try {
       await legacyFile.rename(newFilePath);
     } catch (_) {
       try {
-        final newFile = File(newFilePath);
-        if (await newFile.exists()) {
-          return;
-        }
         await newFile.writeAsBytes(encoded);
         if (await legacyFile.exists()) {
           await legacyFile.delete();

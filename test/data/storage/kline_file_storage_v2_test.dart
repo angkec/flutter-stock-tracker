@@ -122,11 +122,15 @@ void main() {
     final newPath =
         await storage.getFilePathAsync('000001', KLineDataType.daily, 2026, 2);
     final legacyPath = newPath.replaceAll('.bin.zlib', '.bin.z');
-
+    final legacyFile = File(legacyPath);
+    await legacyFile.writeAsBytes(legacyEncoded);
     await File(newPath).writeAsBytes(newEncoded);
 
+    expect(await legacyFile.exists(), isTrue);
+    expect(await File(newPath).exists(), isTrue);
+
     await storage.migrateLegacyFileForTesting(
-      File(legacyPath),
+      legacyFile,
       newPath,
       legacyEncoded,
     );
@@ -136,5 +140,6 @@ void main() {
 
     expect(decoded.length, 1);
     expect(decoded.first.close, 99);
+    expect(await legacyFile.exists(), isTrue);
   });
 }
