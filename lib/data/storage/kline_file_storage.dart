@@ -7,6 +7,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:stock_rtwatcher/data/storage/kline_monthly_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 
@@ -29,7 +30,7 @@ class KLineAppendResult {
 }
 
 /// File storage for K-line data with monthly sharding
-class KLineFileStorage {
+class KLineFileStorage implements KLineMonthlyStorage {
   static const String _baseDir = 'market_data/klines';
 
   /// Base directory path (used for testing)
