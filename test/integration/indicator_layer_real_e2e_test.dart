@@ -206,6 +206,7 @@ void main() {
       Object? caughtError;
       StackTrace? caughtStack;
       String? failureSummary;
+      String? originalDbPath;
 
       MarketDatabase? database;
       MarketDataRepository? repository;
@@ -252,6 +253,7 @@ void main() {
         final fileStorage = KLineFileStorage();
         fileStorage.setBaseDirPathForTesting(fileRoot);
         await fileStorage.initialize();
+        originalDbPath = await databaseFactory.getDatabasesPath();
         await databaseFactory.setDatabasesPath(dbRoot);
 
         database = MarketDatabase();
@@ -572,6 +574,9 @@ void main() {
             await database.close();
           } catch (_) {}
           MarketDatabase.resetInstance();
+        }
+        if (originalDbPath != null) {
+          await databaseFactory.setDatabasesPath(originalDbPath!);
         }
       }
 
