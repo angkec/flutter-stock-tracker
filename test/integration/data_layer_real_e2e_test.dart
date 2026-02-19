@@ -808,6 +808,8 @@ void main() {
         final manifest = {
           'date': dateKey,
           'generatedAt': endedAt.toIso8601String(),
+          'result': failureSummary == null ? 'PASS' : 'FAIL',
+          'failureSummary': failureSummary,
           'cacheRoot': rootDir?.path ?? '',
           'fileRoot': fileRoot?.path ?? '',
           'dbRoot': dbRoot?.path ?? '',
