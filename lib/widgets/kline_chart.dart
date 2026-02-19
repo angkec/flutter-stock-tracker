@@ -29,6 +29,8 @@ class KLineChart extends StatefulWidget {
   final ValueChanged<KLineViewport>? onViewportChanged; // 可见窗口变化回调
   final void Function(int? selectedIndex, bool isSelecting)?
   onSelectionChanged; // 选中状态变化回调
+  final List<double?>? emaShortSeries; // EMA短周期序列（与bars等长，null表示无值）
+  final List<double?>? emaLongSeries; // EMA长周期序列（与bars等长，null表示无值）
 
   const KLineChart({
     super.key,
@@ -46,6 +48,8 @@ class KLineChart extends StatefulWidget {
     this.showWeeklySeparators = false,
     this.onViewportChanged,
     this.onSelectionChanged,
+    this.emaShortSeries,
+    this.emaLongSeries,
   });
 
   @override
@@ -309,6 +313,18 @@ class _KLineChartState extends State<KLineChart> {
                           forcedMinPrice: forcedMinPrice,
                           forcedMaxPrice: forcedMaxPrice,
                           weeklyBoundaryIndices: weeklyBoundaryIndices,
+                          emaShortSeries: widget.emaShortSeries != null
+                              ? widget.emaShortSeries!.sublist(
+                                  _startIndex,
+                                  endIndex,
+                                )
+                              : null,
+                          emaLongSeries: widget.emaLongSeries != null
+                              ? widget.emaLongSeries!.sublist(
+                                  _startIndex,
+                                  endIndex,
+                                )
+                              : null,
                         ),
                       ),
                     ),
@@ -704,8 +720,73 @@ class _KLineChartState extends State<KLineChart> {
   }
 
   Widget _buildSelectedInfo() {
+    // Determine EMA values to display: selected bar or latest available
+    double? displayEmaShort;
+    double? displayEmaLong;
+    final hasEma =
+        widget.emaShortSeries != null || widget.emaLongSeries != null;
+    if (hasEma) {
+      if (_selectedIndex != null && _selectedIndex! < widget.bars.length) {
+        displayEmaShort = widget.emaShortSeries?[_selectedIndex!];
+        displayEmaLong = widget.emaLongSeries?[_selectedIndex!];
+      } else {
+        // No selection: show latest non-null value
+        if (widget.emaShortSeries != null) {
+          for (var i = widget.emaShortSeries!.length - 1; i >= 0; i--) {
+            if (widget.emaShortSeries![i] != null) {
+              displayEmaShort = widget.emaShortSeries![i];
+              break;
+            }
+          }
+        }
+        if (widget.emaLongSeries != null) {
+          for (var i = widget.emaLongSeries!.length - 1; i >= 0; i--) {
+            if (widget.emaLongSeries![i] != null) {
+              displayEmaLong = widget.emaLongSeries![i];
+              break;
+            }
+          }
+        }
+      }
+    }
+
     if (_selectedIndex == null || _selectedIndex! >= widget.bars.length) {
-      return const SizedBox(height: 24);
+      // No selection: show EMA latest values only (or empty bar)
+      if (!hasEma) {
+        return const SizedBox(height: 24);
+      }
+      return Container(
+        height: 24,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          children: [
+            if (displayEmaShort != null) ...[
+              Text(
+                'EMA短: ${displayEmaShort.toStringAsFixed(2)}',
+                style: const TextStyle(fontSize: 12, color: Colors.orange),
+              ),
+              const SizedBox(width: 8),
+            ] else ...[
+              const Text(
+                'EMA短: --',
+                style: TextStyle(fontSize: 12, color: Colors.orange),
+              ),
+              const SizedBox(width: 8),
+            ],
+            if (displayEmaLong != null) ...[
+              Text(
+                'EMA长: ${displayEmaLong.toStringAsFixed(2)}',
+                style: const TextStyle(fontSize: 12, color: Colors.blue),
+              ),
+            ] else ...[
+              const Text(
+                'EMA长: --',
+                style: TextStyle(fontSize: 12, color: Colors.blue),
+              ),
+            ],
+          ],
+        ),
+      );
     }
 
     final bar = widget.bars[_selectedIndex!];
@@ -737,18 +818,18 @@ class _KLineChartState extends State<KLineChart> {
             dateStr,
             style: const TextStyle(fontSize: 12, color: Colors.grey),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
           Text(
             '收: ${bar.close.toStringAsFixed(2)}',
             style: TextStyle(fontSize: 12, color: isUp ? kUpColor : kDownColor),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Text(
             '${isUp ? "+" : ""}${changePercent.toStringAsFixed(2)}%',
             style: TextStyle(fontSize: 12, color: isUp ? kUpColor : kDownColor),
           ),
           if (ratio != null) ...[
-            const SizedBox(width: 12),
+            const SizedBox(width: 8),
             Text(
               '量比: ${ratio.toStringAsFixed(2)}',
               style: TextStyle(
@@ -756,6 +837,18 @@ class _KLineChartState extends State<KLineChart> {
                 fontWeight: FontWeight.bold,
                 color: ratio >= 1.0 ? kUpColor : kDownColor,
               ),
+            ),
+          ],
+          if (hasEma) ...[
+            const SizedBox(width: 8),
+            Text(
+              'EMA短: ${displayEmaShort != null ? displayEmaShort.toStringAsFixed(2) : "--"}',
+              style: const TextStyle(fontSize: 12, color: Colors.orange),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              'EMA长: ${displayEmaLong != null ? displayEmaLong.toStringAsFixed(2) : "--"}',
+              style: const TextStyle(fontSize: 12, color: Colors.blue),
             ),
           ],
         ],
@@ -867,6 +960,8 @@ class _KLinePainter extends CustomPainter {
   final double? forcedMinPrice;
   final double? forcedMaxPrice;
   final Set<int>? weeklyBoundaryIndices;
+  final List<double?>? emaShortSeries; // 可见范围内的EMA短周期值
+  final List<double?>? emaLongSeries; // 可见范围内的EMA长周期值
 
   _KLinePainter({
     required this.bars,
@@ -880,6 +975,8 @@ class _KLinePainter extends CustomPainter {
     this.forcedMinPrice,
     this.forcedMaxPrice,
     this.weeklyBoundaryIndices,
+    this.emaShortSeries,
+    this.emaLongSeries,
   });
 
   @override
@@ -1205,6 +1302,35 @@ class _KLinePainter extends CustomPainter {
       }
     }
 
+    // 绘制EMA线
+    void _drawEmaSeries(List<double?>? series, Color color) {
+      if (series == null || series.length != bars.length) return;
+      final emaPaint = Paint()
+        ..color = color
+        ..strokeWidth = 1.2
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round;
+
+      Offset? prevPoint;
+      for (var i = 0; i < bars.length; i++) {
+        final value = series[i];
+        if (value == null) {
+          prevPoint = null;
+          continue;
+        }
+        final x = sidePadding + i * barSpacing + barSpacing / 2;
+        final y = priceToY(value.clamp(minPrice, maxPrice));
+        final point = Offset(x, y);
+        if (prevPoint != null) {
+          canvas.drawLine(prevPoint, point, emaPaint);
+        }
+        prevPoint = point;
+      }
+    }
+
+    _drawEmaSeries(emaLongSeries, Colors.blue);
+    _drawEmaSeries(emaShortSeries, Colors.orange);
+
     // 绘制底部日期
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
     final interval = (bars.length / 5).ceil();
@@ -1238,6 +1364,8 @@ class _KLinePainter extends CustomPainter {
         oldDelegate.linkedHorizontalPrice != linkedHorizontalPrice ||
         oldDelegate.forcedMinPrice != forcedMinPrice ||
         oldDelegate.forcedMaxPrice != forcedMaxPrice ||
-        oldDelegate.weeklyBoundaryIndices != weeklyBoundaryIndices;
+        oldDelegate.weeklyBoundaryIndices != weeklyBoundaryIndices ||
+        oldDelegate.emaShortSeries != emaShortSeries ||
+        oldDelegate.emaLongSeries != emaLongSeries;
   }
 }

@@ -25,6 +25,7 @@ import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
+import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -376,6 +377,51 @@ class _FakeAdxIndicatorService extends AdxIndicatorService {
     required KLineDataType dataType,
     required DateRange dateRange,
     bool forceRecompute = false,
+    bool ignoreSnapshot = false,
+    int? fetchBatchSize,
+    int? maxConcurrentPersistWrites,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    prewarmFromRepositoryCount++;
+    prewarmDataTypes.add(dataType);
+    prewarmForceRecomputeValues.add(forceRecompute);
+    prewarmStockCodeBatches.add(List<String>.from(stockCodes, growable: false));
+    prewarmFetchBatchSizes.add(fetchBatchSize);
+    prewarmPersistConcurrencyValues.add(maxConcurrentPersistWrites);
+    final safeTotal = stockCodes.isEmpty ? 1 : stockCodes.length;
+    final safeSteps = prewarmProgressSteps <= 0 ? 1 : prewarmProgressSteps;
+    for (var step = 1; step <= safeSteps; step++) {
+      final current = ((safeTotal * step) / safeSteps).ceil().clamp(
+        1,
+        safeTotal,
+      );
+      onProgress?.call(current, safeTotal);
+      if (prewarmProgressStepDelay > Duration.zero) {
+        await Future<void>.delayed(prewarmProgressStepDelay);
+      }
+    }
+  }
+}
+
+class _FakeEmaIndicatorService extends EmaIndicatorService {
+  _FakeEmaIndicatorService({required super.repository});
+
+  int prewarmFromRepositoryCount = 0;
+  final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
+  final List<bool> prewarmForceRecomputeValues = <bool>[];
+  final List<List<String>> prewarmStockCodeBatches = <List<String>>[];
+  final List<int?> prewarmFetchBatchSizes = <int?>[];
+  final List<int?> prewarmPersistConcurrencyValues = <int?>[];
+  int prewarmProgressSteps = 1;
+  Duration prewarmProgressStepDelay = Duration.zero;
+
+  @override
+  Future<void> prewarmFromRepository({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+    required DateRange dateRange,
+    bool forceRecompute = false,
+    bool ignoreSnapshot = false,
     int? fetchBatchSize,
     int? maxConcurrentPersistWrites,
     void Function(int current, int total)? onProgress,
@@ -441,12 +487,15 @@ void main() {
     required IndustryRankService rankService,
     MacdIndicatorService? macdService,
     AdxIndicatorService? adxService,
+    EmaIndicatorService? emaService,
     AuditService? auditService,
   }) async {
     final effectiveMacdService =
-        macdService ?? MacdIndicatorService(repository: repository);
+        macdService ?? _FakeMacdIndicatorService(repository: repository);
     final effectiveAdxService =
-        adxService ?? AdxIndicatorService(repository: repository);
+        adxService ?? _FakeAdxIndicatorService(repository: repository);
+    final effectiveEmaService =
+        emaService ?? _FakeEmaIndicatorService(repository: repository);
     final effectiveAuditService =
         auditService ??
         (() {
@@ -462,6 +511,7 @@ void main() {
         })();
     await effectiveMacdService.load();
     await effectiveAdxService.load();
+    await effectiveEmaService.load();
 
     await tester.pumpWidget(
       MultiProvider(
@@ -482,6 +532,9 @@ void main() {
           ),
           ChangeNotifierProvider<AdxIndicatorService>.value(
             value: effectiveAdxService,
+          ),
+          ChangeNotifierProvider<EmaIndicatorService>.value(
+            value: effectiveEmaService,
           ),
           ChangeNotifierProvider<AuditService>.value(
             value: effectiveAuditService,
@@ -2362,6 +2415,121 @@ void main() {
     rankService.dispose();
     macdService.dispose();
     adxService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('周K拉取缺失后应触发周线EMA预热', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    await macdService.load();
+    final emaService = _FakeEmaIndicatorService(repository: repository);
+    await emaService.load();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 1,
+      successCount: 1,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 20,
+      duration: const Duration(milliseconds: 1),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+      emaService: emaService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(emaService.prewarmFromRepositoryCount, 1);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
+    emaService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('技术指标区域显示日线EMA设置入口', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(data: []);
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '日线EMA参数设置');
+    expect(find.text('日线EMA参数设置'), findsOneWidget);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('技术指标区域显示周线EMA设置入口', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(data: []);
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '周线EMA参数设置');
+    expect(find.text('周线EMA参数设置'), findsOneWidget);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
     await repository.dispose();
   });
 }

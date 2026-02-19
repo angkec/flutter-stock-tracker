@@ -16,8 +16,10 @@ import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/adx_settings_screen.dart';
+import 'package:stock_rtwatcher/screens/ema_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/macd_settings_screen.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
+import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
@@ -48,6 +50,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   static const int _weeklyMacdPersistConcurrency = 8;
   static const int _weeklyAdxFetchBatchSize = 120;
   static const int _weeklyAdxPersistConcurrency = 8;
+  static const int _weeklyEmaFetchBatchSize = 120;
+  static const int _weeklyEmaPersistConcurrency = 8;
 
   void _triggerRefresh() {
     setState(() {
@@ -157,6 +161,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               _buildMacdSettingsItem(context, dataType: KLineDataType.weekly),
               _buildAdxSettingsItem(context, dataType: KLineDataType.daily),
               _buildAdxSettingsItem(context, dataType: KLineDataType.weekly),
+              _buildEmaSettingsItem(context, dataType: KLineDataType.daily),
+              _buildEmaSettingsItem(context, dataType: KLineDataType.weekly),
 
               const SizedBox(height: 10),
               _buildSectionTitle(context, '历史分钟K线'),
@@ -569,6 +575,49 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: const Icon(Icons.show_chart_rounded),
+        title: Text(title),
+        subtitle: Text(summary),
+        trailing: FilledButton.tonal(
+          onPressed: navigateToSettings,
+          child: const Text('进入'),
+        ),
+        onTap: navigateToSettings,
+      ),
+    );
+  }
+
+  Widget _buildEmaSettingsItem(
+    BuildContext context, {
+    required KLineDataType dataType,
+  }) {
+    final emaService = context.watch<EmaIndicatorService?>();
+    final config = emaService?.configFor(dataType);
+    final isWeekly = dataType == KLineDataType.weekly;
+    final title = isWeekly ? '周线EMA参数设置' : '日线EMA参数设置';
+    final summary = config == null
+        ? '服务未初始化'
+        : '短期${config.shortPeriod} · 长期${config.longPeriod}';
+
+    Future<void> navigateToSettings() async {
+      if (emaService == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('EMA服务未初始化')));
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => EmaSettingsScreen(dataType: dataType),
+        ),
+      );
+      _triggerRefresh();
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: const Icon(Icons.trending_up_rounded),
         title: Text(title),
         subtitle: Text(summary),
         trailing: FilledButton.tonal(
@@ -1366,6 +1415,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     final repository = context.read<DataRepository>();
     final macdService = context.read<MacdIndicatorService?>();
     final adxService = context.read<AdxIndicatorService?>();
+    final emaService = context.read<EmaIndicatorService?>();
     final auditService = context.read<AuditService>();
 
     if (marketProvider.allData.isEmpty) {
@@ -1599,7 +1649,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           }
 
           final shouldPrewarmWeeklyIndicators =
-              (macdService != null || adxService != null) &&
+              (macdService != null || adxService != null || emaService != null) &&
               (forceRefetch || fetchResult.totalRecords > 0);
           if (shouldPrewarmWeeklyIndicators) {
             final prewarmStockCodes = forceRefetch
@@ -1691,6 +1741,24 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                     dateRange: dateRange,
                     fetchBatchSize: _weeklyAdxFetchBatchSize,
                     maxConcurrentPersistWrites: _weeklyAdxPersistConcurrency,
+                    onProgress: onProgress,
+                  );
+                },
+              );
+            }
+
+            if (emaService != null) {
+              await prewarmWithProgress(
+                preparingLabel: '准备更新周线EMA缓存',
+                workingLabel: '更新周线EMA缓存',
+                stageKey: 'weekly_ema_prewarm',
+                action: (onProgress) {
+                  return emaService.prewarmFromRepository(
+                    stockCodes: effectivePrewarmStockCodes,
+                    dataType: KLineDataType.weekly,
+                    dateRange: dateRange,
+                    fetchBatchSize: _weeklyEmaFetchBatchSize,
+                    maxConcurrentPersistWrites: _weeklyEmaPersistConcurrency,
                     onProgress: onProgress,
                   );
                 },
