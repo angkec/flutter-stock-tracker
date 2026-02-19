@@ -7,6 +7,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/storage/kline_append_result.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 

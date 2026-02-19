@@ -1,5 +1,5 @@
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
-import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart' show KLineAppendResult;
+import 'package:stock_rtwatcher/data/storage/kline_append_result.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 
 abstract class KLineMonthlyStorage {

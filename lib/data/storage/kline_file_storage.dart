@@ -7,27 +7,10 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:stock_rtwatcher/data/storage/kline_append_result.dart';
 import 'package:stock_rtwatcher/data/storage/kline_monthly_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
-
-class KLineAppendResult {
-  final bool changed;
-  final DateTime? startDate;
-  final DateTime? endDate;
-  final int recordCount;
-  final String filePath;
-  final int fileSize;
-
-  const KLineAppendResult({
-    required this.changed,
-    required this.startDate,
-    required this.endDate,
-    required this.recordCount,
-    required this.filePath,
-    required this.fileSize,
-  });
-}
 
 /// File storage for K-line data with monthly sharding
 class KLineFileStorage implements KLineMonthlyStorage {
