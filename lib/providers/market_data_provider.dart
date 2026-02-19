@@ -20,6 +20,7 @@ import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
+import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 
 /// 在隔离线程中解析股票监控数据 JSON
 List<StockMonitorData> _parseMarketDataJson(String jsonStr) {
@@ -49,6 +50,7 @@ class MarketDataProvider extends ChangeNotifier {
   BreakoutService? _breakoutService;
   MacdIndicatorService? _macdService;
   AdxIndicatorService? _adxService;
+  EmaIndicatorService? _emaService;
 
   List<StockMonitorData> _allData = [];
   bool _isLoading = false;
@@ -271,6 +273,11 @@ class MarketDataProvider extends ChangeNotifier {
   /// 设置ADX指标服务（用于日/周线ADX计算与缓存）
   void setAdxService(AdxIndicatorService service) {
     _adxService = service;
+  }
+
+  /// 设置EMA指标服务（用于日/周线EMA计算与缓存）
+  void setEmaService(EmaIndicatorService service) {
+    _emaService = service;
   }
 
   void _updateProgress(RefreshStage stage, int current, int total) {
@@ -518,6 +525,14 @@ class MarketDataProvider extends ChangeNotifier {
           }
         }
 
+        if (_emaService != null && _dailyBarsCache.isNotEmpty) {
+          try {
+            await _prewarmDailyEma();
+          } catch (e) {
+            debugPrint('EMA prewarm failed: $e');
+          }
+        }
+
         if (!silent) {
           _updateProgress(RefreshStage.analyzing, 0, 0);
         }
@@ -638,6 +653,14 @@ class MarketDataProvider extends ChangeNotifier {
           await _prewarmDailyAdx();
         } catch (e) {
           debugPrint('ADX prewarm failed: $e');
+        }
+      }
+
+      if (_emaService != null && _dailyBarsCache.isNotEmpty) {
+        try {
+          await _prewarmDailyEma();
+        } catch (e) {
+          debugPrint('EMA prewarm failed: $e');
         }
       }
 
@@ -848,7 +871,8 @@ class MarketDataProvider extends ChangeNotifier {
         'cacheSize=${_dailyBarsCache.length} '
         'breakout=${_breakoutService != null} '
         'macd=${_macdService != null} '
-        'adx=${_adxService != null}',
+        'adx=${_adxService != null} '
+        'ema=${_emaService != null}',
       );
     }
 
@@ -1101,21 +1125,68 @@ class MarketDataProvider extends ChangeNotifier {
     );
   }
 
+  Future<void> _prewarmDailyEma({
+    Set<String>? stockCodes,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (_emaService == null || _dailyBarsCache.isEmpty) {
+      if (kDebugMode) {
+        debugPrint(
+          '[DailyPrewarm][EMA] skip: service=${_emaService != null} '
+          'cacheSize=${_dailyBarsCache.length}',
+        );
+      }
+      return;
+    }
+
+    final payload = <String, List<KLine>>{};
+    for (final entry in _dailyBarsCache.entries) {
+      if (stockCodes != null && !stockCodes.contains(entry.key)) {
+        continue;
+      }
+      if (entry.value.isNotEmpty) {
+        payload[entry.key] = entry.value;
+      }
+    }
+    if (payload.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[DailyPrewarm][EMA] payload empty');
+      }
+      return;
+    }
+    if (kDebugMode) {
+      final barsCount = payload.values.fold<int>(
+        0,
+        (sum, bars) => sum + bars.length,
+      );
+      debugPrint(
+        '[DailyPrewarm][EMA] payload entries=${payload.length} bars=$barsCount',
+      );
+    }
+
+    await _emaService!.prewarmFromBars(
+      dataType: KLineDataType.daily,
+      barsByStockCode: payload,
+      onProgress: onProgress,
+    );
+  }
+
   Future<void> _prewarmDailyIndicatorsConcurrently({
     Set<String>? stockCodes,
     void Function(int current, int total)? onProgress,
   }) async {
     final hasMacd = _macdService != null && _dailyBarsCache.isNotEmpty;
     final hasAdx = _adxService != null && _dailyBarsCache.isNotEmpty;
+    final hasEma = _emaService != null && _dailyBarsCache.isNotEmpty;
     if (kDebugMode) {
       debugPrint(
         '[DailyPrewarm] start '
-        'hasMacd=$hasMacd hasAdx=$hasAdx '
+        'hasMacd=$hasMacd hasAdx=$hasAdx hasEma=$hasEma '
         'cacheSize=${_dailyBarsCache.length} '
         'stockCodes=${stockCodes?.length ?? 0}',
       );
     }
-    if (!hasMacd && !hasAdx) {
+    if (!hasMacd && !hasAdx && !hasEma) {
       if (kDebugMode) {
         debugPrint('[DailyPrewarm] skip: no indicators available');
       }
@@ -1126,18 +1197,22 @@ class MarketDataProvider extends ChangeNotifier {
     var macdTotal = 0;
     var adxCurrent = 0;
     var adxTotal = 0;
+    var emaCurrent = 0;
+    var emaTotal = 0;
 
     void emitProgress() {
       final safeMacdTotal = hasMacd ? (macdTotal <= 0 ? 1 : macdTotal) : 0;
       final safeAdxTotal = hasAdx ? (adxTotal <= 0 ? 1 : adxTotal) : 0;
-      final total = safeMacdTotal + safeAdxTotal;
+      final safeEmaTotal = hasEma ? (emaTotal <= 0 ? 1 : emaTotal) : 0;
+      final total = safeMacdTotal + safeAdxTotal + safeEmaTotal;
       if (total <= 0) {
         onProgress?.call(1, 1);
         return;
       }
       final current =
           macdCurrent.clamp(0, safeMacdTotal) +
-          adxCurrent.clamp(0, safeAdxTotal);
+          adxCurrent.clamp(0, safeAdxTotal) +
+          emaCurrent.clamp(0, safeEmaTotal);
       onProgress?.call(current.clamp(0, total), total);
     }
 
@@ -1161,6 +1236,18 @@ class MarketDataProvider extends ChangeNotifier {
           onProgress: (current, total) {
             adxCurrent = current;
             adxTotal = total;
+            emitProgress();
+          },
+        ),
+      );
+    }
+    if (hasEma) {
+      jobs.add(
+        _prewarmDailyEma(
+          stockCodes: stockCodes,
+          onProgress: (current, total) {
+            emaCurrent = current;
+            emaTotal = total;
             emitProgress();
           },
         ),

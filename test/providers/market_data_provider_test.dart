@@ -14,6 +14,7 @@ import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
+import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/market_snapshot_store.dart';
@@ -26,6 +27,7 @@ import 'package:stock_rtwatcher/services/daily_kline_sync_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
+import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
@@ -417,6 +419,27 @@ class _BlockingAdxPrewarmService extends AdxIndicatorService {
     }
     await unblock.future;
     onProgress?.call(1, 1);
+  }
+}
+
+class _RecordingEmaIndicatorService extends EmaIndicatorService {
+  _RecordingEmaIndicatorService({required super.repository});
+
+  final List<Set<String>> prewarmPayloadStockCodes = <Set<String>>[];
+
+  @override
+  Future<void> prewarmFromBars({
+    required KLineDataType dataType,
+    required Map<String, List<KLine>> barsByStockCode,
+    bool forceRecompute = false,
+    int? maxConcurrentTasks,
+    int? maxConcurrentPersistWrites,
+    int? persistBatchSize,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    prewarmPayloadStockCodes.add(barsByStockCode.keys.toSet());
+    final total = barsByStockCode.isEmpty ? 1 : barsByStockCode.length;
+    onProgress?.call(total, total);
   }
 }
 
@@ -1356,4 +1379,58 @@ void main() {
       expect(syncService.syncCallCount, 0);
     },
   );
+
+  test('forceRefetchDailyBars should prewarm daily ema cache', () async {
+    final tempDir = await Directory.systemTemp.createTemp(
+      'daily-bars-ema-prewarm-',
+    );
+    addTearDown(() async {
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+    final monitorData = StockMonitorData(
+      stock: stock,
+      ratio: 1.2,
+      changePercent: 0.5,
+    );
+
+    SharedPreferences.setMockInitialValues({
+      'market_data_cache': jsonEncode([monitorData.toJson()]),
+      'market_data_date': DateTime(2026, 2, 14).toIso8601String(),
+    });
+
+    final pool = _ReconnectableFakePool(
+      dailyBarsByCode: {'600000': _buildDailyBars(260)},
+    );
+    final provider = MarketDataProvider(
+      pool: pool,
+      stockService: StockService(pool),
+      industryService: IndustryService(),
+      dailyBarsFileStorage: _buildStorageForPath(tempDir.path),
+    );
+    provider.setPullbackService(PullbackService());
+
+    final fileStorage = KLineFileStorage();
+    fileStorage.setBaseDirPathForTesting(tempDir.path);
+    final fakeRepository = _FakeDataRepository();
+    final emaService = EmaIndicatorService(
+      repository: fakeRepository,
+      cacheStore: EmaCacheStore(storage: fileStorage),
+    );
+    await emaService.load();
+    provider.setEmaService(emaService);
+
+    await provider.loadFromCache();
+    await provider.forceRefetchDailyBars();
+
+    final emaFile = File(
+      '${tempDir.path}/ema_cache/600000_daily_ema_cache.json',
+    );
+    expect(await emaFile.exists(), isTrue);
+    expect(pool.batchFetchCalls, 1);
+    expect(fakeRepository.getKlinesCallCount, 0);
+  });
 }
