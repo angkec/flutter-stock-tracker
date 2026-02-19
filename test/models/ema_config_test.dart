@@ -8,4 +8,20 @@ void main() {
     final decoded = EmaConfig.fromJson(json);
     expect(decoded, config);
   });
+
+  test('ema config json weekly defaults fallback', () {
+    final decoded = EmaConfig.fromJson(
+      {},
+      defaults: EmaConfig.weeklyDefaults,
+    );
+    expect(decoded, EmaConfig.weeklyDefaults);
+  });
+
+  test('ema config invalid values fall back to defaults', () {
+    final decoded = EmaConfig.fromJson({
+      'shortPeriod': 30,
+      'longPeriod': 10,
+    });
+    expect(decoded, EmaConfig.dailyDefaults);
+  });
 }

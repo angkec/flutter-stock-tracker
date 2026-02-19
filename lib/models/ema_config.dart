@@ -18,10 +18,21 @@ class EmaConfig {
         'longPeriod': longPeriod,
       };
 
-  factory EmaConfig.fromJson(Map<String, dynamic> json) => EmaConfig(
-        shortPeriod: (json['shortPeriod'] as num?)?.toInt() ?? dailyDefaults.shortPeriod,
-        longPeriod: (json['longPeriod'] as num?)?.toInt() ?? dailyDefaults.longPeriod,
-      );
+  bool get isValid {
+    return shortPeriod > 0 && longPeriod > 0 && shortPeriod < longPeriod;
+  }
+
+  factory EmaConfig.fromJson(
+    Map<String, dynamic> json, {
+    EmaConfig defaults = dailyDefaults,
+  }) {
+    final config = EmaConfig(
+      shortPeriod:
+          (json['shortPeriod'] as num?)?.toInt() ?? defaults.shortPeriod,
+      longPeriod: (json['longPeriod'] as num?)?.toInt() ?? defaults.longPeriod,
+    );
+    return config.isValid ? config : defaults;
+  }
 
   @override
   bool operator ==(Object other) =>
