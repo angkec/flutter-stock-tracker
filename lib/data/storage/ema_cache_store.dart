@@ -171,6 +171,44 @@ class EmaCacheStore {
     }
   }
 
+  /// Returns the number of cached series for [dataType].
+  Future<int> countSeries(KLineDataType dataType) async {
+    final codes = await listStockCodes(dataType: dataType);
+    return codes.length;
+  }
+
+  /// Returns the most recent [updatedAt] timestamp across all cached series
+  /// for [dataType], or null if no cache entries exist.
+  Future<DateTime?> latestUpdatedAt(KLineDataType dataType) async {
+    await initialize();
+    final dir = Directory(_cacheDirectoryPath!);
+    if (!await dir.exists()) return null;
+
+    final suffix = '_${dataType.name}_ema_cache.json';
+    DateTime? latest;
+
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final fileName = entity.path.split(Platform.pathSeparator).last;
+      if (!fileName.endsWith(suffix)) continue;
+
+      try {
+        final content = await entity.readAsString();
+        final json = jsonDecode(content) as Map<String, dynamic>;
+        final updatedAt = DateTime.tryParse(
+          (json['updatedAt'] as String? ?? ''),
+        );
+        if (updatedAt != null) {
+          if (latest == null || updatedAt.isAfter(latest)) {
+            latest = updatedAt;
+          }
+        }
+      } catch (_) {}
+    }
+
+    return latest;
+  }
+
   Future<Set<String>> listStockCodes({required KLineDataType dataType}) async {
     await initialize();
     final dir = Directory(_cacheDirectoryPath!);

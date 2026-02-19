@@ -2,14 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
+import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
 import 'package:stock_rtwatcher/models/ema_config.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 
 class EmaSettingsScreen extends StatefulWidget {
-  const EmaSettingsScreen({super.key, this.dataType = KLineDataType.daily});
+  const EmaSettingsScreen({
+    super.key,
+    this.dataType = KLineDataType.daily,
+    this.emaCacheStoreForTest,
+  });
 
   final KLineDataType dataType;
+  final EmaCacheStore? emaCacheStoreForTest;
 
   @override
   State<EmaSettingsScreen> createState() => _EmaSettingsScreenState();
@@ -24,6 +30,11 @@ class _EmaSettingsScreenState extends State<EmaSettingsScreen> {
   bool _isSaving = false;
   bool _isRecomputing = false;
 
+  // 缓存统计
+  int? _cachedCount;
+  DateTime? _cacheLatestUpdatedAt;
+  bool _isLoadingStats = false;
+
   bool get _isWeekly => widget.dataType == KLineDataType.weekly;
   String get _scopeLabel => _isWeekly ? '周线' : '日线';
 
@@ -35,6 +46,27 @@ class _EmaSettingsScreenState extends State<EmaSettingsScreen> {
     );
     _shortPeriod = config.shortPeriod;
     _longPeriod = config.longPeriod;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadCacheStats());
+  }
+
+  Future<void> _loadCacheStats() async {
+    setState(() => _isLoadingStats = true);
+    final store = widget.emaCacheStoreForTest ?? EmaCacheStore();
+    try {
+      final results = await Future.wait([
+        store.countSeries(widget.dataType),
+        store.latestUpdatedAt(widget.dataType),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _cachedCount = results[0] as int;
+        _cacheLatestUpdatedAt = results[1] as DateTime?;
+        _isLoadingStats = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoadingStats = false);
+    }
   }
 
   String? _validate() {
@@ -199,6 +231,68 @@ class _EmaSettingsScreenState extends State<EmaSettingsScreen> {
     }
   }
 
+  Widget _buildCacheStatsCard() {
+    final totalStocks = context.read<MarketDataProvider>().allData.length;
+    String countText;
+    String latestText;
+    if (_isLoadingStats) {
+      countText = '--';
+      latestText = '--';
+    } else {
+      final count = _cachedCount ?? 0;
+      countText = '$count / $totalStocks';
+      final latest = _cacheLatestUpdatedAt;
+      if (latest == null) {
+        latestText = '--';
+      } else {
+        latestText =
+            '${latest.year}/${latest.month.toString().padLeft(2, '0')}/${latest.day.toString().padLeft(2, '0')} '
+            '${latest.hour.toString().padLeft(2, '0')}:${latest.minute.toString().padLeft(2, '0')}';
+      }
+    }
+
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$_scopeLabel EMA 缓存统计',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                const Text('已缓存: ', style: TextStyle(fontSize: 13)),
+                Text(
+                  countText,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                const Text('最近更新: ', style: TextStyle(fontSize: 13)),
+                Text(
+                  latestText,
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _formatEtaSeconds(int seconds) {
     if (seconds <= 0) {
       return '0s';
@@ -262,6 +356,8 @@ class _EmaSettingsScreenState extends State<EmaSettingsScreen> {
             divisions: 197,
             onChanged: (value) => setState(() => _longPeriod = value),
           ),
+          const SizedBox(height: 12),
+          _buildCacheStatsCard(),
           if (validation != null) ...[
             const SizedBox(height: 12),
             Container(
