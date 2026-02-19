@@ -79,6 +79,9 @@ void main() {
       'monthly-daily-storage-readback-',
     );
     PathProviderPlatform.instance = _TestPathProviderPlatform(tempDir.path);
+    addTearDown(() {
+      PathProviderPlatform.instance = originalPathProvider;
+    });
 
     storage = KLineFileStorageV2();
     await storage.initialize();

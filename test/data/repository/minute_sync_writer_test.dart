@@ -6,6 +6,7 @@ import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/minute_sync_writer.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/minute_sync_state_storage.dart';
@@ -17,6 +18,7 @@ class FailingSaveMetadataManager extends KLineMetadataManager {
   FailingSaveMetadataManager({
     required super.database,
     required super.fileStorage,
+    required super.dailyFileStorage,
     required this.failingStockCodes,
   });
 
@@ -42,6 +44,7 @@ class FailingSaveMetadataManager extends KLineMetadataManager {
 void main() {
   late MarketDatabase database;
   late KLineFileStorage fileStorage;
+  late KLineFileStorageV2 dailyFileStorage;
   late KLineMetadataManager metadataManager;
   late MinuteSyncStateStorage syncStateStorage;
   late MinuteSyncWriter writer;
@@ -60,12 +63,17 @@ void main() {
     fileStorage.setBaseDirPathForTesting(testDir.path);
     await fileStorage.initialize();
 
+    dailyFileStorage = KLineFileStorageV2();
+    dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+    await dailyFileStorage.initialize();
+
     database = MarketDatabase();
     await database.database;
 
     metadataManager = KLineMetadataManager(
       database: database,
       fileStorage: fileStorage,
+      dailyFileStorage: dailyFileStorage,
     );
     syncStateStorage = MinuteSyncStateStorage(database: database);
     writer = MinuteSyncWriter(

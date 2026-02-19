@@ -7,6 +7,7 @@ import 'package:stock_rtwatcher/data/models/data_status.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/date_check_storage.dart';
 import 'package:stock_rtwatcher/data/storage/minute_sync_state_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
@@ -280,6 +281,7 @@ class DelayedLoadMetadataManager extends KLineMetadataManager {
   DelayedLoadMetadataManager({
     required super.database,
     required super.fileStorage,
+    super.dailyFileStorage,
     required this.delay,
   });
 
@@ -427,6 +429,9 @@ void main() {
       fileStorage = KLineFileStorage();
       fileStorage.setBaseDirPathForTesting(testDir.path);
       await fileStorage.initialize();
+      final dailyFileStorage = KLineFileStorageV2();
+      dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+      await dailyFileStorage.initialize();
 
       // Initialize database
       database = MarketDatabase();
@@ -436,6 +441,7 @@ void main() {
       manager = KLineMetadataManager(
         database: database,
         fileStorage: fileStorage,
+        dailyFileStorage: dailyFileStorage,
       );
 
       // Create repository with the test manager
@@ -610,6 +616,7 @@ void main() {
       final delayedManager = DelayedLoadMetadataManager(
         database: database,
         fileStorage: fileStorage,
+        dailyFileStorage: dailyFileStorage,
         delay: const Duration(milliseconds: 40),
       );
       final concurrentRepository = MarketDataRepository(
@@ -1127,6 +1134,9 @@ void main() {
       fileStorage = KLineFileStorage();
       fileStorage.setBaseDirPathForTesting(testDir.path);
       await fileStorage.initialize();
+      final dailyFileStorage = KLineFileStorageV2();
+      dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+      await dailyFileStorage.initialize();
 
       // Initialize database
       database = MarketDatabase();
@@ -1136,6 +1146,7 @@ void main() {
       manager = KLineMetadataManager(
         database: database,
         fileStorage: fileStorage,
+        dailyFileStorage: dailyFileStorage,
       );
 
       // Create mock TdxClient
@@ -1341,6 +1352,9 @@ void main() {
       fileStorage = KLineFileStorage();
       fileStorage.setBaseDirPathForTesting(testDir.path);
       await fileStorage.initialize();
+      final dailyFileStorage = KLineFileStorageV2();
+      dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+      await dailyFileStorage.initialize();
 
       // 初始化数据库
       database = MarketDatabase();
@@ -1350,6 +1364,7 @@ void main() {
       manager = KLineMetadataManager(
         database: database,
         fileStorage: fileStorage,
+        dailyFileStorage: dailyFileStorage,
       );
 
       // 创建 mock TdxClient
@@ -2683,6 +2698,9 @@ void main() {
       fileStorage = KLineFileStorage();
       fileStorage.setBaseDirPathForTesting(testDir.path);
       await fileStorage.initialize();
+      final dailyFileStorage = KLineFileStorageV2();
+      dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+      await dailyFileStorage.initialize();
 
       // 初始化数据库
       database = MarketDatabase();
@@ -2692,6 +2710,7 @@ void main() {
       manager = KLineMetadataManager(
         database: database,
         fileStorage: fileStorage,
+        dailyFileStorage: dailyFileStorage,
       );
 
       // 创建 mock TdxClient
@@ -2824,6 +2843,9 @@ void main() {
       fileStorage = KLineFileStorage();
       fileStorage.setBaseDirPathForTesting(testDir.path);
       await fileStorage.initialize();
+      final dailyFileStorage = KLineFileStorageV2();
+      dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+      await dailyFileStorage.initialize();
 
       // Initialize database
       database = MarketDatabase();
@@ -2833,6 +2855,7 @@ void main() {
       manager = KLineMetadataManager(
         database: database,
         fileStorage: fileStorage,
+        dailyFileStorage: dailyFileStorage,
       );
 
       // Create repository with the test manager
@@ -3252,6 +3275,9 @@ void main() {
       fileStorage = KLineFileStorage();
       fileStorage.setBaseDirPathForTesting(testDir.path);
       await fileStorage.initialize();
+      final dailyFileStorage = KLineFileStorageV2();
+      dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+      await dailyFileStorage.initialize();
 
       database = MarketDatabase();
       await database.database;
@@ -3259,6 +3285,7 @@ void main() {
       manager = KLineMetadataManager(
         database: database,
         fileStorage: fileStorage,
+        dailyFileStorage: dailyFileStorage,
       );
       syncStateStorage = MinuteSyncStateStorage(database: database);
 
