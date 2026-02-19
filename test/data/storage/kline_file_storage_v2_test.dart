@@ -79,4 +79,62 @@ void main() {
     expect(await File(newPath).exists(), isTrue);
     expect(await legacyFile.exists(), isFalse);
   });
+
+  test(
+      'KLineFileStorageV2 migration skips overwrite when new file already exists',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('kline_v2_');
+    addTearDown(() async {
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    });
+    final storage = KLineFileStorageV2()..setBaseDirPathForTesting(dir.path);
+
+    final legacyBars = [
+      KLine(
+        datetime: DateTime(2026, 2, 18),
+        open: 10,
+        close: 11,
+        high: 11.5,
+        low: 9.5,
+        volume: 100,
+        amount: 200,
+      ),
+    ];
+
+    final newBars = [
+      KLine(
+        datetime: DateTime(2026, 2, 18),
+        open: 10,
+        close: 99,
+        high: 99.5,
+        low: 9.5,
+        volume: 100,
+        amount: 200,
+      ),
+    ];
+
+    final codec = BinaryKLineCodec();
+    final legacyEncoded = codec.encode(legacyBars);
+    final newEncoded = codec.encode(newBars);
+
+    final newPath =
+        await storage.getFilePathAsync('000001', KLineDataType.daily, 2026, 2);
+    final legacyPath = newPath.replaceAll('.bin.zlib', '.bin.z');
+
+    await File(newPath).writeAsBytes(newEncoded);
+
+    await storage.migrateLegacyFileForTesting(
+      File(legacyPath),
+      newPath,
+      legacyEncoded,
+    );
+
+    final finalBytes = await File(newPath).readAsBytes();
+    final decoded = codec.decode(finalBytes);
+
+    expect(decoded.length, 1);
+    expect(decoded.first.close, 99);
+  });
 }

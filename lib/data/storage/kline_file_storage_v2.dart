@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/kline_append_result.dart';
@@ -269,7 +270,11 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
       await legacyFile.rename(newFilePath);
     } catch (_) {
       try {
-        await File(newFilePath).writeAsBytes(encoded);
+        final newFile = File(newFilePath);
+        if (await newFile.exists()) {
+          return;
+        }
+        await newFile.writeAsBytes(encoded);
         if (await legacyFile.exists()) {
           await legacyFile.delete();
         }
@@ -277,5 +282,14 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
         // Migration is best-effort; decoding succeeded so keep data in memory.
       }
     }
+  }
+
+  @visibleForTesting
+  Future<void> migrateLegacyFileForTesting(
+    File legacyFile,
+    String newFilePath,
+    List<int> encoded,
+  ) {
+    return _migrateLegacyFile(legacyFile, newFilePath, encoded);
   }
 }
