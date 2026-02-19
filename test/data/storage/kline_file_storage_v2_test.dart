@@ -8,6 +8,11 @@ import 'package:stock_rtwatcher/models/kline.dart';
 void main() {
   test('KLineFileStorageV2 save/load roundtrip', () async {
     final dir = await Directory.systemTemp.createTemp('kline_v2_');
+    addTearDown(() async {
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+    });
     final storage = KLineFileStorageV2()..setBaseDirPathForTesting(dir.path);
 
     final bars = [
@@ -23,6 +28,9 @@ void main() {
     ];
 
     await storage.saveMonthlyKlineFile('000001', KLineDataType.daily, 2026, 2, bars);
+    final filePath =
+        await storage.getFilePathAsync('000001', KLineDataType.daily, 2026, 2);
+    expect(filePath, endsWith('.bin.zlib'));
     final loaded =
         await storage.loadMonthlyKlineFile('000001', KLineDataType.daily, 2026, 2);
 

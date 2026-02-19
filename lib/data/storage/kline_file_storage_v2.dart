@@ -50,7 +50,7 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
   ) {
     final baseDirectory = _getBaseSyncDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     return '$baseDirectory/$fileName';
   }
 
@@ -64,7 +64,7 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
   ) async {
     final baseDirectory = await _getBaseDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     return '$baseDirectory/$fileName';
   }
 
@@ -110,7 +110,7 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
   ) async {
     final baseDir = await _getBaseDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     final filePath = '$baseDir/$fileName';
 
     final file = File(filePath);
@@ -148,7 +148,7 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
     }
 
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     final filePath = '$baseDir/$fileName';
 
     // Make temp filename unique to avoid race conditions
@@ -234,7 +234,7 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
   ) async {
     final baseDir = await _getBaseDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     final filePath = '$baseDir/$fileName';
 
     final file = File(filePath);
