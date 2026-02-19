@@ -233,8 +233,12 @@ class MacdIndicatorService extends ChangeNotifier {
     void Function(int current, int total)? onProgress,
   }) async {
     if (kDebugMode) {
+      final barsCount = barsByStockCode.values.fold<int>(
+        0,
+        (sum, bars) => sum + bars.length,
+      );
       debugPrint(
-        '[MACD] prewarmFromBars dataType=$dataType entries=${barsByStockCode.length} force=$forceRecompute',
+        '[MACD] prewarmFromBars dataType=$dataType entries=${barsByStockCode.length} bars=$barsCount force=$forceRecompute',
       );
     }
     if (barsByStockCode.isEmpty) {

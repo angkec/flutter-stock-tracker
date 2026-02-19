@@ -203,8 +203,12 @@ class AdxIndicatorService extends ChangeNotifier {
     void Function(int current, int total)? onProgress,
   }) async {
     if (kDebugMode) {
+      final barsCount = barsByStockCode.values.fold<int>(
+        0,
+        (sum, bars) => sum + bars.length,
+      );
       debugPrint(
-        '[ADX] prewarmFromBars dataType=$dataType entries=${barsByStockCode.length} force=$forceRecompute',
+        '[ADX] prewarmFromBars dataType=$dataType entries=${barsByStockCode.length} bars=$barsCount force=$forceRecompute',
       );
     }
     if (barsByStockCode.isEmpty) {
@@ -302,13 +306,14 @@ class AdxIndicatorService extends ChangeNotifier {
     required KLineDataType dataType,
     required DateRange dateRange,
     bool forceRecompute = false,
+    bool ignoreSnapshot = false,
     int? fetchBatchSize,
     int? maxConcurrentPersistWrites,
     void Function(int current, int total)? onProgress,
   }) async {
     if (kDebugMode) {
       debugPrint(
-        '[ADX] prewarmFromRepository force=$forceRecompute ignoreSnapshot=false stocks=${stockCodes.length}',
+        '[ADX] prewarmFromRepository force=$forceRecompute ignoreSnapshot=$ignoreSnapshot stocks=${stockCodes.length}',
       );
     }
     if (stockCodes.isEmpty) {
@@ -323,7 +328,7 @@ class AdxIndicatorService extends ChangeNotifier {
     final configSignature = _buildConfigSignature(configFor(dataType));
 
     int? currentDataVersion;
-    if (!forceRecompute) {
+    if (!forceRecompute && !ignoreSnapshot) {
       try {
         currentDataVersion = await _repository.getCurrentVersion();
         final prewarmSnapshot = await _loadPrewarmSnapshot(dataType);

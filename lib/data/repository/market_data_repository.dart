@@ -148,6 +148,16 @@ class MarketDataRepository implements DataRepository {
       List.generate(workerCount, (_) => runWorker(), growable: false),
     );
 
+    if (kDebugMode) {
+      final barsCount = result.values.fold<int>(
+        0,
+        (sum, bars) => sum + bars.length,
+      );
+      debugPrint(
+        '[Repo] getKlines loaded dataType=$dataType stocks=${stockCodes.length} bars=$barsCount',
+      );
+    }
+
     return result;
   }
 
