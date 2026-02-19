@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -114,6 +115,22 @@ List<DateTime> _selectRecentTradingDates(
   return weekdays.sublist(weekdays.length - count);
 }
 
+List<String> _deriveEligibleStocks({
+  required List<String> allStocks,
+  required Map<String, int> dailyShort,
+  required Map<String, int> weeklyShort,
+  required Map<String, String> dailyErrors,
+  required Map<String, String> weeklyErrors,
+}) {
+  final blocked = <String>{
+    ...dailyShort.keys,
+    ...weeklyShort.keys,
+    ...dailyErrors.keys,
+    ...weeklyErrors.keys,
+  };
+  return allStocks.where((code) => !blocked.contains(code)).toList();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -169,6 +186,24 @@ void main() {
     expect(_failsOkRate(failedCount: 0, total: 0), isFalse);
   });
 
+  test('deriveEligibleStocks excludes short or errored stocks', () {
+    final all = ['000001', '000002', '000003', '000004'];
+    final dailyShort = {'000002': 200};
+    final weeklyShort = {'000003': 80};
+    final dailyErrors = {'000004': 'empty_fetch_result'};
+    final weeklyErrors = <String, String>{};
+
+    final eligible = _deriveEligibleStocks(
+      allStocks: all,
+      dailyShort: dailyShort,
+      weeklyShort: weeklyShort,
+      dailyErrors: dailyErrors,
+      weeklyErrors: weeklyErrors,
+    );
+
+    expect(eligible, ['000001']);
+  });
+
   test('selectRecentTradingDates returns last N sorted dates', () {
     final dates = <DateTime>[
       DateTime(2024, 1, 2),
@@ -220,6 +255,19 @@ void main() {
       final startedAt = DateTime.now();
       final dateKey = _formatDate(startedAt);
 
+      final anchorDay = _dateOnly(startedAt);
+      final anchorDate = DateTime(
+        anchorDay.year,
+        anchorDay.month,
+        anchorDay.day,
+        23,
+        59,
+        59,
+        999,
+        999,
+      );
+      final now = DateTime.now();
+
       final stageDurations = <String, Duration>{};
       final stageTotals = <String, int>{};
       final stageSuccess = <String, int>{};
@@ -244,6 +292,9 @@ void main() {
       StackTrace? caughtStack;
       String? failureSummary;
 
+      List<String> stockCodes = const [];
+      List<String> eligibleStocks = const [];
+
       Directory? rootDir;
       Directory? fileRoot;
       Directory? dbRoot;
@@ -254,10 +305,20 @@ void main() {
       DateRange? weeklyRange;
       DateRange? minuteRange;
 
+      weeklyRange = DateRange(
+        now.subtract(const Duration(days: _weeklyRangeDays)),
+        DateTime(now.year, now.month, now.day, 23, 59, 59, 999, 999),
+      );
+
       try {
-        rootDir = await Directory.systemTemp.createTemp(
-          'data_layer_real_e2e_',
+        final cacheRoot = Directory(
+          p.join(Directory.current.path, 'build', 'real_e2e_cache', dateKey),
         );
+        if (await cacheRoot.exists()) {
+          await cacheRoot.delete(recursive: true);
+        }
+        await cacheRoot.create(recursive: true);
+        rootDir = cacheRoot;
         fileRoot = Directory(p.join(rootDir.path, 'files'));
         dbRoot = Directory(p.join(rootDir.path, 'db'));
         await fileRoot.create(recursive: true);
@@ -331,24 +392,11 @@ void main() {
         final stockService = StockService(activePool);
         final stocks = await stockService.getAllStocks();
         expect(stocks, isNotEmpty);
-        final stockCodes =
-            stocks.map((stock) => stock.code).toList(growable: false);
+        stockCodes = stocks.map((stock) => stock.code).toList(growable: false);
 
         stageTotals['daily'] = stockCodes.length;
         stageTotals['weekly'] = stockCodes.length;
         stageTotals['minute'] = stockCodes.length;
-
-        final anchorDay = _dateOnly(DateTime.now());
-        final anchorDate = DateTime(
-          anchorDay.year,
-          anchorDay.month,
-          anchorDay.day,
-          23,
-          59,
-          59,
-          999,
-          999,
-        );
 
         // Stage 1: Daily sync (force full)
         print('[E2E] Stage daily start');
@@ -418,11 +466,6 @@ void main() {
         // Stage 2: Weekly refetch
         print('[E2E] Stage weekly start');
         final weeklyStageStopwatch = Stopwatch()..start();
-        final now = DateTime.now();
-        weeklyRange = DateRange(
-          now.subtract(const Duration(days: _weeklyRangeDays)),
-          DateTime(now.year, now.month, now.day, 23, 59, 59, 999, 999),
-        );
         final weeklyStopwatch = Stopwatch()..start();
         final activeWeeklyRange = weeklyRange!;
         final weeklyResult = await activeRepo.refetchData(
@@ -567,6 +610,20 @@ void main() {
           '[E2E] Stage minute done, duration=${_formatDuration(minuteStageStopwatch.elapsed)}',
         );
 
+        eligibleStocks = _deriveEligibleStocks(
+          allStocks: stockCodes,
+          dailyShort: dailyShort,
+          weeklyShort: weeklyShort,
+          dailyErrors: {
+            ...?allowedErrors['daily'],
+            ...?fatalErrors['daily'],
+          },
+          weeklyErrors: {
+            ...?allowedErrors['weekly'],
+            ...?fatalErrors['weekly'],
+          },
+        );
+
         final dailyTotal = stageTotals['daily'] ?? 0;
         final weeklyTotal = stageTotals['weekly'] ?? 0;
         final minuteTotal = stageTotals['minute'] ?? 0;
@@ -619,6 +676,9 @@ void main() {
         await reportDir.create(recursive: true);
         final reportFile = File(
           p.join(reportDir.path, '${dateKey}-data-layer-real-e2e.md'),
+        );
+        final manifestFile = File(
+          p.join(reportDir.path, '${dateKey}-data-layer-real-e2e.json'),
         );
 
         final buffer = StringBuffer();
@@ -745,6 +805,26 @@ void main() {
 
         await reportFile.writeAsString(buffer.toString(), flush: true);
 
+        final manifest = {
+          'date': dateKey,
+          'generatedAt': endedAt.toIso8601String(),
+          'cacheRoot': rootDir?.path ?? '',
+          'fileRoot': fileRoot?.path ?? '',
+          'dbRoot': dbRoot?.path ?? '',
+          'daily': {
+            'anchorDate': _formatDate(anchorDay),
+            'targetBars': _dailyTargetBars,
+          },
+          'weekly': {
+            'rangeDays': _weeklyRangeDays,
+            'rangeStart': _formatDate(weeklyRange!.start),
+            'rangeEnd': _formatDate(weeklyRange!.end),
+            'targetBars': _weeklyTargetBars,
+          },
+          'eligibleStocks': eligibleStocks,
+        };
+        await manifestFile.writeAsString(jsonEncode(manifest), flush: true);
+
         if (repository != null) {
           await repository.dispose();
         }
@@ -756,9 +836,6 @@ void main() {
             await database.close();
           } catch (_) {}
           MarketDatabase.resetInstance();
-        }
-        if (rootDir != null && await rootDir.exists()) {
-          await rootDir.delete(recursive: true);
         }
       }
 
