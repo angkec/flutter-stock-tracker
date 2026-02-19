@@ -7,6 +7,7 @@ import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
+import 'package:stock_rtwatcher/data/storage/daily_kline_monthly_writer.dart';
 import 'package:stock_rtwatcher/config/minute_sync_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/screens/main_screen.dart';
@@ -98,6 +99,7 @@ class MyApp extends StatelessWidget {
                     );
                     return barsByCode;
                   },
+              monthlyWriter: DailyKlineMonthlyWriterImpl().call,
             );
           },
         ),

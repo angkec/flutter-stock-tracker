@@ -2,9 +2,12 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
+import 'package:stock_rtwatcher/data/storage/daily_kline_monthly_writer.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/daily_kline_sync_service.dart';
@@ -104,6 +107,50 @@ class _RecordingMonthlyWriter {
   }) async {
     callCount++;
     lastPayload = Map.of(barsByStock);
+  }
+}
+
+class _SaveCall {
+  final String stockCode;
+  final List<KLine> bars;
+  final KLineDataType dataType;
+  final bool bumpVersion;
+
+  const _SaveCall({
+    required this.stockCode,
+    required this.bars,
+    required this.dataType,
+    required this.bumpVersion,
+  });
+}
+
+class _RecordingMetadataManager extends KLineMetadataManager {
+  _RecordingMetadataManager() : super();
+
+  final List<_SaveCall> saveCalls = [];
+  final List<String> versionCalls = [];
+
+  @override
+  Future<void> saveKlineData({
+    required String stockCode,
+    required List<KLine> newBars,
+    required KLineDataType dataType,
+    bool bumpVersion = true,
+  }) async {
+    saveCalls.add(
+      _SaveCall(
+        stockCode: stockCode,
+        bars: newBars,
+        dataType: dataType,
+        bumpVersion: bumpVersion,
+      ),
+    );
+  }
+
+  @override
+  Future<int> incrementDataVersion(String description) async {
+    versionCalls.add(description);
+    return versionCalls.length;
   }
 }
 
@@ -318,4 +365,29 @@ void main() {
       );
     },
   );
+
+  test('monthly writer persists each stock and bumps version once', () async {
+    final manager = _RecordingMetadataManager();
+    final writer = DailyKlineMonthlyWriterImpl(manager: manager);
+
+    await writer({
+      '000001': [_bar(DateTime(2026, 2, 17))],
+      '000002': [_bar(DateTime(2026, 2, 17))],
+    });
+
+    expect(manager.saveCalls.length, 2);
+    expect(
+      manager.saveCalls.map((call) => call.stockCode),
+      unorderedEquals(['000001', '000002']),
+    );
+    expect(
+      manager.saveCalls.every((call) => call.dataType == KLineDataType.daily),
+      isTrue,
+    );
+    expect(
+      manager.saveCalls.every((call) => call.bumpVersion == false),
+      isTrue,
+    );
+    expect(manager.versionCalls, ['Daily sync monthly persist']);
+  });
 }
