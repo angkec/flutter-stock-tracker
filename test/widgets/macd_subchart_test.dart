@@ -4,6 +4,7 @@ import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
 import 'package:stock_rtwatcher/models/macd_config.dart';
 import 'package:stock_rtwatcher/models/macd_point.dart';
+import 'package:stock_rtwatcher/theme/theme.dart';
 import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
 import 'package:stock_rtwatcher/widgets/macd_subchart.dart';
 
@@ -348,4 +349,36 @@ void main() {
     expect(find.text('DEA 2.45'), findsOneWidget);
     expect(find.text('MACD 0.98'), findsOneWidget);
   });
+
+  testWidgets(
+    'colors macd histogram red when crossing from negative to positive',
+    (tester) async {
+      final painter = MacdSubChartPainter(
+        points: [
+          MacdPoint(
+            datetime: DateTime(2026, 1, 1),
+            dif: 0.1,
+            dea: 0.08,
+            hist: -0.4,
+          ),
+          MacdPoint(
+            datetime: DateTime(2026, 1, 2),
+            dif: 0.12,
+            dea: 0.09,
+            hist: 0.1,
+          ),
+        ],
+        totalSlotCount: 2,
+        firstSlotIndex: 0,
+      );
+
+      final downColor = AppColors.stockDown.withValues(alpha: 0.88);
+      final upColor = AppColors.stockUp.withValues(alpha: 0.88);
+
+      expect(
+        (Canvas canvas) => painter.paint(canvas, const Size(120, 80)),
+        paints..rect(color: downColor)..rect(color: upColor),
+      );
+    },
+  );
 }

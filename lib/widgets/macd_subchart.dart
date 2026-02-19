@@ -570,6 +570,12 @@ class MacdSubChartPainter extends CustomPainter {
       final point = points[i];
       final centerX = sidePadding + spacing * (firstSlotIndex + i + 0.5);
 
+      final prevHist = i > 0 ? points[i - 1].hist : null;
+      final isCrossingUp = prevHist != null && prevHist < 0 && point.hist >= 0;
+      final isShorter = prevHist != null
+          ? point.hist.abs() < prevHist.abs()
+          : false;
+
       final histY = toY(point.hist);
       final rectTop = math.min(zeroY, histY);
       final rectBottom = math.max(zeroY, histY);
@@ -579,7 +585,13 @@ class MacdSubChartPainter extends CustomPainter {
         centerX + barWidth / 2,
         rectBottom,
       );
-      canvas.drawRect(rect, point.hist >= 0 ? upPaint : downPaint);
+      final isAboveZero = point.hist >= 0;
+      final barPaint = isCrossingUp
+          ? upPaint
+          : (isAboveZero
+              ? (isShorter ? downPaint : upPaint)
+              : (isShorter ? upPaint : downPaint));
+      canvas.drawRect(rect, barPaint);
 
       final difY = toY(point.dif);
       final deaY = toY(point.dea);
