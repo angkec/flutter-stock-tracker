@@ -166,9 +166,10 @@ void main() {
 
   test('incremental sync forwards successful payload to monthly writer', () async {
     final monthlyWriter = _RecordingMonthlyWriter();
+    final cacheStore = _FakeCacheStore();
     final service = DailyKlineSyncService(
       checkpointStore: _FakeCheckpointStore(),
-      cacheStore: _FakeCacheStore(),
+      cacheStore: cacheStore,
       fetcher:
           ({
             required List<Stock> stocks,
@@ -198,6 +199,7 @@ void main() {
     expect(result.failureStockCodes, ['300001']);
     expect(monthlyWriter.callCount, 1);
     expect(monthlyWriter.lastPayload.keys, ['000001']);
+    expect(monthlyWriter.lastPayload, cacheStore.lastSaved);
   });
 
   test('forceFull sync ignores checkpoints and targets all stocks', () async {
