@@ -291,6 +291,7 @@ void main() {
       Object? caughtError;
       StackTrace? caughtStack;
       String? failureSummary;
+      String? originalDbPath;
 
       List<String> stockCodes = const [];
       List<String> eligibleStocks = const [];
@@ -323,6 +324,7 @@ void main() {
         dbRoot = Directory(p.join(rootDir.path, 'db'));
         await fileRoot.create(recursive: true);
         await dbRoot.create(recursive: true);
+        originalDbPath = await databaseFactory.getDatabasesPath();
         await databaseFactory.setDatabasesPath(dbRoot.path);
 
         final fileStorage = KLineFileStorage();
@@ -838,6 +840,9 @@ void main() {
             await database.close();
           } catch (_) {}
           MarketDatabase.resetInstance();
+        }
+        if (originalDbPath != null) {
+          await databaseFactory.setDatabasesPath(originalDbPath!);
         }
       }
 
