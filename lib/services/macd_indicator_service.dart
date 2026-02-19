@@ -232,6 +232,11 @@ class MacdIndicatorService extends ChangeNotifier {
     int? persistBatchSize,
     void Function(int current, int total)? onProgress,
   }) async {
+    if (kDebugMode) {
+      debugPrint(
+        '[MACD] prewarmFromBars dataType=$dataType entries=${barsByStockCode.length} force=$forceRecompute',
+      );
+    }
     if (barsByStockCode.isEmpty) {
       onProgress?.call(1, 1);
       return;
@@ -331,6 +336,11 @@ class MacdIndicatorService extends ChangeNotifier {
     int? maxConcurrentPersistWrites,
     void Function(int current, int total)? onProgress,
   }) async {
+    if (kDebugMode) {
+      debugPrint(
+        '[MACD] prewarmFromRepository force=$forceRecompute ignoreSnapshot=$ignoreSnapshot stocks=${stockCodes.length}',
+      );
+    }
     if (stockCodes.isEmpty) {
       onProgress?.call(1, 1);
       return;
@@ -353,12 +363,18 @@ class MacdIndicatorService extends ChangeNotifier {
             prewarmSnapshot.configSignature == configSignature &&
             prewarmSnapshot.stockScopeSignature == stockScopeSignature;
         if (canSkip) {
+          if (kDebugMode) {
+            debugPrint('[MACD] prewarmFromRepository skipSnapshot=true');
+          }
           onProgress?.call(1, 1);
           return;
         }
       } catch (_) {
         // Ignore version snapshot failures and continue with full prewarm.
       }
+    }
+    if (kDebugMode) {
+      debugPrint('[MACD] prewarmFromRepository skipSnapshot=false');
     }
 
     final batchSize = max(

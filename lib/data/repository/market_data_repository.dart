@@ -114,6 +114,11 @@ class MarketDataRepository implements DataRepository {
     required DateRange dateRange,
     required KLineDataType dataType,
   }) async {
+    if (kDebugMode) {
+      debugPrint(
+        '[Repo] getKlines dataType=$dataType range=${dateRange.start}~${dateRange.end} stocks=${stockCodes.length}',
+      );
+    }
     final result = <String, List<KLine>>{};
     if (stockCodes.isEmpty) {
       return result;

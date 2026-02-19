@@ -202,6 +202,11 @@ class AdxIndicatorService extends ChangeNotifier {
     int? persistBatchSize,
     void Function(int current, int total)? onProgress,
   }) async {
+    if (kDebugMode) {
+      debugPrint(
+        '[ADX] prewarmFromBars dataType=$dataType entries=${barsByStockCode.length} force=$forceRecompute',
+      );
+    }
     if (barsByStockCode.isEmpty) {
       onProgress?.call(1, 1);
       return;
@@ -301,6 +306,11 @@ class AdxIndicatorService extends ChangeNotifier {
     int? maxConcurrentPersistWrites,
     void Function(int current, int total)? onProgress,
   }) async {
+    if (kDebugMode) {
+      debugPrint(
+        '[ADX] prewarmFromRepository force=$forceRecompute ignoreSnapshot=false stocks=${stockCodes.length}',
+      );
+    }
     if (stockCodes.isEmpty) {
       onProgress?.call(1, 1);
       return;
@@ -331,6 +341,9 @@ class AdxIndicatorService extends ChangeNotifier {
             cachedStockCodeSet.contains,
           );
           if (hasCompleteCache) {
+            if (kDebugMode) {
+              debugPrint('[ADX] prewarmFromRepository skipSnapshot=true');
+            }
             onProgress?.call(1, 1);
             return;
           }
@@ -338,6 +351,9 @@ class AdxIndicatorService extends ChangeNotifier {
       } catch (_) {
         // Continue with full prewarm when snapshot check fails.
       }
+    }
+    if (kDebugMode) {
+      debugPrint('[ADX] prewarmFromRepository skipSnapshot=false');
     }
 
     final batchSize = max(
