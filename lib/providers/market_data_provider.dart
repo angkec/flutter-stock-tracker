@@ -81,6 +81,7 @@ class MarketDataProvider extends ChangeNotifier {
   int _dailyBarsDiskCacheBytes = 0;
   DailySyncCompletenessState _lastDailySyncCompletenessState =
       DailySyncCompletenessState.unknownRetry;
+  DailyKlineReadReport? _lastDailySyncReadReport;
 
   // 分时数据计数（不保留完整对象，避免 Android OOM）
   int _minuteDataCount = 0;
@@ -169,6 +170,8 @@ class MarketDataProvider extends ChangeNotifier {
       _lastDailySyncCompletenessState;
   String get lastDailySyncCompletenessStateWire =>
       _lastDailySyncCompletenessState.wireValue;
+  DailyKlineReadReport? get lastDailySyncReadReport =>
+      _lastDailySyncReadReport;
   String get minuteDataCacheSize => _formatSize(_minuteDataCount * 240 * 40);
   String? get industryDataCacheSize => _industryService.isLoaded
       ? _formatSize(_estimateIndustryDataSize())
@@ -735,6 +738,13 @@ class MarketDataProvider extends ChangeNotifier {
     if (_allData.isEmpty) return;
 
     final totalStocks = _allData.length <= 0 ? 1 : _allData.length;
+    if (kDebugMode) {
+      debugPrint(
+        '[DailySync] start mode=$mode stocks=$totalStocks '
+        'targetBars=$_dailyCacheTargetBars '
+        'indicatorTargets=${indicatorTargetStockCodes?.length ?? 0}',
+      );
+    }
     final totalStopwatch = Stopwatch()..start();
     final stageStopwatch = Stopwatch();
 
@@ -772,6 +782,12 @@ class MarketDataProvider extends ChangeNotifier {
       },
     );
     _lastDailySyncCompletenessState = syncResult.completenessState;
+    if (kDebugMode) {
+      debugPrint(
+        '[DailySync] sync finished completeness=$_lastDailySyncCompletenessState '
+        'failures=${syncResult.failureStockCodes.length}',
+      );
+    }
 
     if (syncResult.failureStockCodes.isNotEmpty) {
       throw StateError(
@@ -780,11 +796,38 @@ class MarketDataProvider extends ChangeNotifier {
       );
     }
 
-    await _reloadDailyBarsOrThrow(
-      stockCodes: stocks.map((stock) => stock.code).toList(growable: false),
-      anchorDate: _dataDate ?? DateTime.now(),
-      targetBars: _dailyCacheTargetBars,
-    );
+    _lastDailySyncReadReport = null;
+    if (kDebugMode) {
+      debugPrint(
+        '[DailySync] reload daily bars start '
+        'stocks=${stocks.length} '
+        'anchorDate=${_dataDate ?? DateTime.now()} '
+        'targetBars=$_dailyCacheTargetBars',
+      );
+    }
+    DailyKlineReadReport readReport;
+    try {
+      readReport = await _reloadDailyBarsWithReport(
+        stockCodes: stocks.map((stock) => stock.code).toList(growable: false),
+        anchorDate: _dataDate ?? DateTime.now(),
+        targetBars: _dailyCacheTargetBars,
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[DailySync] reload daily bars failed: $error');
+      if (kDebugMode) {
+        debugPrint('$stackTrace');
+      }
+      rethrow;
+    }
+    if (kDebugMode) {
+      debugPrint(
+        '[DailySync] reload daily bars done '
+        'cacheSize=${_dailyBarsCache.length} '
+        'missing=${readReport.missingCount} '
+        'corrupted=${readReport.corruptedCount} '
+        'insufficient=${readReport.insufficientCount}',
+      );
+    }
 
     stageStopwatch.stop();
     final fetchAndPersistMs = stageStopwatch.elapsedMilliseconds;
@@ -798,32 +841,75 @@ class MarketDataProvider extends ChangeNotifier {
         ? totalStocks
         : normalizedIndicatorTargets.length;
 
+    if (kDebugMode) {
+      debugPrint(
+        '[DailySync] indicators start '
+        'targets=$indicatorTotal '
+        'cacheSize=${_dailyBarsCache.length} '
+        'breakout=${_breakoutService != null} '
+        'macd=${_macdService != null} '
+        'adx=${_adxService != null}',
+      );
+    }
+
     resetStageTimer();
     onProgress?.call(
       '3/4 计算指标...',
       0,
       indicatorTotal <= 0 ? 1 : indicatorTotal,
     );
-    await _detectBreakouts(
-      targetStockCodes: normalizedIndicatorTargets,
-      onProgress: (current, total) {
-        final safeTotal = total <= 0
-            ? (indicatorTotal <= 0 ? 1 : indicatorTotal)
-            : total;
-        final safeCurrent = current.clamp(0, safeTotal);
-        onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
-      },
-    );
+    final breakoutStopwatch = Stopwatch()..start();
+    try {
+      await _detectBreakouts(
+        targetStockCodes: normalizedIndicatorTargets,
+        onProgress: (current, total) {
+          final safeTotal = total <= 0
+              ? (indicatorTotal <= 0 ? 1 : indicatorTotal)
+              : total;
+          final safeCurrent = current.clamp(0, safeTotal);
+          onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
+        },
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[DailySync] detectBreakouts failed: $error');
+      if (kDebugMode) {
+        debugPrint('$stackTrace');
+      }
+      rethrow;
+    } finally {
+      breakoutStopwatch.stop();
+    }
+    if (kDebugMode) {
+      debugPrint(
+        '[DailySync] detectBreakouts done ms=${breakoutStopwatch.elapsedMilliseconds}',
+      );
+    }
 
-    await _prewarmDailyIndicatorsConcurrently(
-      stockCodes: normalizedIndicatorTargets,
-      onProgress: (current, total) {
-        final fallbackTotal = indicatorTotal <= 0 ? 1 : indicatorTotal;
-        final safeTotal = total <= 0 ? fallbackTotal : total;
-        final safeCurrent = current.clamp(0, safeTotal);
-        onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
-      },
-    );
+    final prewarmStopwatch = Stopwatch()..start();
+    try {
+      await _prewarmDailyIndicatorsConcurrently(
+        stockCodes: normalizedIndicatorTargets,
+        onProgress: (current, total) {
+          final fallbackTotal = indicatorTotal <= 0 ? 1 : indicatorTotal;
+          final safeTotal = total <= 0 ? fallbackTotal : total;
+          final safeCurrent = current.clamp(0, safeTotal);
+          onProgress?.call('3/4 计算指标...', safeCurrent, safeTotal);
+        },
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[DailySync] prewarm indicators failed: $error');
+      if (kDebugMode) {
+        debugPrint('$stackTrace');
+      }
+      rethrow;
+    } finally {
+      prewarmStopwatch.stop();
+    }
+    if (kDebugMode) {
+      debugPrint(
+        '[DailySync] prewarm indicators done ms=${prewarmStopwatch.elapsedMilliseconds}',
+      );
+    }
     stageStopwatch.stop();
     final indicatorsMs = stageStopwatch.elapsedMilliseconds;
 
@@ -928,6 +1014,12 @@ class MarketDataProvider extends ChangeNotifier {
     void Function(int current, int total)? onProgress,
   }) async {
     if (_macdService == null || _dailyBarsCache.isEmpty) {
+      if (kDebugMode) {
+        debugPrint(
+          '[DailyPrewarm][MACD] skip: service=${_macdService != null} '
+          'cacheSize=${_dailyBarsCache.length}',
+        );
+      }
       return;
     }
 
@@ -941,7 +1033,19 @@ class MarketDataProvider extends ChangeNotifier {
       }
     }
     if (payload.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[DailyPrewarm][MACD] payload empty');
+      }
       return;
+    }
+    if (kDebugMode) {
+      final barsCount = payload.values.fold<int>(
+        0,
+        (sum, bars) => sum + bars.length,
+      );
+      debugPrint(
+        '[DailyPrewarm][MACD] payload entries=${payload.length} bars=$barsCount',
+      );
     }
 
     await _macdService!.prewarmFromBars(
@@ -956,6 +1060,12 @@ class MarketDataProvider extends ChangeNotifier {
     void Function(int current, int total)? onProgress,
   }) async {
     if (_adxService == null || _dailyBarsCache.isEmpty) {
+      if (kDebugMode) {
+        debugPrint(
+          '[DailyPrewarm][ADX] skip: service=${_adxService != null} '
+          'cacheSize=${_dailyBarsCache.length}',
+        );
+      }
       return;
     }
 
@@ -969,7 +1079,19 @@ class MarketDataProvider extends ChangeNotifier {
       }
     }
     if (payload.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[DailyPrewarm][ADX] payload empty');
+      }
       return;
+    }
+    if (kDebugMode) {
+      final barsCount = payload.values.fold<int>(
+        0,
+        (sum, bars) => sum + bars.length,
+      );
+      debugPrint(
+        '[DailyPrewarm][ADX] payload entries=${payload.length} bars=$barsCount',
+      );
     }
 
     await _adxService!.prewarmFromBars(
@@ -985,7 +1107,18 @@ class MarketDataProvider extends ChangeNotifier {
   }) async {
     final hasMacd = _macdService != null && _dailyBarsCache.isNotEmpty;
     final hasAdx = _adxService != null && _dailyBarsCache.isNotEmpty;
+    if (kDebugMode) {
+      debugPrint(
+        '[DailyPrewarm] start '
+        'hasMacd=$hasMacd hasAdx=$hasAdx '
+        'cacheSize=${_dailyBarsCache.length} '
+        'stockCodes=${stockCodes?.length ?? 0}',
+      );
+    }
     if (!hasMacd && !hasAdx) {
+      if (kDebugMode) {
+        debugPrint('[DailyPrewarm] skip: no indicators available');
+      }
       return;
     }
 
@@ -1037,6 +1170,9 @@ class MarketDataProvider extends ChangeNotifier {
     emitProgress();
     await Future.wait(jobs);
     emitProgress();
+    if (kDebugMode) {
+      debugPrint('[DailyPrewarm] done');
+    }
   }
 
   Future<void> _restoreDailyBarsFromFile(
@@ -1060,6 +1196,35 @@ class MarketDataProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('Failed to restore daily bars from file storage: $e');
     }
+  }
+
+  Future<DailyKlineReadReport> _reloadDailyBarsWithReport({
+    required List<String> stockCodes,
+    required DateTime anchorDate,
+    required int targetBars,
+  }) async {
+    if (stockCodes.isEmpty) {
+      _dailyBarsCache.clear();
+      final report = const DailyKlineReadReport(
+        totalStocks: 0,
+        missingStockCodes: <String>[],
+        corruptedStockCodes: <String>[],
+        insufficientStockCodes: <String>[],
+      );
+      _lastDailySyncReadReport = report;
+      return report;
+    }
+
+    final result = await _dailyKlineReadService.readWithReport(
+      stockCodes: stockCodes,
+      anchorDate: DateTime(anchorDate.year, anchorDate.month, anchorDate.day),
+      targetBars: targetBars,
+    );
+    _dailyBarsCache = result.barsByStockCode;
+    _lastDailySyncReadReport = result.report;
+    await _refreshDailyBarsDiskStats();
+    notifyListeners();
+    return result.report;
   }
 
   Future<void> _reloadDailyBarsOrThrow({
@@ -1195,6 +1360,12 @@ class MarketDataProvider extends ChangeNotifier {
     var nextIndex = 0;
     var completed = 0;
     final workerCount = math.min(_breakoutDetectMaxConcurrency, total);
+    if (kDebugMode) {
+      debugPrint(
+        '[Breakout] start total=$total workers=$workerCount '
+        'targetCodes=${targetStockCodes?.length ?? 0}',
+      );
+    }
 
     Future<void> runWorker() async {
       while (true) {
@@ -1235,6 +1406,9 @@ class MarketDataProvider extends ChangeNotifier {
         );
         completed++;
         onProgress?.call(completed, total);
+        if (kDebugMode && completed % 200 == 0) {
+          debugPrint('[Breakout] progress $completed/$total');
+        }
       }
     }
 
@@ -1244,6 +1418,9 @@ class MarketDataProvider extends ChangeNotifier {
 
     _allData = updatedData;
     notifyListeners();
+    if (kDebugMode) {
+      debugPrint('[Breakout] done completed=$completed');
+    }
   }
 
   // Size estimation methods

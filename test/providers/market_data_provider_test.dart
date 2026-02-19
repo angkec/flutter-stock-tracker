@@ -207,7 +207,9 @@ class _FakeDailyKlineReadService extends DailyKlineReadService {
   _FakeDailyKlineReadService() : super(cacheStore: _NoopCacheStore());
 
   int readCallCount = 0;
+  int readWithReportCallCount = 0;
   Object? readError;
+  DailyKlineReadReport? readReportOverride;
   final Map<String, List<KLine>> payloadByCode = <String, List<KLine>>{};
 
   @override
@@ -225,6 +227,41 @@ class _FakeDailyKlineReadService extends DailyKlineReadService {
       for (final code in stockCodes)
         code: payloadByCode[code] ?? const <KLine>[],
     };
+  }
+
+  @override
+  Future<DailyKlineReadResult> readWithReport({
+    required List<String> stockCodes,
+    required DateTime anchorDate,
+    required int targetBars,
+  }) async {
+    readWithReportCallCount++;
+    final result = <String, List<KLine>>{};
+    final missing = <String>[];
+    final insufficient = <String>[];
+
+    for (final code in stockCodes) {
+      final bars = payloadByCode[code];
+      if (bars == null || bars.isEmpty) {
+        missing.add(code);
+        continue;
+      }
+      if (bars.length < targetBars) {
+        insufficient.add(code);
+      }
+      result[code] = bars;
+    }
+
+    final report =
+        readReportOverride ??
+        DailyKlineReadReport(
+          totalStocks: stockCodes.length,
+          missingStockCodes: missing,
+          corruptedStockCodes: const <String>[],
+          insufficientStockCodes: insufficient,
+        );
+
+    return DailyKlineReadResult(barsByStockCode: result, report: report);
   }
 }
 
@@ -1236,6 +1273,48 @@ void main() {
         provider.lastDailySyncCompletenessState,
         DailySyncCompletenessState.finalOverride,
       );
+    },
+  );
+
+  test(
+    'daily sync should not fail when daily bars are insufficient',
+    () async {
+      final stockA = Stock(code: '600000', name: '浦发银行', market: 1);
+      final stockB = Stock(code: '600001', name: '邯郸钢铁', market: 1);
+      final monitorData = [
+        StockMonitorData(stock: stockA, ratio: 1.1, changePercent: 0.3),
+        StockMonitorData(stock: stockB, ratio: 1.0, changePercent: 0.1),
+      ];
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode(
+          monitorData.map((data) => data.toJson()).toList(),
+        ),
+        'market_data_date': DateTime(2026, 2, 17).toIso8601String(),
+        'minute_data_date': DateTime(2026, 2, 17).toIso8601String(),
+        'minute_data_cache_v1': 2,
+      });
+
+      final pool = _ReconnectableFakePool(dailyBarsByCode: const {});
+      final syncService = _FakeDailyKlineSyncService();
+      final readService = _FakeDailyKlineReadService()
+        ..readError = const DailyKlineReadException(
+          stockCode: '600001',
+          reason: DailyKlineReadFailureReason.insufficientBars,
+          message: 'insufficient',
+        );
+
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: StockService(pool),
+        industryService: IndustryService(),
+        dailyKlineReadService: readService,
+        dailyKlineSyncService: syncService,
+      );
+
+      await provider.loadFromCache();
+      await provider.syncDailyBarsForceFull();
+
+      expect(syncService.syncCallCount, 1);
     },
   );
 

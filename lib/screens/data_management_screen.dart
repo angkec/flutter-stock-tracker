@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -1804,7 +1805,9 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     String? lastAuditProgressStage;
     var lastAuditProgressCurrent = -1;
     var lastAuditProgressTotal = -1;
+    String? dailyReadWarningMessage;
     const auditProgressMinInterval = Duration(milliseconds: 400);
+    const dailyReadShortageThreshold = 0.10;
     final operation = forceFull
         ? AuditOperationType.dailyForceRefetch
         : AuditOperationType.dailyFetchIncremental;
@@ -1887,6 +1890,41 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               }
             },
           );
+          final readReport = provider.lastDailySyncReadReport;
+          if (readReport != null) {
+            if (kDebugMode) {
+              debugPrint(
+                '[DataManagement] daily read report '
+                'shortage=${readReport.shortageCount}/${readReport.totalStocks} '
+                'missing=${readReport.missingCount} '
+                'corrupted=${readReport.corruptedCount} '
+                'insufficient=${readReport.insufficientCount}',
+              );
+            }
+            if (readReport.isShortageOver(dailyReadShortageThreshold)) {
+              audit.record(AuditEventType.verificationResult, {
+                'missing_count': 0,
+                'incomplete_count': readReport.shortageCount,
+              });
+              final shortagePercent =
+                  (readReport.shortageRatio * 100).toStringAsFixed(1);
+              final details = <String>[];
+              if (readReport.missingCount > 0) {
+                details.add('缺失${readReport.missingCount}');
+              }
+              if (readReport.corruptedCount > 0) {
+                details.add('损坏${readReport.corruptedCount}');
+              }
+              if (readReport.insufficientCount > 0) {
+                details.add('不足${readReport.insufficientCount}');
+              }
+              final detailLabel =
+                  details.isEmpty ? '' : '（${details.join('，')}）';
+              dailyReadWarningMessage =
+                  '日K缓存不足: ${readReport.shortageCount}/${readReport.totalStocks} '
+                  '(${shortagePercent}%)$detailLabel';
+            }
+          }
           audit.record(AuditEventType.fetchResult, {
             'updated_stock_count': provider.dailyBarsCacheCount,
             'total_records': 0,
@@ -1907,6 +1945,11 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(forceFull ? '日K数据已强制全量拉取' : '日K数据已增量拉取')),
         );
+        if (dailyReadWarningMessage != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(dailyReadWarningMessage!)),
+          );
+        }
         _triggerRefresh();
       }
     } catch (e) {

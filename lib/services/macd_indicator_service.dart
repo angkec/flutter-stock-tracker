@@ -256,6 +256,12 @@ class MacdIndicatorService extends ChangeNotifier {
     final cachedStockCodes = forceRecompute
         ? const <String>{}
         : await _cacheStore.listStockCodes(dataType: dataType);
+    if (kDebugMode) {
+      debugPrint(
+        '[MACD] prewarmFromBars workers=$workerCount batchSize=$batchSize '
+        'cached=${cachedStockCodes.length}',
+      );
+    }
 
     var nextIndex = 0;
     var computeCompleted = 0;
@@ -328,6 +334,9 @@ class MacdIndicatorService extends ChangeNotifier {
     await Future.wait(
       List<Future<void>>.generate(workerCount, (_) => runWorker()),
     );
+    if (kDebugMode) {
+      debugPrint('[MACD] prewarmFromBars done');
+    }
   }
 
   Future<void> prewarmFromRepository({
