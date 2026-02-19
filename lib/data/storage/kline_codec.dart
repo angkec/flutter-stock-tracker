@@ -9,7 +9,7 @@ class BinaryKLineCodec {
   Uint8List encode(List<KLine> klines) {
     final raw = _serialize(klines);
     final encoder = ZLibEncoder();
-    final compressed = encoder.encode(raw);
+    final compressed = encoder.encode(raw, level: 1);
     return Uint8List.fromList(compressed!);
   }
 
