@@ -112,15 +112,25 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     final filePath = '$baseDir/$fileName';
+    final legacyFileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final legacyFilePath = '$baseDir/$legacyFileName';
 
     final file = File(filePath);
-    if (!await file.exists()) {
+    final legacyFile = File(legacyFilePath);
+    final sourceFile = await file.exists()
+        ? file
+        : (await legacyFile.exists() ? legacyFile : null);
+    if (sourceFile == null) {
       return [];
     }
 
     try {
-      final data = await file.readAsBytes();
-      return _codec.decode(data);
+      final data = await sourceFile.readAsBytes();
+      final decoded = _codec.decode(data);
+      if (sourceFile.path == legacyFilePath) {
+        await _migrateLegacyFile(sourceFile, filePath, data);
+      }
+      return decoded;
     } catch (e) {
       throw Exception('Failed to load monthly K-line file: $e');
     }
@@ -236,10 +246,36 @@ class KLineFileStorageV2 implements KLineMonthlyStorage {
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
     final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     final filePath = '$baseDir/$fileName';
+    final legacyFileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final legacyFilePath = '$baseDir/$legacyFileName';
 
     final file = File(filePath);
     if (await file.exists()) {
       await file.delete();
+    }
+
+    final legacyFile = File(legacyFilePath);
+    if (await legacyFile.exists()) {
+      await legacyFile.delete();
+    }
+  }
+
+  Future<void> _migrateLegacyFile(
+    File legacyFile,
+    String newFilePath,
+    List<int> encoded,
+  ) async {
+    try {
+      await legacyFile.rename(newFilePath);
+    } catch (_) {
+      try {
+        await File(newFilePath).writeAsBytes(encoded);
+        if (await legacyFile.exists()) {
+          await legacyFile.delete();
+        }
+      } catch (_) {
+        // Migration is best-effort; decoding succeeded so keep data in memory.
+      }
     }
   }
 }
