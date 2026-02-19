@@ -45,6 +45,11 @@ class BinaryKLineCodec {
 
   List<KLine> _deserialize(Uint8List raw) {
     if (raw.isEmpty) return <KLine>[];
+    if (raw.lengthInBytes % _recordSize != 0) {
+      throw FormatException(
+        'Invalid kline payload length: ${raw.lengthInBytes} bytes.',
+      );
+    }
     final result = <KLine>[];
     final data = ByteData.sublistView(raw);
     for (var offset = 0;
