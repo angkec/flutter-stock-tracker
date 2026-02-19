@@ -8,12 +8,14 @@ import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 
 class _CountingTradingDateMetadataManager extends KLineMetadataManager {
   _CountingTradingDateMetadataManager({
     required super.database,
     required super.fileStorage,
+    required super.dailyFileStorage,
   });
 
   int dailyLoadCalls = 0;
@@ -39,6 +41,7 @@ void main() {
   late KLineMetadataManager manager;
   late MarketDatabase database;
   late KLineFileStorage fileStorage;
+  late KLineFileStorageV2 dailyFileStorage;
   late Directory testDir;
 
   setUpAll(() {
@@ -57,6 +60,10 @@ void main() {
     fileStorage.setBaseDirPathForTesting(testDir.path);
     await fileStorage.initialize();
 
+    dailyFileStorage = KLineFileStorageV2();
+    dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+    await dailyFileStorage.initialize();
+
     // Initialize database
     database = MarketDatabase();
     await database.database;
@@ -65,6 +72,7 @@ void main() {
     manager = KLineMetadataManager(
       database: database,
       fileStorage: fileStorage,
+      dailyFileStorage: dailyFileStorage,
     );
   });
 
@@ -706,6 +714,7 @@ void main() {
         final countingManager = _CountingTradingDateMetadataManager(
           database: database,
           fileStorage: fileStorage,
+          dailyFileStorage: dailyFileStorage,
         );
         final jan15 = DateTime(2026, 1, 15);
         final jan16 = DateTime(2026, 1, 16);
@@ -751,6 +760,7 @@ void main() {
         final countingManager = _CountingTradingDateMetadataManager(
           database: database,
           fileStorage: fileStorage,
+          dailyFileStorage: dailyFileStorage,
         );
         final baseDay = DateTime(2026, 1, 1);
         const totalRanges = 160;

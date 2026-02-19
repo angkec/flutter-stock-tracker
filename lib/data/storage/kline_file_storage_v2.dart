@@ -1,21 +1,20 @@
-// lib/data/storage/kline_file_storage.dart
-
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
-import 'package:archive/archive.dart';
-import 'package:crypto/crypto.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/kline_append_result.dart';
+import 'package:stock_rtwatcher/data/storage/kline_codec.dart';
 import 'package:stock_rtwatcher/data/storage/kline_merge_helpers.dart';
 import 'package:stock_rtwatcher/data/storage/kline_monthly_storage.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
-import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 
-/// File storage for K-line data with monthly sharding
-class KLineFileStorage implements KLineMonthlyStorage {
-  static const String _baseDir = 'market_data/klines';
+/// File storage for K-line data with monthly sharding (binary + zlib).
+class KLineFileStorageV2 implements KLineMonthlyStorage {
+  static const String _baseDir = 'market_data/klines_v2';
+
+  final BinaryKLineCodec _codec;
 
   /// Base directory path (used for testing)
   String? _baseDirPath;
@@ -23,13 +22,18 @@ class KLineFileStorage implements KLineMonthlyStorage {
   /// Resolved base directory cache
   String? _resolvedBaseDirectory;
 
+  KLineFileStorageV2({BinaryKLineCodec? codec})
+      : _codec = codec ?? BinaryKLineCodec();
+
   /// Set base directory path for testing
+  @override
   void setBaseDirPathForTesting(String path) {
     _baseDirPath = path;
     _resolvedBaseDirectory = path;
   }
 
   /// Initialize the file storage by creating base directory
+  @override
   Future<void> initialize() async {
     final baseDirectory = await _getBaseDirectory();
     final dir = Directory(baseDirectory);
@@ -47,11 +51,12 @@ class KLineFileStorage implements KLineMonthlyStorage {
   ) {
     final baseDirectory = _getBaseSyncDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     return '$baseDirectory/$fileName';
   }
 
   /// Get the file path for a monthly K-line file (async - for production)
+  @override
   Future<String> getFilePathAsync(
     String stockCode,
     KLineDataType dataType,
@@ -60,7 +65,7 @@ class KLineFileStorage implements KLineMonthlyStorage {
   ) async {
     final baseDirectory = await _getBaseDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     return '$baseDirectory/$fileName';
   }
 
@@ -91,11 +96,13 @@ class KLineFileStorage implements KLineMonthlyStorage {
   }
 
   /// Get base directory path for external data-layer helpers.
+  @override
   Future<String> getBaseDirectoryPath() async {
     return _getBaseDirectory();
   }
 
   /// Load a monthly K-line file from disk
+  @override
   Future<List<KLine>> loadMonthlyKlineFile(
     String stockCode,
     KLineDataType dataType,
@@ -104,24 +111,34 @@ class KLineFileStorage implements KLineMonthlyStorage {
   ) async {
     final baseDir = await _getBaseDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     final filePath = '$baseDir/$fileName';
+    final legacyFileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final legacyFilePath = '$baseDir/$legacyFileName';
 
     final file = File(filePath);
-    if (!await file.exists()) {
+    final legacyFile = File(legacyFilePath);
+    final sourceFile = await file.exists()
+        ? file
+        : (await legacyFile.exists() ? legacyFile : null);
+    if (sourceFile == null) {
       return [];
     }
 
     try {
-      final compressedData = await file.readAsBytes();
-      final klines = await compute(_decompressAndDeserialize, compressedData);
-      return klines;
+      final data = await sourceFile.readAsBytes();
+      final decoded = _codec.decode(data);
+      if (sourceFile.path == legacyFilePath) {
+        await _migrateLegacyFile(sourceFile, filePath, data);
+      }
+      return decoded;
     } catch (e) {
       throw Exception('Failed to load monthly K-line file: $e');
     }
   }
 
   /// Save K-line data for a month atomically
+  @override
   Future<void> saveMonthlyKlineFile(
     String stockCode,
     KLineDataType dataType,
@@ -142,7 +159,7 @@ class KLineFileStorage implements KLineMonthlyStorage {
     }
 
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     final filePath = '$baseDir/$fileName';
 
     // Make temp filename unique to avoid race conditions
@@ -150,30 +167,13 @@ class KLineFileStorage implements KLineMonthlyStorage {
     final tempPath =
         '$baseDir/${stockCode}_${dataType.name}_$yearMonth.$timestamp.tmp';
 
-    // Prepare data for compression
-    final preparedData = _PrepareCompressionData(
-      klines: klines,
-      checksum: '', // Will be calculated after compression
-    );
+    final encoded = _codec.encode(klines);
 
-    // Compress data using isolate
-    final compressedData = await compute(_serializeAndCompress, preparedData);
-
-    // Calculate checksum
-    final checksum = sha256.convert(compressedData).toString();
-
-    // Write to temp file with checksum
     final tempFile = File(tempPath);
     try {
-      await tempFile.writeAsBytes(compressedData);
-
-      // Append checksum to the file
-      await tempFile.writeAsString('\n$checksum', mode: FileMode.append);
-
-      // Atomic rename
+      await tempFile.writeAsBytes(encoded);
       await tempFile.rename(filePath);
     } catch (e) {
-      // Clean up on any error
       if (await tempFile.exists()) {
         await tempFile.delete();
       }
@@ -184,6 +184,7 @@ class KLineFileStorage implements KLineMonthlyStorage {
   /// Append K-line data to a monthly file (handles deduplication)
   ///
   /// Returns append summary so caller can avoid redundant file reload.
+  @override
   Future<KLineAppendResult?> appendKlineData(
     String stockCode,
     KLineDataType dataType,
@@ -195,7 +196,6 @@ class KLineFileStorage implements KLineMonthlyStorage {
       return null;
     }
 
-    // Load existing data
     final existingKlines = await loadMonthlyKlineFile(
       stockCode,
       dataType,
@@ -209,7 +209,6 @@ class KLineFileStorage implements KLineMonthlyStorage {
     final filePath = await getFilePathAsync(stockCode, dataType, year, month);
 
     if (mergeResult.changed) {
-      // Save back only when content actually changes.
       await saveMonthlyKlineFile(
         stockCode,
         dataType,
@@ -237,6 +236,7 @@ class KLineFileStorage implements KLineMonthlyStorage {
   }
 
   /// Delete a monthly K-line file
+  @override
   Future<void> deleteMonthlyFile(
     String stockCode,
     KLineDataType dataType,
@@ -245,65 +245,51 @@ class KLineFileStorage implements KLineMonthlyStorage {
   ) async {
     final baseDir = await _getBaseDirectory();
     final yearMonth = '$year${month.toString().padLeft(2, '0')}';
-    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.gz';
+    final fileName = '${stockCode}_${dataType.name}_$yearMonth.bin.zlib';
     final filePath = '$baseDir/$fileName';
+    final legacyFileName = '${stockCode}_${dataType.name}_$yearMonth.bin.z';
+    final legacyFilePath = '$baseDir/$legacyFileName';
 
     final file = File(filePath);
     if (await file.exists()) {
       await file.delete();
     }
-  }
 
-  /// Static method to serialize and compress K-line data
-  static Uint8List _serializeAndCompress(_PrepareCompressionData data) {
-    // Serialize to JSON
-    final jsonList = data.klines.map((k) => k.toJson()).toList();
-    final jsonString = jsonEncode(jsonList);
-    final bytes = utf8.encode(jsonString);
-
-    // Compress using gzip
-    final encoder = GZipEncoder();
-    final compressed = encoder.encode(bytes);
-
-    return Uint8List.fromList(compressed!);
-  }
-
-  /// Static method to decompress and deserialize K-line data
-  static List<KLine> _decompressAndDeserialize(Uint8List compressedData) {
-    // Extract and validate checksum
-    final lastNewlineIndex = compressedData.lastIndexOf(10); // ASCII for \n
-    if (lastNewlineIndex == -1) {
-      throw Exception('No checksum found in file');
+    final legacyFile = File(legacyFilePath);
+    if (await legacyFile.exists()) {
+      await legacyFile.delete();
     }
-
-    final dataToDecompress = compressedData.sublist(0, lastNewlineIndex);
-    final fileChecksum = String.fromCharCodes(
-      compressedData.sublist(lastNewlineIndex + 1),
-    ).trim();
-    final calculatedChecksum = sha256.convert(dataToDecompress).toString();
-
-    if (fileChecksum != calculatedChecksum) {
-      throw Exception('Checksum validation failed - file may be corrupted');
-    }
-
-    // Decompress
-    final decoder = GZipDecoder();
-    final decompressed = decoder.decodeBytes(dataToDecompress);
-
-    // Deserialize from JSON
-    final jsonString = utf8.decode(decompressed);
-    final jsonList = jsonDecode(jsonString) as List<dynamic>;
-
-    return jsonList
-        .map((json) => KLine.fromJson(json as Map<String, dynamic>))
-        .toList();
   }
-}
 
-/// Helper class for passing data to compute function
-class _PrepareCompressionData {
-  final List<KLine> klines;
-  final String checksum;
+  Future<void> _migrateLegacyFile(
+    File legacyFile,
+    String newFilePath,
+    List<int> encoded,
+  ) async {
+    final newFile = File(newFilePath);
+    if (await newFile.exists()) {
+      return;
+    }
+    try {
+      await legacyFile.rename(newFilePath);
+    } catch (_) {
+      try {
+        await newFile.writeAsBytes(encoded);
+        if (await legacyFile.exists()) {
+          await legacyFile.delete();
+        }
+      } catch (_) {
+        // Migration is best-effort; decoding succeeded so keep data in memory.
+      }
+    }
+  }
 
-  _PrepareCompressionData({required this.klines, required this.checksum});
+  @visibleForTesting
+  Future<void> migrateLegacyFileForTesting(
+    File legacyFile,
+    String newFilePath,
+    List<int> encoded,
+  ) {
+    return _migrateLegacyFile(legacyFile, newFilePath, encoded);
+  }
 }

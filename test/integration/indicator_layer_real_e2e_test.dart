@@ -12,6 +12,7 @@ import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
@@ -253,6 +254,9 @@ void main() {
         final fileStorage = KLineFileStorage();
         fileStorage.setBaseDirPathForTesting(fileRoot);
         await fileStorage.initialize();
+        final dailyFileStorage = KLineFileStorageV2();
+        dailyFileStorage.setBaseDirPathForTesting(fileRoot);
+        await dailyFileStorage.initialize();
         originalDbPath = await databaseFactory.getDatabasesPath();
         await databaseFactory.setDatabasesPath(dbRoot);
 
@@ -262,6 +266,7 @@ void main() {
         final metadataManager = KLineMetadataManager(
           database: database,
           fileStorage: fileStorage,
+          dailyFileStorage: dailyFileStorage,
         );
 
         repository = MarketDataRepository(metadataManager: metadataManager);

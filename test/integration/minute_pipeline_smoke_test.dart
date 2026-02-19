@@ -8,6 +8,7 @@ import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
 import 'package:stock_rtwatcher/data/repository/tdx_pool_fetch_adapter.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
 import 'package:stock_rtwatcher/data/storage/kline_metadata_manager.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
@@ -21,6 +22,7 @@ void main() {
     late Directory testDir;
     late MarketDatabase database;
     late KLineFileStorage fileStorage;
+    late KLineFileStorageV2 dailyFileStorage;
     late KLineMetadataManager manager;
     late TdxPool pool;
     late MarketDataRepository repository;
@@ -38,12 +40,17 @@ void main() {
       fileStorage.setBaseDirPathForTesting(testDir.path);
       await fileStorage.initialize();
 
+      dailyFileStorage = KLineFileStorageV2();
+      dailyFileStorage.setBaseDirPathForTesting(testDir.path);
+      await dailyFileStorage.initialize();
+
       database = MarketDatabase();
       await database.database;
 
       manager = KLineMetadataManager(
         database: database,
         fileStorage: fileStorage,
+        dailyFileStorage: dailyFileStorage,
       );
       pool = TdxPool(poolSize: 3);
       repository = MarketDataRepository(

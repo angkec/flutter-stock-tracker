@@ -7,8 +7,11 @@ import 'package:sqflite/sqflite.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
+import 'package:stock_rtwatcher/data/storage/kline_append_result.dart';
 import 'package:stock_rtwatcher/data/storage/market_database.dart';
 import 'package:stock_rtwatcher/data/storage/kline_file_storage.dart';
+import 'package:stock_rtwatcher/data/storage/kline_file_storage_v2.dart';
+import 'package:stock_rtwatcher/data/storage/kline_monthly_storage.dart';
 
 /// Metadata for a K-line file
 class KLineFileMetadata {
@@ -82,7 +85,8 @@ class KLineMetadataManager {
   static const int _maxTradingDateRangeCacheEntries = 128;
 
   final MarketDatabase _db;
-  final KLineFileStorage _fileStorage;
+  final KLineMonthlyStorage _fileStorage;
+  final KLineMonthlyStorage _dailyFileStorage;
   final LinkedHashMap<String, List<DateTime>> _tradingDateRangeCache =
       LinkedHashMap<String, List<DateTime>>();
   final Map<String, Future<List<DateTime>>> _tradingDateRangeInFlight = {};
@@ -90,9 +94,18 @@ class KLineMetadataManager {
 
   KLineMetadataManager({
     MarketDatabase? database,
-    KLineFileStorage? fileStorage,
+    KLineMonthlyStorage? fileStorage,
+    KLineMonthlyStorage? dailyFileStorage,
   }) : _db = database ?? MarketDatabase(),
-       _fileStorage = fileStorage ?? KLineFileStorage();
+       _fileStorage = fileStorage ?? KLineFileStorage(),
+       _dailyFileStorage = dailyFileStorage ?? KLineFileStorageV2();
+
+  KLineMonthlyStorage _resolveStorage(KLineDataType dataType) {
+    if (dataType == KLineDataType.daily) {
+      return _dailyFileStorage;
+    }
+    return _fileStorage;
+  }
 
   /// Save K-line data with metadata update in a transaction
   ///
@@ -109,6 +122,7 @@ class KLineMetadataManager {
     if (newBars.isEmpty) return;
 
     final now = DateTime.now().millisecondsSinceEpoch;
+    final storage = _resolveStorage(dataType);
 
     // Group new bars by year-month
     final barsByMonth = <String, List<KLine>>{};
@@ -128,7 +142,7 @@ class KLineMetadataManager {
       final month = int.parse(yearMonth.substring(4, 6));
 
       try {
-        final appendResult = await _fileStorage.appendKlineData(
+        final appendResult = await storage.appendKlineData(
           stockCode,
           dataType,
           year,
@@ -367,7 +381,7 @@ class KLineMetadataManager {
       final year = int.parse(meta.yearMonth.substring(0, 4));
       final month = int.parse(meta.yearMonth.substring(4, 6));
 
-      final monthKlines = await _fileStorage.loadMonthlyKlineFile(
+      final monthKlines = await _resolveStorage(dataType).loadMonthlyKlineFile(
         stockCode,
         dataType,
         year,
@@ -630,7 +644,7 @@ class KLineMetadataManager {
     final nextDay = dateOnly.add(const Duration(days: 1));
 
     // Load the month's data
-    final klines = await _fileStorage.loadMonthlyKlineFile(
+    final klines = await _resolveStorage(dataType).loadMonthlyKlineFile(
       stockCode,
       dataType,
       date.year,
