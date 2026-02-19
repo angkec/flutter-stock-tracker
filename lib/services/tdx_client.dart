@@ -476,6 +476,46 @@ class TdxClient {
     required int start,
     required int count,
   }) async {
+    final body = await sendCommand(_buildBarsRequest(
+      market: market,
+      code: code,
+      category: category,
+      start: start,
+      count: count,
+    ));
+    return _parseSecurityBars(body, category);
+  }
+
+  /// 获取指数K线数据
+  /// [market] 市场代码 (0=深市, 1=沪市, 2=北证)
+  /// [code] 指数代码
+  /// [category] K线类型 (0=5分钟, 1=15分钟, 2=30分钟, 3=1小时, 4=日线, 5=周线, 6=月线, 7=1分钟K线, 8=分时图, 10=季线, 11=年线)
+  /// [start] 起始位置 (0=最新)
+  /// [count] 获取数量
+  Future<List<KLine>> getIndexBars({
+    required int market,
+    required String code,
+    required int category,
+    required int start,
+    required int count,
+  }) async {
+    final body = await sendCommand(_buildBarsRequest(
+      market: market,
+      code: code,
+      category: category,
+      start: start,
+      count: count,
+    ));
+    return _parseIndexBars(body, category);
+  }
+
+  Uint8List _buildBarsRequest({
+    required int market,
+    required String code,
+    required int category,
+    required int start,
+    required int count,
+  }) {
     if (!_validCategories.contains(category)) {
       throw ArgumentError.value(
         category,
@@ -483,6 +523,7 @@ class TdxClient {
         'Invalid K-line category. Valid values are: ${_validCategories.toList()..sort()}',
       );
     }
+
     final pkg = BytesBuilder();
 
     // Build header: struct.pack("<HIHHHH6sHHHHIIH", ...)
@@ -514,8 +555,7 @@ class TdxClient {
     params.setUint16(24, 0, Endian.little);
     pkg.add(params.buffer.asUint8List());
 
-    final body = await sendCommand(pkg.toBytes());
-    return _parseSecurityBars(body, category);
+    return pkg.toBytes();
   }
 
   /// 解析K线数据
@@ -579,6 +619,85 @@ class TdxClient {
       final volRaw = byteData.getUint32(pos4, Endian.little);
       final amountRaw = byteData.getUint32(pos4 + 4, Endian.little);
       pos = pos4 + 8;
+
+      final volume = decodeVolume(volRaw);
+      final amount = decodeVolume(amountRaw);
+
+      bars.add(KLine(
+        datetime: datetime,
+        open: openRaw / 1000.0,
+        close: closeRaw / 1000.0,
+        high: highRaw / 1000.0,
+        low: lowRaw / 1000.0,
+        volume: volume,
+        amount: amount,
+      ));
+    }
+
+    return bars;
+  }
+
+  /// 解析指数K线数据
+  List<KLine> _parseIndexBars(Uint8List body, int category) {
+    if (body.length < 2) {
+      return [];
+    }
+
+    final byteData = ByteData.sublistView(body);
+    final count = byteData.getUint16(0, Endian.little);
+    var pos = 2;
+
+    final bars = <KLine>[];
+    int priceBase = 0; // For differential encoding
+
+    for (var i = 0; i < count; i++) {
+      if (pos + 4 > body.length) break;
+
+      // Parse datetime based on category
+      // For minute bars: 2 bytes date + 2 bytes time
+      // For day bars: 4 bytes as yyyymmdd
+      final isMinuteBar = category < 4 || category == 7 || category == 8;
+      final DateTime datetime;
+
+      if (isMinuteBar) {
+        final yearOrDate = byteData.getUint16(pos, Endian.little);
+        final minOrTime = byteData.getUint16(pos + 2, Endian.little);
+        datetime = _parseDateTime(yearOrDate, minOrTime, category);
+      } else {
+        // Day bars: read as 32-bit yyyymmdd
+        final yyyymmdd = byteData.getUint32(pos, Endian.little);
+        final year = yyyymmdd ~/ 10000;
+        final month = (yyyymmdd % 10000) ~/ 100;
+        final day = yyyymmdd % 100;
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          datetime = DateTime(year, month, day);
+        } else {
+          datetime = _defaultDateTime;
+        }
+      }
+      pos += 4;
+
+      // Parse prices using differential encoding
+      final (openDiff, pos1) = _decodePrice(body, pos);
+      final (closeDiff, pos2) = _decodePrice(body, pos1);
+      final (highDiff, pos3) = _decodePrice(body, pos2);
+      final (lowDiff, pos4) = _decodePrice(body, pos3);
+
+      // Open is diff from previous close (priceBase)
+      final openRaw = priceBase + openDiff;
+      // Close/High/Low are diffs from current open
+      final closeRaw = openRaw + closeDiff;
+      final highRaw = openRaw + highDiff;
+      final lowRaw = openRaw + lowDiff;
+
+      // Update priceBase for next bar
+      priceBase = closeRaw;
+
+      // Parse volume, amount, and skip up/down count fields
+      if (pos4 + 12 > body.length) break;
+      final volRaw = byteData.getUint32(pos4, Endian.little);
+      final amountRaw = byteData.getUint32(pos4 + 4, Endian.little);
+      pos = pos4 + 12;
 
       final volume = decodeVolume(volRaw);
       final amount = decodeVolume(amountRaw);

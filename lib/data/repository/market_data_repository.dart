@@ -388,6 +388,20 @@ class MarketDataRepository implements DataRepository {
     return 0; // 深市 (0xx, 3xx, 其他)
   }
 
+  bool _isIndexCode(String code) {
+    if (code.length != 6) return false;
+    return code.startsWith('399') ||
+        code.startsWith('899') ||
+        code.startsWith('999');
+  }
+
+  int _mapIndexCodeToMarket(String code) {
+    if (code.startsWith('399')) return 0;
+    if (code.startsWith('899')) return 2;
+    if (code.startsWith('999')) return 1;
+    return _mapCodeToMarket(code);
+  }
+
   @override
   Future<int> getCurrentVersion() async {
     return await _metadataManager.getCurrentVersion();
@@ -1434,7 +1448,9 @@ class MarketDataRepository implements DataRepository {
     required DateRange dateRange,
     required KLineDataType dataType,
   }) async {
-    final market = _mapCodeToMarket(stockCode);
+    final isIndex = _isIndexCode(stockCode);
+    final market =
+        isIndex ? _mapIndexCodeToMarket(stockCode) : _mapCodeToMarket(stockCode);
     final category = _mapDataTypeToCategory(dataType);
 
     const batchSize = 800; // 每批数量
@@ -1444,13 +1460,21 @@ class MarketDataRepository implements DataRepository {
     var start = 0;
 
     for (var batch = 0; batch < maxBatches; batch++) {
-      final klines = await _tdxClient.getSecurityBars(
-        market: market,
-        code: stockCode,
-        category: category,
-        start: start,
-        count: batchSize,
-      );
+      final klines = isIndex
+          ? await _tdxClient.getIndexBars(
+              market: market,
+              code: stockCode,
+              category: category,
+              start: start,
+              count: batchSize,
+            )
+          : await _tdxClient.getSecurityBars(
+              market: market,
+              code: stockCode,
+              category: category,
+              start: start,
+              count: batchSize,
+            );
 
       if (klines.isEmpty) {
         if (batch == 0) {

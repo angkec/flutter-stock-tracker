@@ -134,6 +134,24 @@ class TdxPool {
     return _clients.first.getSecurityList(market, start);
   }
 
+  /// 获取指数K线数据 (使用第一个连接)
+  Future<List<KLine>> getIndexBars({
+    required int market,
+    required String code,
+    required int category,
+    required int start,
+    required int count,
+  }) async {
+    if (_clients.isEmpty) throw StateError('Not connected');
+    return _clients.first.getIndexBars(
+      market: market,
+      code: code,
+      category: category,
+      start: start,
+      count: count,
+    );
+  }
+
   /// 并行批量获取K线数据
   Future<List<List<KLine>>> batchGetSecurityBars({
     required List<Stock> stocks,

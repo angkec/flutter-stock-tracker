@@ -107,7 +107,10 @@ class TdxPoolFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
       return {for (final code in stockCodes) code: <KLine>[]};
     }
 
-    final stocks = stockCodes
+    final indexCodes = stockCodes.where(_isIndexCode).toList(growable: false);
+    final regularCodes =
+        stockCodes.where((code) => !_isIndexCode(code)).toList(growable: false);
+    final stocks = regularCodes
         .map(
           (code) =>
               Stock(code: code, name: code, market: _mapCodeToMarket(code)),
@@ -119,20 +122,56 @@ class TdxPoolFetchAdapter implements MinuteFetchAdapter, KlineFetchAdapter {
     };
 
     var completed = 0;
-    await _pool.batchGetSecurityBarsStreaming(
-      stocks: stocks,
-      category: category,
-      start: start,
-      count: count,
-      onStockBars: (stockIndex, bars) {
-        final code = stocks[stockIndex].code;
-        result[code] = bars;
+    if (stocks.isNotEmpty) {
+      await _pool.batchGetSecurityBarsStreaming(
+        stocks: stocks,
+        category: category,
+        start: start,
+        count: count,
+        onStockBars: (stockIndex, bars) {
+          final code = stocks[stockIndex].code;
+          result[code] = bars;
+          completed++;
+          onProgress?.call(completed, stockCodes.length);
+        },
+      );
+    }
+
+    if (indexCodes.isNotEmpty) {
+      for (final code in indexCodes) {
+        try {
+          final market = _mapIndexCodeToMarket(code);
+          final bars = await _pool.getIndexBars(
+            market: market,
+            code: code,
+            category: category,
+            start: start,
+            count: count,
+          );
+          result[code] = bars;
+        } catch (_) {
+          result[code] = const <KLine>[];
+        }
         completed++;
-        onProgress?.call(completed, stocks.length);
-      },
-    );
+        onProgress?.call(completed, stockCodes.length);
+      }
+    }
 
     return result;
+  }
+
+  bool _isIndexCode(String code) {
+    if (code.length != 6) return false;
+    return code.startsWith('399') ||
+        code.startsWith('899') ||
+        code.startsWith('999');
+  }
+
+  int _mapIndexCodeToMarket(String code) {
+    if (code.startsWith('399')) return 0;
+    if (code.startsWith('899')) return 2;
+    if (code.startsWith('999')) return 1;
+    return _mapCodeToMarket(code);
   }
 
   int _mapCodeToMarket(String code) {
