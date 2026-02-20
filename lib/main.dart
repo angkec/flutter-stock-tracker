@@ -8,6 +8,7 @@ import 'package:stock_rtwatcher/data/repository/market_data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_monthly_writer.dart';
+import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
 import 'package:stock_rtwatcher/config/minute_sync_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/screens/main_screen.dart';
@@ -31,6 +32,7 @@ import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
+import 'package:stock_rtwatcher/services/industry_ema_breadth_service.dart';
 import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/audit/services/audit_service.dart';
@@ -65,6 +67,7 @@ class MyApp extends StatelessWidget {
         Provider(create: (_) => TdxPool(poolSize: 12)),
         Provider(create: (_) => DailyKlineCacheStore()),
         Provider(create: (_) => DailyKlineCheckpointStore()),
+        Provider(create: (_) => EmaCacheStore()),
         ProxyProvider<DailyKlineCacheStore, DailyKlineReadService>(
           update: (_, cacheStore, __) =>
               DailyKlineReadService(cacheStore: cacheStore),
@@ -261,6 +264,21 @@ class MyApp extends StatelessWidget {
           },
           update: (_, repository, previous) => previous!,
         ),
+        ProxyProvider3<
+          IndustryService,
+          DailyKlineCacheStore,
+          EmaCacheStore,
+          IndustryEmaBreadthService
+        >(
+          update:
+              (_, industryService, dailyCacheStore, emaCacheStore, previous) {
+                return IndustryEmaBreadthService(
+                  industryService: industryService,
+                  dailyCacheStore: dailyCacheStore,
+                  emaCacheStore: emaCacheStore,
+                );
+              },
+        ),
         ChangeNotifierProvider(
           create: (_) {
             final service = BacktestService();
@@ -297,6 +315,8 @@ class MyApp extends StatelessWidget {
             final emaService = context.read<EmaIndicatorService>();
             final powerSystemService = context
                 .read<PowerSystemIndicatorService>();
+            final industryEmaBreadthService = context
+                .read<IndustryEmaBreadthService>();
             final dailyCacheStore = context.read<DailyKlineCacheStore>();
             final dailyCheckpointStore = context
                 .read<DailyKlineCheckpointStore>();
@@ -318,6 +338,7 @@ class MyApp extends StatelessWidget {
             provider.setAdxService(adxService);
             provider.setEmaService(emaService);
             provider.setPowerSystemService(powerSystemService);
+            provider.setIndustryEmaBreadthService(industryEmaBreadthService);
             provider.loadFromCache();
             return provider;
           },
@@ -332,6 +353,14 @@ class MyApp extends StatelessWidget {
                 macdService,
                 previous,
               ) {
+                // IndustryEmaBreadthService may not be available on first update
+                IndustryEmaBreadthService? industryEmaBreadthService;
+                try {
+                  industryEmaBreadthService = context
+                      .read<IndustryEmaBreadthService>();
+                } catch (_) {
+                  // Service not yet available
+                }
                 final adxService = context.read<AdxIndicatorService>();
                 final emaService = context.read<EmaIndicatorService>();
                 final powerSystemService = context
@@ -345,6 +374,11 @@ class MyApp extends StatelessWidget {
                 previous.setAdxService(adxService);
                 previous.setEmaService(emaService);
                 previous.setPowerSystemService(powerSystemService);
+                if (industryEmaBreadthService != null) {
+                  previous.setIndustryEmaBreadthService(
+                    industryEmaBreadthService,
+                  );
+                }
                 return previous;
               },
         ),

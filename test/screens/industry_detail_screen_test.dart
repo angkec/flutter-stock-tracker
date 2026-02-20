@@ -11,7 +11,12 @@ import 'package:stock_rtwatcher/data/models/day_data_status.dart';
 import 'package:stock_rtwatcher/data/models/fetch_result.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
+import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/industry_ema_breadth_config_store.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
+import 'package:stock_rtwatcher/models/industry_ema_breadth.dart';
+import 'package:stock_rtwatcher/models/industry_ema_breadth_config.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/quote.dart';
@@ -19,6 +24,7 @@ import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
+import 'package:stock_rtwatcher/services/industry_ema_breadth_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
@@ -228,6 +234,35 @@ class _FakeIndustryBuildUpService extends IndustryBuildUpService {
   }
 }
 
+class _FakeIndustryEmaBreadthService extends IndustryEmaBreadthService {
+  _FakeIndustryEmaBreadthService(this._seriesByIndustry)
+    : super(
+        industryService: IndustryService(),
+        dailyCacheStore: DailyKlineCacheStore(),
+        emaCacheStore: EmaCacheStore(),
+      );
+
+  final Map<String, IndustryEmaBreadthSeries> _seriesByIndustry;
+
+  @override
+  Future<IndustryEmaBreadthSeries?> getCachedSeries(String industry) async {
+    return _seriesByIndustry[industry];
+  }
+}
+
+class _FakeIndustryEmaBreadthConfigStore extends IndustryEmaBreadthConfigStore {
+  _FakeIndustryEmaBreadthConfigStore(this._config);
+
+  final IndustryEmaBreadthConfig _config;
+
+  @override
+  Future<IndustryEmaBreadthConfig> load({
+    IndustryEmaBreadthConfig? defaults,
+  }) async {
+    return _config;
+  }
+}
+
 IndustryBuildupDailyRecord _record(
   DateTime date, {
   required int rank,
@@ -397,7 +432,10 @@ void main() {
     );
     expect(chartFinder, findsOneWidget);
     final rect = tester.getRect(chartFinder);
-    await tester.tapAt(Offset(rect.left + 8, rect.center.dy));
+    await tester.dragFrom(
+      Offset(rect.right - 4, rect.center.dy),
+      Offset(-rect.width + 8, 0),
+    );
     await tester.pump();
 
     expect(find.textContaining('当日详情 2026-02-04'), findsOneWidget);
@@ -455,7 +493,8 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    await tester.drag(find.byType(NestedScrollView), const Offset(0, -320));
+    // Scroll more since header now includes EMA breadth card (~230px taller)
+    await tester.drag(find.byType(NestedScrollView), const Offset(0, -550));
     await tester.pumpAndSettle();
 
     expect(
@@ -483,6 +522,185 @@ void main() {
       lessThan(_topYOfText(tester, '600001')),
     );
     expect(_topYOfText(tester, '2.00'), lessThan(_topYOfText(tester, '0.60')));
+  });
+
+  testWidgets('行业详情页展示 EMA 广度缓存图和阈值线', (tester) async {
+    final repository = _DummyRepository();
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600001', name: '测试A', market: 1),
+          ratio: 1.2,
+          changePercent: 2.5,
+          industry: '半导体',
+        ),
+      ],
+    );
+    final breadthService = _FakeIndustryEmaBreadthService({
+      '半导体': IndustryEmaBreadthSeries(
+        industry: '半导体',
+        points: [
+          IndustryEmaBreadthPoint(
+            date: DateTime(2026, 2, 5),
+            percent: 58,
+            aboveCount: 12,
+            validCount: 20,
+            missingCount: 4,
+          ),
+          IndustryEmaBreadthPoint(
+            date: DateTime(2026, 2, 6),
+            percent: 64,
+            aboveCount: 13,
+            validCount: 21,
+            missingCount: 3,
+          ),
+        ],
+      ),
+    });
+    marketProvider.setIndustryEmaBreadthService(breadthService);
+    final trendService = _FakeTrendService();
+    final buildUpService = _FakeIndustryBuildUpService(
+      historyByIndustry: {
+        '半导体': [_record(DateTime(2026, 2, 6), rank: 1)],
+      },
+    );
+    final configStore = _FakeIndustryEmaBreadthConfigStore(
+      const IndustryEmaBreadthConfig(upperThreshold: 68, lowerThreshold: 32),
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildUpService,
+          ),
+        ],
+        child: MaterialApp(
+          home: IndustryDetailScreen(
+            industry: '半导体',
+            emaBreadthConfigStoreForTest: configStore,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    // EMA breadth card is now in the sliver header, should be visible without scrolling
+    expect(
+      find.byKey(const ValueKey('industry_detail_ema_breadth_card')),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Above 13 / Valid 21 / Missing 3'),
+      findsOneWidget,
+    );
+    expect(find.text('Upper 68%'), findsOneWidget);
+    expect(find.text('Lower 32%'), findsOneWidget);
+    // Selection hint should be visible (from EMA breadth chart)
+    expect(find.text('手指滑动或点击图表可选择日期'), findsNWidgets(2));
+  });
+
+  testWidgets('EMA 广度图支持选择日期并显示选中详情', (tester) async {
+    final repository = _DummyRepository();
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600001', name: '测试A', market: 1),
+          ratio: 1.2,
+          changePercent: 2.5,
+          industry: '半导体',
+        ),
+      ],
+    );
+    final breadthService = _FakeIndustryEmaBreadthService({
+      '半导体': IndustryEmaBreadthSeries(
+        industry: '半导体',
+        points: [
+          IndustryEmaBreadthPoint(
+            date: DateTime(2026, 2, 5),
+            percent: 58,
+            aboveCount: 12,
+            validCount: 20,
+            missingCount: 4,
+          ),
+          IndustryEmaBreadthPoint(
+            date: DateTime(2026, 2, 6),
+            percent: 64,
+            aboveCount: 13,
+            validCount: 21,
+            missingCount: 3,
+          ),
+          IndustryEmaBreadthPoint(
+            date: DateTime(2026, 2, 7),
+            percent: 72,
+            aboveCount: 15,
+            validCount: 22,
+            missingCount: 2,
+          ),
+        ],
+      ),
+    });
+    marketProvider.setIndustryEmaBreadthService(breadthService);
+    final trendService = _FakeTrendService();
+    final buildUpService = _FakeIndustryBuildUpService(
+      historyByIndustry: {
+        '半导体': [_record(DateTime(2026, 2, 7), rank: 1)],
+      },
+    );
+    final configStore = _FakeIndustryEmaBreadthConfigStore(
+      IndustryEmaBreadthConfig.defaultConfig,
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildUpService,
+          ),
+        ],
+        child: MaterialApp(
+          home: IndustryDetailScreen(
+            industry: '半导体',
+            emaBreadthConfigStoreForTest: configStore,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    // Find the chart and tap to select
+    final chartFinder = find.byKey(
+      const ValueKey('industry_ema_breadth_custom_paint'),
+    );
+    expect(chartFinder, findsOneWidget);
+
+    final chartRect = tester.getRect(chartFinder);
+    // Tap on left side to select first point
+    await tester.tapAt(Offset(chartRect.left + 20, chartRect.center.dy));
+    await tester.pump();
+
+    // Should show selected detail
+    expect(
+      find.byKey(const ValueKey('industry_ema_breadth_selected_detail')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('选中 2026-02-05'), findsOneWidget);
   });
 }
 

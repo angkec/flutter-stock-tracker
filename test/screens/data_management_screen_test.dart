@@ -2619,6 +2619,32 @@ void main() {
     },
   );
 
+  testWidgets('技术指标区域显示行业EMA广度设置入口', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(data: _buildStocks(1));
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '行业EMA广度设置');
+    expect(find.text('行业EMA广度设置'), findsOneWidget);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
   testWidgets('weekly sync also prewarms power system cache', (tester) async {
     final repository = _FakeDataRepository();
     final klineService = HistoricalKlineService(repository: repository);

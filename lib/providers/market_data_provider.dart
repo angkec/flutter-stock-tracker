@@ -22,6 +22,7 @@ import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
+import 'package:stock_rtwatcher/services/industry_ema_breadth_service.dart';
 
 /// 在隔离线程中解析股票监控数据 JSON
 List<StockMonitorData> _parseMarketDataJson(String jsonStr) {
@@ -53,6 +54,7 @@ class MarketDataProvider extends ChangeNotifier {
   AdxIndicatorService? _adxService;
   EmaIndicatorService? _emaService;
   PowerSystemIndicatorService? _powerSystemService;
+  IndustryEmaBreadthService? _industryEmaBreadthService;
 
   List<StockMonitorData> _allData = [];
   bool _isLoading = false;
@@ -285,6 +287,15 @@ class MarketDataProvider extends ChangeNotifier {
   void setPowerSystemService(PowerSystemIndicatorService service) {
     _powerSystemService = service;
   }
+
+  /// 设置行业EMA广度服务（用于行业EMA广度计算与缓存）
+  void setIndustryEmaBreadthService(IndustryEmaBreadthService service) {
+    _industryEmaBreadthService = service;
+  }
+
+  /// 获取行业EMA广度服务
+  IndustryEmaBreadthService? get industryEmaBreadthService =>
+      _industryEmaBreadthService;
 
   void _updateProgress(RefreshStage stage, int current, int total) {
     _stage = stage;

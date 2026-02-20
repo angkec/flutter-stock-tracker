@@ -3,14 +3,18 @@ import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
+import 'package:stock_rtwatcher/data/storage/industry_ema_breadth_config_store.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_stage.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
+import 'package:stock_rtwatcher/models/industry_ema_breadth.dart';
+import 'package:stock_rtwatcher/models/industry_ema_breadth_config.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/widgets/industry_ema_breadth_chart.dart';
 import 'package:stock_rtwatcher/widgets/industry_trend_chart.dart';
 import 'package:stock_rtwatcher/widgets/market_stats_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
@@ -45,8 +49,13 @@ class _StickyHeaderDelegate extends SliverPersistentHeaderDelegate {
 /// 行业详情页
 class IndustryDetailScreen extends StatefulWidget {
   final String industry;
+  final IndustryEmaBreadthConfigStore? emaBreadthConfigStoreForTest;
 
-  const IndustryDetailScreen({super.key, required this.industry});
+  const IndustryDetailScreen({
+    super.key,
+    required this.industry,
+    this.emaBreadthConfigStoreForTest,
+  });
 
   @override
   State<IndustryDetailScreen> createState() => _IndustryDetailScreenState();
@@ -58,6 +67,70 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
   bool _isRatioSortLoading = false;
   String? _ratioSortError;
   int _ratioSortRequestToken = 0;
+  IndustryEmaBreadthSeries? _emaBreadthSeries;
+  IndustryEmaBreadthConfig _emaBreadthConfig =
+      IndustryEmaBreadthConfig.defaultConfig;
+  bool _isEmaBreadthLoading = false;
+  int _emaBreadthRequestToken = 0;
+
+  IndustryEmaBreadthConfigStore get _emaBreadthConfigStore =>
+      widget.emaBreadthConfigStoreForTest ?? IndustryEmaBreadthConfigStore();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEmaBreadthCard();
+  }
+
+  @override
+  void didUpdateWidget(covariant IndustryDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.industry != widget.industry) {
+      _loadEmaBreadthCard();
+    }
+  }
+
+  Future<void> _loadEmaBreadthCard() async {
+    final requestToken = ++_emaBreadthRequestToken;
+    setState(() {
+      _isEmaBreadthLoading = true;
+    });
+
+    IndustryEmaBreadthConfig config = IndustryEmaBreadthConfig.defaultConfig;
+    try {
+      config = await _emaBreadthConfigStore
+          .load(defaults: IndustryEmaBreadthConfig.defaultConfig)
+          .timeout(
+            const Duration(milliseconds: 300),
+            onTimeout: () => IndustryEmaBreadthConfig.defaultConfig,
+          );
+    } catch (_) {
+      config = IndustryEmaBreadthConfig.defaultConfig;
+    }
+
+    IndustryEmaBreadthSeries? series;
+    try {
+      final service = context
+          .read<MarketDataProvider>()
+          .industryEmaBreadthService;
+      if (service != null) {
+        series = await service
+            .getCachedSeries(widget.industry)
+            .timeout(const Duration(milliseconds: 300), onTimeout: () => null);
+      }
+    } catch (_) {
+      series = null;
+    }
+
+    if (!mounted || requestToken != _emaBreadthRequestToken) {
+      return;
+    }
+    setState(() {
+      _emaBreadthConfig = config;
+      _emaBreadthSeries = series;
+      _isEmaBreadthLoading = false;
+    });
+  }
 
   /// 获取行业趋势数据（历史 + 今日）
   List<DailyRatioPoint> _getTrendData(
@@ -266,6 +339,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
     const double chartHeight = 150.0;
     const double summaryHeight = 48.0;
     const double buildupCardHeight = 252.0;
+    const double emaBreadthCardHeight = 305.0;
     const double titleHeight = 32.0;
     const double expandedHeight =
         kToolbarHeight +
@@ -274,6 +348,8 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
         summaryHeight +
         10 +
         buildupCardHeight +
+        8 +
+        emaBreadthCardHeight +
         8 +
         titleHeight;
 
@@ -364,6 +440,39 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
                                 isLoading: isHistoryLoading,
                                 height: buildupCardHeight,
                                 tagConfig: tagConfig,
+                              ),
+                              const SizedBox(height: 8),
+                              // EMA13 广度卡片
+                              Container(
+                                key: const ValueKey(
+                                  'industry_detail_ema_breadth_card',
+                                ),
+                                margin: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: _isEmaBreadthLoading
+                                    ? SizedBox(
+                                        height: 180,
+                                        child: Center(
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                          ),
+                                        ),
+                                      )
+                                    : IndustryEmaBreadthChart(
+                                        series: _emaBreadthSeries,
+                                        config: _emaBreadthConfig,
+                                        height: 164,
+                                      ),
                               ),
                               const SizedBox(height: 8),
                               // 成分股列表标题

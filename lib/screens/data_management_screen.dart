@@ -17,6 +17,7 @@ import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/adx_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/ema_settings_screen.dart';
+import 'package:stock_rtwatcher/screens/industry_ema_breadth_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/macd_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/power_system_settings_screen.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
@@ -175,6 +176,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 context,
                 dataType: KLineDataType.weekly,
               ),
+              _buildIndustryEmaBreadthSettingsItem(context),
 
               const SizedBox(height: 10),
               _buildSectionTitle(context, '历史分钟K线'),
@@ -673,6 +675,43 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       child: ListTile(
         leading: const Icon(Icons.candlestick_chart_rounded),
         title: Text(title),
+        subtitle: Text(summary),
+        trailing: FilledButton.tonal(
+          onPressed: navigateToSettings,
+          child: const Text('进入'),
+        ),
+        onTap: navigateToSettings,
+      ),
+    );
+  }
+
+  Widget _buildIndustryEmaBreadthSettingsItem(BuildContext context) {
+    final provider = context.watch<MarketDataProvider>();
+    final service = provider.industryEmaBreadthService;
+    const title = '行业EMA广度设置';
+    final summary = service == null ? '服务未初始化' : '阈值配置 + 手动重算行业广度';
+
+    Future<void> navigateToSettings() async {
+      if (service == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('行业EMA广度服务未初始化')));
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const IndustryEmaBreadthSettingsScreen(),
+        ),
+      );
+      _triggerRefresh();
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: const Icon(Icons.multiline_chart_rounded),
+        title: const Text(title),
         subtitle: Text(summary),
         trailing: FilledButton.tonal(
           onPressed: navigateToSettings,
@@ -2068,7 +2107,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                   : '（${details.join('，')}）';
               dailyReadWarningMessage =
                   '日K缓存不足: ${readReport.shortageCount}/${readReport.totalStocks} '
-                  '(${shortagePercent}%)$detailLabel';
+                  '($shortagePercent%)$detailLabel';
             }
           }
           audit.record(AuditEventType.fetchResult, {
