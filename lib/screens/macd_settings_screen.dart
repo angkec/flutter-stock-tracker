@@ -108,7 +108,7 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
 
   DateRange _buildRecomputeDateRange() {
     const weeklyRangeDays = 760;
-    const dailyRangeDays = 400;
+    const dailyRangeDays = 540;
     final end = DateTime.now();
     final start = end.subtract(
       Duration(days: _isWeekly ? weeklyRangeDays : dailyRangeDays),
@@ -323,9 +323,9 @@ class _MacdSettingsScreenState extends State<MacdSettingsScreen> {
             title: '缓存窗口（月）',
             value: _windowMonths,
             min: _isWeekly ? 12 : 1,
-            max: 12,
-            divisions: _isWeekly ? 1 : 11,
-            hint: _isWeekly ? '周线固定为 12 个月（1年）' : '当前策略建议保持 3 个月',
+            max: _isWeekly ? 12 : 24,
+            divisions: _isWeekly ? 1 : 23,
+            hint: _isWeekly ? '周线固定为 12 个月（1年）' : '当前策略建议保持 12~18 个月',
             onChanged: (value) => setState(() => _windowMonths = value),
           ),
           if (validation != null) ...[

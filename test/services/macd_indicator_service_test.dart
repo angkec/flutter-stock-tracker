@@ -326,7 +326,7 @@ void main() {
   });
 
   test(
-    'getOrComputeFromBars should compute and trim to recent months',
+    'getOrComputeFromBars should preserve bars within daily default window',
     () async {
       final service = MacdIndicatorService(
         repository: repository,
@@ -342,7 +342,7 @@ void main() {
       );
 
       expect(points, isNotEmpty);
-      expect(points.length, lessThan(bars.length));
+      expect(points.length, bars.length);
       expect(points.first.datetime.isBefore(points.last.datetime), isTrue);
     },
   );
@@ -424,6 +424,17 @@ void main() {
 
     final weekly = service.configFor(KLineDataType.weekly);
     expect(weekly.windowMonths, 12);
+  });
+
+  test('daily config should default to 18-month window', () async {
+    final service = MacdIndicatorService(
+      repository: repository,
+      cacheStore: cacheStore,
+    );
+    await service.load();
+
+    final daily = service.configFor(KLineDataType.daily);
+    expect(daily.windowMonths, 18);
   });
 
   test(

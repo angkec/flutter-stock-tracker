@@ -15,7 +15,7 @@ class MacdConfig {
     fastPeriod: 12,
     slowPeriod: 26,
     signalPeriod: 9,
-    windowMonths: 3,
+    windowMonths: 18,
   );
 
   MacdConfig copyWith({
@@ -72,4 +72,3 @@ class MacdConfig {
     return Object.hash(fastPeriod, slowPeriod, signalPeriod, windowMonths);
   }
 }
-
