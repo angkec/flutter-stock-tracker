@@ -99,4 +99,75 @@ void main() {
 
     expect(mapping, const {'半导体': '801080.SI'});
   });
+
+  test(
+    'refreshFromTushare falls back to full set when is_new=Y is empty',
+    () async {
+      var callCount = 0;
+      final capturedParams = <Map<String, dynamic>>[];
+      final client = TushareClient(
+        token: 'token_123',
+        postJson: (payload) async {
+          callCount++;
+          capturedParams.add(
+            Map<String, dynamic>.from(
+              payload['params'] as Map<String, dynamic>,
+            ),
+          );
+          if (callCount == 1) {
+            return {
+              'code': 0,
+              'msg': '',
+              'data': {
+                'fields': ['l1_code', 'l1_name', 'ts_code', 'name', 'is_new'],
+                'items': <List<dynamic>>[],
+              },
+            };
+          }
+          return {
+            'code': 0,
+            'msg': '',
+            'data': {
+              'fields': ['l1_code', 'l1_name', 'ts_code', 'name', 'is_new'],
+              'items': [
+                ['801780.SI', '银行', '600000.SH', '浦发银行', 'Y'],
+              ],
+            },
+          };
+        },
+      );
+      final service = SwIndustryIndexMappingService(
+        client: client,
+        store: store,
+      );
+
+      final mapping = await service.refreshFromTushare();
+
+      expect(callCount, 2);
+      expect(capturedParams[0]['is_new'], 'Y');
+      expect(capturedParams[1].containsKey('is_new'), isFalse);
+      expect(mapping, const {'银行': '801780.SI'});
+      expect(await store.loadAll(), mapping);
+    },
+  );
+
+  test('refreshFromTushare throws when no mapping is returned', () async {
+    final client = TushareClient(
+      token: 'token_123',
+      postJson: (_) async {
+        return {
+          'code': 0,
+          'msg': '',
+          'data': {
+            'fields': ['l1_code', 'l1_name', 'ts_code', 'name', 'is_new'],
+            'items': <List<dynamic>>[],
+          },
+        };
+      },
+    );
+    final service = SwIndustryIndexMappingService(client: client, store: store);
+
+    await expectLater(service.refreshFromTushare(), throwsA(isA<StateError>()));
+    expect(await store.loadAll(), isEmpty);
+  });
 }

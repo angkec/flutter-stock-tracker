@@ -129,6 +129,30 @@ void main() {
       expect((captured['params'] as Map<String, dynamic>)['is_new'], 'Y');
     });
 
+    test('fetchSwIndustryMembers omits is_new when null is passed', () async {
+      late Map<String, dynamic> captured;
+      final client = TushareClient(
+        token: 'token_123',
+        postJson: (payload) async {
+          captured = payload;
+          return {
+            'code': 0,
+            'msg': '',
+            'data': {
+              'fields': ['l1_code', 'l1_name', 'ts_code', 'name', 'is_new'],
+              'items': <List<dynamic>>[],
+            },
+          };
+        },
+      );
+
+      await client.fetchSwIndustryMembers(isNew: null);
+
+      expect(captured['api_name'], 'index_member_all');
+      final params = captured['params'] as Map<String, dynamic>;
+      expect(params.containsKey('is_new'), isFalse);
+    });
+
     test('parseSwIndustryMembersResponse maps fields+items to rows', () {
       final client = TushareClient(token: 'token_123');
       final data = {

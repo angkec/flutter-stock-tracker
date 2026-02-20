@@ -530,29 +530,36 @@ class _FakeSwIndexRepository extends SwIndexRepository {
 }
 
 class _FakeSwIndustryIndexMappingService extends SwIndustryIndexMappingService {
-  _FakeSwIndustryIndexMappingService({Map<String, String>? refreshResult})
-    : _refreshResult = refreshResult ?? <String, String>{'半导体': '801080.SI'},
-      super(
-        client: TushareClient(
-          token: 'fake-token',
-          postJson: (_) async => {
-            'code': 0,
-            'msg': '',
-            'data': {'fields': <String>[], 'items': <List<dynamic>>[]},
-          },
-        ),
-        store: SwIndustryL1MappingStore(),
-      );
+  _FakeSwIndustryIndexMappingService({
+    Map<String, String>? refreshResult,
+    this.refreshCompleter,
+  }) : _refreshResult = refreshResult ?? <String, String>{'半导体': '801080.SI'},
+       super(
+         client: TushareClient(
+           token: 'fake-token',
+           postJson: (_) async => {
+             'code': 0,
+             'msg': '',
+             'data': {'fields': <String>[], 'items': <List<dynamic>>[]},
+           },
+         ),
+         store: SwIndustryL1MappingStore(),
+       );
 
   final Map<String, String> _refreshResult;
   int refreshCallCount = 0;
   String? lastIsNew;
   Object? refreshError;
+  Completer<void>? refreshCompleter;
 
   @override
   Future<Map<String, String>> refreshFromTushare({String isNew = 'Y'}) async {
     refreshCallCount++;
     lastIsNew = isNew;
+    final completer = refreshCompleter;
+    if (completer != null) {
+      await completer.future;
+    }
     if (refreshError != null) {
       throw refreshError!;
     }
@@ -842,6 +849,74 @@ void main() {
 
     expect(find.text('配置 Tushare Token'), findsOneWidget);
     expect(mappingService.refreshCallCount, 0);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('行业映射刷新中按钮文案显示刷新中', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+    final tokenStorage = _MemoryTokenStorage();
+    await tokenStorage.write('tushare_token', 'test-token');
+    final tokenService = TushareTokenService(storage: tokenStorage);
+    final refreshCompleter = Completer<void>();
+    final mappingService = _FakeSwIndustryIndexMappingService(
+      refreshCompleter: refreshCompleter,
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      tushareTokenService: tokenService,
+      mappingService: mappingService,
+    );
+
+    await scrollToText(tester, '申万行业日指数');
+    final swCard = find.ancestor(
+      of: find.text('申万行业日指数'),
+      matching: find.byType(Card),
+    );
+    final mappingRefreshButton = find.descendant(
+      of: swCard,
+      matching: find.text('刷新行业映射'),
+    );
+    expect(mappingRefreshButton, findsOneWidget);
+
+    await tester.ensureVisible(mappingRefreshButton);
+    await tester.tap(mappingRefreshButton);
+    await tester.pump();
+
+    expect(
+      find.descendant(of: swCard, matching: find.text('刷新中...')),
+      findsOneWidget,
+    );
+
+    refreshCompleter.complete();
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(of: swCard, matching: find.text('刷新行业映射')),
+      findsOneWidget,
+    );
 
     provider.dispose();
     klineService.dispose();

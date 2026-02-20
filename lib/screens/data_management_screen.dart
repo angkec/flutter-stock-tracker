@@ -45,6 +45,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   // 用于强制刷新 FutureBuilder
   int _refreshKey = 0;
   bool _isSyncingWeeklyKline = false;
+  bool _isRefreshingSwIndustryMapping = false;
   static const double _minTradingDateCoverageRatio = 0.3;
   static const int _minCompleteMinuteBars = 220;
   static const int _latestTradingDayProbeDays = 20;
@@ -478,14 +479,16 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           size: null,
           statusLabel: hasToken ? '可拉取' : '待配置',
           isReady: provider.cacheCodeCount > 0,
-          isBusy: provider.isLoading,
+          isBusy: provider.isLoading || _isRefreshingSwIndustryMapping,
           onIncrementalFetch: hasToken
               ? () => _syncSwIndexIncremental(context)
               : () => _showTushareTokenDialog(context),
           onForceFullFetch: hasToken
               ? () => _syncSwIndexForceFull(context)
               : () => _showTushareTokenDialog(context),
-          extraActionLabel: '刷新行业映射',
+          extraActionLabel: _isRefreshingSwIndustryMapping
+              ? '刷新中...'
+              : '刷新行业映射',
           onExtraAction: hasToken
               ? () => _refreshSwIndustryMapping(context)
               : () => _showTushareTokenDialog(context),
@@ -495,8 +498,14 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   }
 
   Future<void> _refreshSwIndustryMapping(BuildContext context) async {
+    if (_isRefreshingSwIndustryMapping) {
+      return;
+    }
     final mappingService = context.read<SwIndustryIndexMappingService>();
     final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _isRefreshingSwIndustryMapping = true;
+    });
     try {
       final mapping = await mappingService.refreshFromTushare(isNew: 'Y');
       if (!mounted) return;
@@ -507,6 +516,12 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(content: Text('申万行业映射刷新失败: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRefreshingSwIndustryMapping = false;
+        });
+      }
     }
   }
 

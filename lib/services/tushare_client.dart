@@ -73,11 +73,16 @@ class TushareClient {
   }
 
   Future<List<SwIndustryL1Member>> fetchSwIndustryMembers({
-    String isNew = 'Y',
+    String? isNew = 'Y',
   }) async {
+    final params = <String, dynamic>{};
+    final isNewValue = isNew?.trim();
+    if (isNewValue != null && isNewValue.isNotEmpty) {
+      params['is_new'] = isNewValue;
+    }
     final payload = buildRequestEnvelope(
       apiName: 'index_member_all',
-      params: {'is_new': isNew},
+      params: params,
     );
 
     final jsonMap = await _postJson(payload);
@@ -159,8 +164,9 @@ class TushareClient {
   }
 
   Future<Map<String, dynamic>> _postJson(Map<String, dynamic> payload) async {
-    if (_postJsonOverride != null) {
-      return _postJsonOverride!(payload);
+    final postJsonOverride = _postJsonOverride;
+    if (postJsonOverride != null) {
+      return postJsonOverride(payload);
     }
 
     final response = await _httpClient
