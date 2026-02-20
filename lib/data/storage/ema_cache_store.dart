@@ -157,6 +157,45 @@ class EmaCacheStore {
     }
   }
 
+  Future<Map<String, EmaCacheSeries>> loadAllSeries(
+    Iterable<String> stockCodes, {
+    required KLineDataType dataType,
+    int maxConcurrentLoads = 8,
+  }) async {
+    final codes = stockCodes.toSet().toList(growable: false);
+    if (codes.isEmpty) {
+      return <String, EmaCacheSeries>{};
+    }
+
+    final workerCount = min(max(1, maxConcurrentLoads), codes.length);
+    final results = <String, EmaCacheSeries>{};
+    var nextIndex = 0;
+
+    Future<void> runWorker() async {
+      while (true) {
+        final index = nextIndex;
+        if (index >= codes.length) {
+          return;
+        }
+        nextIndex++;
+
+        final stockCode = codes[index];
+        final series = await loadSeries(
+          stockCode: stockCode,
+          dataType: dataType,
+        );
+        if (series != null) {
+          results[stockCode] = series;
+        }
+      }
+    }
+
+    await Future.wait(
+      List.generate(workerCount, (_) => runWorker(), growable: false),
+    );
+    return results;
+  }
+
   Future<void> clearForStocks(List<String> stockCodes) async {
     if (stockCodes.isEmpty) return;
     await initialize();
@@ -244,10 +283,7 @@ class EmaCacheStore {
     );
   }
 
-  Future<String> cacheFilePath(
-    String stockCode,
-    KLineDataType dataType,
-  ) async {
+  Future<String> cacheFilePath(String stockCode, KLineDataType dataType) async {
     return _cacheFilePath(stockCode, dataType);
   }
 

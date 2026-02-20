@@ -24,6 +24,7 @@ class IndustryEmaBreadthService {
   final DailyKlineCacheStore _dailyCacheStore;
   final EmaCacheStore _emaCacheStore;
   final IndustryEmaBreadthCacheStore _cacheStore;
+  static const int _maxConcurrentWeeklyEmaLoads = 8;
 
   Future<IndustryEmaBreadthSeries?> getCachedSeries(String industry) {
     return _cacheStore.loadSeries(industry);
@@ -42,8 +43,6 @@ class IndustryEmaBreadthService {
 
     final industries = _industryService.allIndustries.toList(growable: false)
       ..sort();
-    final totalIndustries = industries.isEmpty ? 1 : industries.length;
-    onProgress?.call(0, totalIndustries, '准备重算行业EMA广度...');
     final stocksByIndustry = <String, List<String>>{};
     final allStocks = <String>{};
     for (final industry in industries) {
@@ -81,12 +80,15 @@ class IndustryEmaBreadthService {
     final axisDates = tradingDays.toList(growable: false)
       ..sort((a, b) => a.compareTo(b));
 
+    final weeklySeriesByStock = await _emaCacheStore.loadAllSeries(
+      allStocks,
+      dataType: KLineDataType.weekly,
+      maxConcurrentLoads: _maxConcurrentWeeklyEmaLoads,
+    );
+
     final emaByStock = <String, List<EmaPoint>>{};
     for (final stockCode in allStocks) {
-      final weeklySeries = await _emaCacheStore.loadSeries(
-        stockCode: stockCode,
-        dataType: KLineDataType.weekly,
-      );
+      final weeklySeries = weeklySeriesByStock[stockCode];
       if (weeklySeries == null || weeklySeries.points.isEmpty) {
         continue;
       }
@@ -95,8 +97,34 @@ class IndustryEmaBreadthService {
       emaByStock[stockCode] = points;
     }
 
+    final emaByStockByDate = <String, Map<DateTime, double?>>{};
+    for (final stockCode in allStocks) {
+      final points = emaByStock[stockCode];
+      if (points == null || points.isEmpty) {
+        continue;
+      }
+
+      var cursor = 0;
+      double? current;
+      final byDate = <DateTime, double?>{};
+      for (final date in axisDates) {
+        while (cursor < points.length) {
+          final pointDate = _normalizeDate(points[cursor].datetime);
+          if (pointDate.isAfter(date)) {
+            break;
+          }
+          current = points[cursor].emaShort;
+          cursor++;
+        }
+        byDate[date] = current;
+      }
+      emaByStockByDate[stockCode] = byDate;
+    }
+
     final seriesByIndustry = <String, IndustryEmaBreadthSeries>{};
-    var completedIndustries = 0;
+    final totalUnits = max(1, industries.length * axisDates.length);
+    onProgress?.call(0, totalUnits, '准备重算行业EMA广度...');
+    var completedUnits = 0;
     for (final industry in industries) {
       final stockCodes = stocksByIndustry[industry] ?? const <String>[];
       final points = <IndustryEmaBreadthPoint>[];
@@ -108,7 +136,7 @@ class IndustryEmaBreadthService {
 
         for (final stockCode in stockCodes) {
           final close = dailyCloseByStock[stockCode]?[date];
-          final ema = _latestWeeklyEma(emaByStock[stockCode], upToDate: date);
+          final ema = emaByStockByDate[stockCode]?[date];
           if (close == null || ema == null) {
             missingCount++;
             continue;
@@ -129,18 +157,26 @@ class IndustryEmaBreadthService {
             missingCount: missingCount,
           ),
         );
+
+        completedUnits++;
+        onProgress?.call(
+          completedUnits,
+          totalUnits,
+          '计算中 ${industry} ${_dateLabel(date)}',
+        );
+        if (completedUnits % 64 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
       }
 
       seriesByIndustry[industry] = IndustryEmaBreadthSeries(
         industry: industry,
         points: points,
       );
-      completedIndustries++;
-      onProgress?.call(completedIndustries, totalIndustries, '已完成 $industry');
     }
 
     await _cacheStore.saveAll(seriesByIndustry.values.toList(growable: false));
-    onProgress?.call(totalIndustries, totalIndustries, '重算完成');
+    onProgress?.call(totalUnits, totalUnits, '重算完成');
     return seriesByIndustry;
   }
 
@@ -160,25 +196,14 @@ class IndustryEmaBreadthService {
     return result;
   }
 
-  double? _latestWeeklyEma(
-    List<EmaPoint>? points, {
-    required DateTime upToDate,
-  }) {
-    if (points == null || points.isEmpty) return null;
-
-    double? lastValue;
-    for (final point in points) {
-      final pointDate = _normalizeDate(point.datetime);
-      if (pointDate.isAfter(upToDate)) {
-        break;
-      }
-      lastValue = point.emaShort;
-    }
-    return lastValue;
-  }
-
   DateTime _normalizeDate(DateTime date) {
     return DateTime(date.year, date.month, date.day);
+  }
+
+  String _dateLabel(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
   }
 
   int _lookbackMonths(DateTime startDate, DateTime endDate) {

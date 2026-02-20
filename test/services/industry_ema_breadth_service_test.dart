@@ -29,6 +29,34 @@ List<KLine> _bars(List<(DateTime, double)> entries) {
       .toList(growable: false);
 }
 
+class _TrackingEmaCacheStore extends EmaCacheStore {
+  _TrackingEmaCacheStore({required this.delay, required this.responses});
+
+  final Duration delay;
+  final Map<String, EmaCacheSeries> responses;
+  final Set<String> requestedStockCodes = <String>{};
+  int _inFlight = 0;
+  int maxObservedConcurrency = 0;
+
+  @override
+  Future<EmaCacheSeries?> loadSeries({
+    required String stockCode,
+    required KLineDataType dataType,
+  }) async {
+    requestedStockCodes.add(stockCode);
+    _inFlight++;
+    if (_inFlight > maxObservedConcurrency) {
+      maxObservedConcurrency = _inFlight;
+    }
+    try {
+      await Future<void>.delayed(delay);
+      return responses[stockCode];
+    } finally {
+      _inFlight--;
+    }
+  }
+}
+
 void main() {
   late Directory tempDir;
   late KLineFileStorage storage;
@@ -159,4 +187,111 @@ void main() {
     expect(cachedTech, equals(result['Tech']));
     expect(cachedFinance, equals(result['Finance']));
   });
+
+  test('recomputeAllIndustries emits fine-grained progress updates', () async {
+    await dailyStore.saveAll({
+      'AAA': _bars([(DateTime(2026, 1, 5), 11), (DateTime(2026, 1, 6), 9)]),
+      'BBB': _bars([(DateTime(2026, 1, 5), 12)]),
+      'CCC': _bars([(DateTime(2026, 1, 5), 20), (DateTime(2026, 1, 6), 21)]),
+    });
+
+    await emaStore.saveSeries(
+      stockCode: 'AAA',
+      dataType: KLineDataType.weekly,
+      config: EmaConfig.weeklyDefaults,
+      sourceSignature: 'sig-a',
+      points: [
+        EmaPoint(datetime: DateTime(2026, 1, 2), emaShort: 10, emaLong: 8),
+      ],
+    );
+    await emaStore.saveSeries(
+      stockCode: 'BBB',
+      dataType: KLineDataType.weekly,
+      config: EmaConfig.weeklyDefaults,
+      sourceSignature: 'sig-b',
+      points: [
+        EmaPoint(datetime: DateTime(2026, 1, 2), emaShort: 11, emaLong: 9),
+      ],
+    );
+
+    final events = <({int current, int total, String stage})>[];
+    final result = await service.recomputeAllIndustries(
+      startDate: DateTime(2026, 1, 5),
+      endDate: DateTime(2026, 1, 11),
+      onProgress: (current, total, stage) {
+        events.add((current: current, total: total, stage: stage));
+      },
+    );
+    final datesPerIndustry = result.values
+        .map((series) => series.points.length)
+        .fold<int>(
+          0,
+          (maxLength, length) => length > maxLength ? length : maxLength,
+        );
+    final expectedTotalUnits = result.length * datesPerIndustry;
+
+    expect(events, isNotEmpty);
+    expect(events.first.current, 0);
+    expect(events.first.stage, '准备重算行业EMA广度...');
+    expect(events.last.total, expectedTotalUnits);
+    expect(events.last.current, events.last.total);
+    expect(events.where((event) => event.stage.startsWith('已完成 ')), isEmpty);
+    expect(events.any((event) => event.stage.startsWith('计算中')), isTrue);
+    expect(events.length, greaterThan(4));
+  });
+
+  test(
+    'recomputeAllIndustries loads weekly EMA cache with bounded concurrency',
+    () async {
+      final stockCodes = List<String>.generate(
+        16,
+        (index) => 'S${(index + 1).toString().padLeft(3, '0')}',
+        growable: false,
+      );
+      industryService.setTestData({
+        for (final stockCode in stockCodes) stockCode: 'Tech',
+      });
+
+      await dailyStore.saveAll({
+        for (final stockCode in stockCodes)
+          stockCode: _bars([(DateTime(2026, 1, 5), 10)]),
+      });
+
+      final trackingStore = _TrackingEmaCacheStore(
+        delay: const Duration(milliseconds: 20),
+        responses: {
+          for (final stockCode in stockCodes)
+            stockCode: EmaCacheSeries(
+              stockCode: stockCode,
+              dataType: KLineDataType.weekly,
+              config: EmaConfig.weeklyDefaults,
+              sourceSignature: 'sig-$stockCode',
+              points: [
+                EmaPoint(
+                  datetime: DateTime(2026, 1, 2),
+                  emaShort: 9,
+                  emaLong: 8,
+                ),
+              ],
+            ),
+        },
+      );
+      final localService = IndustryEmaBreadthService(
+        industryService: industryService,
+        dailyCacheStore: dailyStore,
+        emaCacheStore: trackingStore,
+        cacheStore: breadthStore,
+      );
+
+      final result = await localService.recomputeAllIndustries(
+        startDate: DateTime(2026, 1, 5),
+        endDate: DateTime(2026, 1, 5),
+      );
+
+      expect(result['Tech']!.points.single.percent, 100);
+      expect(trackingStore.requestedStockCodes.length, stockCodes.length);
+      expect(trackingStore.maxObservedConcurrency, greaterThan(1));
+      expect(trackingStore.maxObservedConcurrency, lessThanOrEqualTo(8));
+    },
+  );
 }

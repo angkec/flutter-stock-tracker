@@ -45,6 +45,9 @@ class _FakeIndustryEmaBreadthService extends IndustryEmaBreadthService {
 
   int recomputeCount = 0;
   Duration recomputeDelay = Duration.zero;
+  List<({int current, int total, String stage, Duration delay})>
+  scriptedProgressUpdates =
+      const <({int current, int total, String stage, Duration delay})>[];
 
   @override
   Future<Map<String, IndustryEmaBreadthSeries>> recomputeAllIndustries({
@@ -53,7 +56,16 @@ class _FakeIndustryEmaBreadthService extends IndustryEmaBreadthService {
     void Function(int current, int total, String stage)? onProgress,
   }) async {
     recomputeCount++;
-    onProgress?.call(1, 1, '重算完成');
+    if (scriptedProgressUpdates.isNotEmpty) {
+      for (final update in scriptedProgressUpdates) {
+        onProgress?.call(update.current, update.total, update.stage);
+        if (update.delay > Duration.zero) {
+          await Future<void>.delayed(update.delay);
+        }
+      }
+    } else {
+      onProgress?.call(1, 1, '重算完成');
+    }
     if (recomputeDelay > Duration.zero) {
       await Future<void>.delayed(recomputeDelay);
     }
@@ -187,7 +199,59 @@ void main() {
     await tester.pump();
 
     expect(find.textContaining('已处理'), findsOneWidget);
-    expect(find.textContaining('重算完成'), findsOneWidget);
+    expect(find.text('重算完成'), findsOneWidget);
+
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('manual recompute dialog shows intermediate progress updates', (
+    tester,
+  ) async {
+    final store = _FakeIndustryEmaBreadthConfigStore(
+      IndustryEmaBreadthConfig.defaultConfig,
+    );
+    final service = _FakeIndustryEmaBreadthService()
+      ..scriptedProgressUpdates = [
+        (
+          current: 0,
+          total: 6,
+          stage: '准备重算行业EMA广度...',
+          delay: const Duration(milliseconds: 10),
+        ),
+        (
+          current: 2,
+          total: 6,
+          stage: '计算中 A',
+          delay: const Duration(milliseconds: 10),
+        ),
+        (
+          current: 4,
+          total: 6,
+          stage: '计算中 B',
+          delay: const Duration(milliseconds: 10),
+        ),
+        (current: 6, total: 6, stage: '重算完成', delay: Duration.zero),
+      ];
+
+    await _pumpScreen(tester, store: store, service: service);
+
+    await tester.tap(find.byKey(const ValueKey('industry_ema_recompute')));
+    await tester.pump();
+
+    expect(find.textContaining('已处理 0/6'), findsOneWidget);
+    expect(find.textContaining('准备重算行业EMA广度...'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 12));
+    expect(find.textContaining('已处理 2/6'), findsOneWidget);
+    expect(find.textContaining('计算中 A'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 12));
+    expect(find.textContaining('已处理 4/6'), findsOneWidget);
+    expect(find.textContaining('计算中 B'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 12));
+    expect(find.textContaining('已处理 6/6'), findsOneWidget);
+    expect(find.text('重算完成'), findsOneWidget);
 
     await tester.pumpAndSettle();
   });
