@@ -19,7 +19,9 @@ import 'package:stock_rtwatcher/audit/services/audit_export_service.dart';
 import 'package:stock_rtwatcher/audit/services/audit_operation_runner.dart';
 import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/providers/sw_index_data_provider.dart';
 import 'package:stock_rtwatcher/screens/data_management_screen.dart';
+import 'package:stock_rtwatcher/data/repository/sw_index_repository.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
@@ -30,6 +32,8 @@ import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
+import 'package:stock_rtwatcher/services/tushare_client.dart';
+import 'package:stock_rtwatcher/services/tushare_token_service.dart';
 
 class _FakeDataRepository implements DataRepository {
   final StreamController<DataStatus> _statusController =
@@ -504,6 +508,44 @@ List<StockMonitorData> _buildStocks(int count) {
   });
 }
 
+class _FakeSwIndexRepository extends SwIndexRepository {
+  _FakeSwIndexRepository()
+    : super(
+        client: TushareClient(
+          token: 'fake-token',
+          postJson: (_) async => {
+            'code': 0,
+            'msg': '',
+            'data': {'fields': <String>[], 'items': <List<dynamic>>[]},
+          },
+        ),
+      );
+
+  @override
+  Future<SwIndexCacheStats> getCacheStats() async {
+    return const SwIndexCacheStats(codeCount: 0, dataVersion: 0);
+  }
+}
+
+class _MemoryTokenStorage implements TokenStorage {
+  String? _value;
+
+  @override
+  Future<void> delete(String key) async {
+    _value = null;
+  }
+
+  @override
+  Future<String?> read(String key) async {
+    return _value;
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    _value = value;
+  }
+}
+
 void main() {
   const toggleChannelName =
       'dev.flutter.pigeon.wakelock_plus_platform_interface.WakelockPlusApi.toggle';
@@ -520,6 +562,8 @@ void main() {
     EmaIndicatorService? emaService,
     PowerSystemIndicatorService? powerSystemService,
     AuditService? auditService,
+    SwIndexDataProvider? swIndexProvider,
+    TushareTokenService? tushareTokenService,
   }) async {
     final effectiveMacdService =
         macdService ?? _FakeMacdIndicatorService(repository: repository);
@@ -547,9 +591,17 @@ void main() {
             ),
           );
         })();
+    final effectiveSwIndexProvider =
+        swIndexProvider ??
+        SwIndexDataProvider(repository: _FakeSwIndexRepository());
+    final effectiveTushareTokenService =
+        tushareTokenService ??
+        TushareTokenService(storage: _MemoryTokenStorage());
     await effectiveMacdService.load();
     await effectiveAdxService.load();
     await effectiveEmaService.load();
+    await effectiveSwIndexProvider.refreshStats();
+    await effectiveTushareTokenService.load();
 
     await tester.pumpWidget(
       MultiProvider(
@@ -579,6 +631,12 @@ void main() {
           ),
           ChangeNotifierProvider<AuditService>.value(
             value: effectiveAuditService,
+          ),
+          ChangeNotifierProvider<SwIndexDataProvider>.value(
+            value: effectiveSwIndexProvider,
+          ),
+          ChangeNotifierProvider<TushareTokenService>.value(
+            value: effectiveTushareTokenService,
           ),
         ],
         child: const MaterialApp(home: DataManagementScreen()),
@@ -617,6 +675,34 @@ void main() {
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMessageHandler(toggleChannelName, null);
+  });
+
+  testWidgets('基础数据区显示申万行业日指数卡片', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+    );
+
+    await scrollToText(tester, '申万行业日指数');
+    expect(find.text('申万行业日指数'), findsOneWidget);
   });
 
   testWidgets('交易日覆盖率不足时显示最后交易日完整而非样本不足', (tester) async {

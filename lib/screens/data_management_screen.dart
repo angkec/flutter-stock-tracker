@@ -15,6 +15,7 @@ import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/providers/sw_index_data_provider.dart';
 import 'package:stock_rtwatcher/screens/adx_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/ema_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/macd_settings_screen.dart';
@@ -26,6 +27,7 @@ import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
+import 'package:stock_rtwatcher/services/tushare_token_service.dart';
 import 'package:stock_rtwatcher/widgets/data_management_audit_console.dart';
 
 enum _WeeklySyncStage { precheck, fetch, write }
@@ -56,6 +58,14 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   static const int _weeklyEmaPersistConcurrency = 8;
   static const int _weeklyPowerSystemFetchBatchSize = 120;
   static const int _weeklyPowerSystemPersistConcurrency = 8;
+  static const List<String> _defaultSwIndexCodes = <String>[
+    '801010.SI',
+    '801030.SI',
+    '801110.SI',
+    '801210.SI',
+    '801730.SI',
+    '801780.SI',
+  ];
 
   void _triggerRefresh() {
     setState(() {
@@ -131,6 +141,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                   () => _forceRefetchIndustryData(context),
                 ),
               ),
+              _buildSwIndexDailyCacheItem(context),
               Consumer<DataRepository>(
                 builder: (context, repository, _) {
                   return FutureBuilder<({String subtitle, int missingStocks})>(
@@ -443,9 +454,135 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
         return Icons.account_tree_outlined;
       case '历史分钟K线':
         return Icons.timeline_rounded;
+      case '申万行业日指数':
+        return Icons.area_chart_rounded;
       default:
         return Icons.dataset_outlined;
     }
+  }
+
+  Widget _buildSwIndexDailyCacheItem(BuildContext context) {
+    return Consumer2<SwIndexDataProvider, TushareTokenService>(
+      builder: (_, provider, tokenService, __) {
+        final hasToken = tokenService.hasToken;
+        final subtitle = hasToken
+            ? '已缓存${provider.cacheCodeCount}个指数 · 版本${provider.dataVersion}'
+            : '未配置 Tushare Token';
+        return _buildDailyCacheItem(
+          context,
+          title: '申万行业日指数',
+          subtitle: subtitle,
+          size: null,
+          statusLabel: hasToken ? '可拉取' : '待配置',
+          isReady: provider.cacheCodeCount > 0,
+          isBusy: provider.isLoading,
+          onIncrementalFetch: hasToken
+              ? () => _syncSwIndexIncremental(context)
+              : () => _showTushareTokenDialog(context),
+          onForceFullFetch: hasToken
+              ? () => _syncSwIndexForceFull(context)
+              : () => _showTushareTokenDialog(context),
+        );
+      },
+    );
+  }
+
+  Future<void> _syncSwIndexIncremental(BuildContext context) async {
+    final provider = context.read<SwIndexDataProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final now = DateTime.now();
+    final range = DateRange(now.subtract(const Duration(days: 365)), now);
+    await provider.syncIncremental(
+      tsCodes: _defaultSwIndexCodes,
+      dateRange: range,
+    );
+    if (!mounted) return;
+    final error = provider.lastError;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? '申万行业日指数增量拉取完成（${provider.lastFetchedCodes.length}个）'
+              : '申万行业日指数增量拉取失败: $error',
+        ),
+      ),
+    );
+    _triggerRefresh();
+  }
+
+  Future<void> _syncSwIndexForceFull(BuildContext context) async {
+    final provider = context.read<SwIndexDataProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final now = DateTime.now();
+    final range = DateRange(now.subtract(const Duration(days: 365)), now);
+    await provider.syncRefetch(tsCodes: _defaultSwIndexCodes, dateRange: range);
+    if (!mounted) return;
+    final error = provider.lastError;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          error == null
+              ? '申万行业日指数强制重拉完成（${provider.lastFetchedCodes.length}个）'
+              : '申万行业日指数强制重拉失败: $error',
+        ),
+      ),
+    );
+    _triggerRefresh();
+  }
+
+  Future<void> _showTushareTokenDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    final tokenService = context.read<TushareTokenService>();
+    final swProvider = context.read<SwIndexDataProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final action = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('配置 Tushare Token'),
+          content: TextField(
+            controller: controller,
+            obscureText: true,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: '请输入 token',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(null),
+              child: const Text('仅本次使用'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('保存并使用'),
+            ),
+          ],
+        );
+      },
+    );
+
+    final token = controller.text.trim();
+    if (token.isEmpty || action == false) {
+      controller.dispose();
+      return;
+    }
+
+    if (action == true) {
+      await tokenService.saveToken(token);
+    } else {
+      tokenService.setTempToken(token);
+    }
+    controller.dispose();
+
+    if (!mounted) return;
+    messenger.showSnackBar(const SnackBar(content: Text('Tushare Token 已更新')));
+    await swProvider.refreshStats();
+    _triggerRefresh();
   }
 
   Widget _buildCacheItem(
