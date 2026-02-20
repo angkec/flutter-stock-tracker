@@ -21,6 +21,8 @@ import 'package:stock_rtwatcher/services/watchlist_service.dart';
 import 'package:stock_rtwatcher/services/holdings_service.dart';
 import 'package:stock_rtwatcher/services/ai_analysis_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
+import 'package:stock_rtwatcher/services/tushare_token_service.dart';
+import 'package:stock_rtwatcher/services/tushare_client.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/backtest_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
@@ -35,9 +37,11 @@ import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
 import 'package:stock_rtwatcher/services/industry_ema_breadth_service.dart';
 import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
+import 'package:stock_rtwatcher/providers/sw_index_data_provider.dart';
 import 'package:stock_rtwatcher/audit/services/audit_service.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
 import 'package:stock_rtwatcher/data/repository/tdx_pool_fetch_adapter.dart';
+import 'package:stock_rtwatcher/data/repository/sw_index_repository.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -141,6 +145,13 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(
           create: (_) {
+            final service = TushareTokenService();
+            service.load();
+            return service;
+          },
+        ),
+        ChangeNotifierProvider(
+          create: (_) {
             final service = PullbackService();
             service.load(); // 异步加载回踩配置
             return service;
@@ -186,6 +197,25 @@ class MyApp extends StatelessWidget {
             );
           },
           dispose: (_, repo) => repo.dispose(),
+        ),
+        ProxyProvider<TushareTokenService, SwIndexRepository>(
+          update: (_, tokenService, __) {
+            final token = tokenService.token;
+            final client = TushareClient(
+              token: (token == null || token.isEmpty) ? '__NO_TOKEN__' : token,
+            );
+            return SwIndexRepository(client: client);
+          },
+        ),
+        ChangeNotifierProxyProvider<SwIndexRepository, SwIndexDataProvider>(
+          create: (context) {
+            return SwIndexDataProvider(
+              repository: context.read<SwIndexRepository>(),
+            );
+          },
+          update: (_, repository, __) {
+            return SwIndexDataProvider(repository: repository);
+          },
         ),
         ChangeNotifierProxyProvider2<
           DataRepository,
