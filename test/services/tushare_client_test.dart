@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stock_rtwatcher/models/sw_industry_l1_member.dart';
 import 'package:stock_rtwatcher/services/tushare_client.dart';
 
 void main() {
@@ -101,6 +102,66 @@ void main() {
 
       expect(bars, hasLength(1));
       expect(bars.first.tradeDate, DateTime(2025, 1, 2));
+    });
+
+    test('fetchSwIndustryMembers sends index_member_all request', () async {
+      late Map<String, dynamic> captured;
+      final client = TushareClient(
+        token: 'token_123',
+        postJson: (payload) async {
+          captured = payload;
+          return {
+            'code': 0,
+            'msg': '',
+            'data': {
+              'fields': ['l1_code', 'l1_name', 'ts_code', 'name', 'is_new'],
+              'items': [
+                ['801010.SI', '农林牧渔', '000001.SZ', '平安银行', 'Y'],
+              ],
+            },
+          };
+        },
+      );
+
+      await client.fetchSwIndustryMembers();
+
+      expect(captured['api_name'], 'index_member_all');
+      expect((captured['params'] as Map<String, dynamic>)['is_new'], 'Y');
+    });
+
+    test('parseSwIndustryMembersResponse maps fields+items to rows', () {
+      final client = TushareClient(token: 'token_123');
+      final data = {
+        'code': 0,
+        'msg': '',
+        'data': {
+          'fields': ['l1_code', 'l1_name', 'ts_code', 'name', 'is_new'],
+          'items': [
+            ['801010.SI', '农林牧渔', '000001.SZ', '平安银行', 'Y'],
+          ],
+        },
+      };
+
+      final rows = client.parseSwIndustryMembersResponse(data);
+      expect(rows, hasLength(1));
+      expect(rows.first, isA<SwIndustryL1Member>());
+      expect(rows.first.l1Code, '801010.SI');
+      expect(rows.first.l1Name, '农林牧渔');
+      expect(rows.first.tsCode, '000001.SZ');
+      expect(rows.first.stockName, '平安银行');
+      expect(rows.first.isNew, 'Y');
+    });
+
+    test('fetchSwIndustryMembers throws when API returns code != 0', () async {
+      final client = TushareClient(
+        token: 'token_123',
+        postJson: (_) async => {'code': -2001, 'msg': 'invalid token'},
+      );
+
+      await expectLater(
+        client.fetchSwIndustryMembers(),
+        throwsA(isA<TushareApiException>()),
+      );
     });
   });
 }

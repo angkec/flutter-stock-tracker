@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:stock_rtwatcher/models/sw_daily_bar.dart';
+import 'package:stock_rtwatcher/models/sw_industry_l1_member.dart';
 
 typedef PostJsonFn =
     Future<Map<String, dynamic>> Function(Map<String, dynamic> payload);
@@ -71,6 +72,26 @@ class TushareClient {
     return parseSwDailyResponse(jsonMap);
   }
 
+  Future<List<SwIndustryL1Member>> fetchSwIndustryMembers({
+    String isNew = 'Y',
+  }) async {
+    final payload = buildRequestEnvelope(
+      apiName: 'index_member_all',
+      params: {'is_new': isNew},
+    );
+
+    final jsonMap = await _postJson(payload);
+    final code = (jsonMap['code'] as num?)?.toInt() ?? -1;
+    if (code != 0) {
+      throw TushareApiException(
+        code: code,
+        message: jsonMap['msg']?.toString() ?? 'unknown error',
+      );
+    }
+
+    return parseSwIndustryMembersResponse(jsonMap);
+  }
+
   List<SwDailyBar> parseSwDailyResponse(Map<String, dynamic> response) {
     final data = response['data'];
     if (data is! Map<String, dynamic>) {
@@ -101,6 +122,40 @@ class TushareClient {
       bars.add(SwDailyBar.fromTushareMap(map));
     }
     return bars;
+  }
+
+  List<SwIndustryL1Member> parseSwIndustryMembersResponse(
+    Map<String, dynamic> response,
+  ) {
+    final data = response['data'];
+    if (data is! Map<String, dynamic>) {
+      return const <SwIndustryL1Member>[];
+    }
+
+    final fieldsRaw = data['fields'];
+    final itemsRaw = data['items'];
+    if (fieldsRaw is! List || itemsRaw is! List) {
+      return const <SwIndustryL1Member>[];
+    }
+
+    final fieldNames = fieldsRaw
+        .map((e) => e.toString())
+        .toList(growable: false);
+    final rows = <SwIndustryL1Member>[];
+    for (final rowRaw in itemsRaw) {
+      if (rowRaw is! List) {
+        continue;
+      }
+      final map = <String, dynamic>{};
+      final max = rowRaw.length < fieldNames.length
+          ? rowRaw.length
+          : fieldNames.length;
+      for (var i = 0; i < max; i++) {
+        map[fieldNames[i]] = rowRaw[i];
+      }
+      rows.add(SwIndustryL1Member.fromTushareMap(map));
+    }
+    return rows;
   }
 
   Future<Map<String, dynamic>> _postJson(Map<String, dynamic> payload) async {
