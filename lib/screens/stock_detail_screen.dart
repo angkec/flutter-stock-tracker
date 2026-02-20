@@ -29,10 +29,12 @@ import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/power_system_cache_store.dart';
 import 'package:stock_rtwatcher/models/ema_point.dart';
 import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
 import 'package:stock_rtwatcher/services/linked_layout_solver.dart';
 import 'package:stock_rtwatcher/widgets/linked_layout_debug_sheet.dart';
+import 'package:stock_rtwatcher/widgets/power_system_candle_color.dart';
 
 /// K线图显示模式
 enum ChartMode { minute, daily, weekly, linked }
@@ -56,6 +58,7 @@ class StockDetailScreen extends StatefulWidget {
   final MacdCacheStore? macdCacheStoreForTest;
   final AdxCacheStore? adxCacheStoreForTest;
   final EmaCacheStore? emaCacheStoreForTest;
+  final PowerSystemCacheStore? powerSystemCacheStoreForTest;
 
   const StockDetailScreen({
     super.key,
@@ -72,6 +75,7 @@ class StockDetailScreen extends StatefulWidget {
     this.macdCacheStoreForTest,
     this.adxCacheStoreForTest,
     this.emaCacheStoreForTest,
+    this.powerSystemCacheStoreForTest,
   });
 
   @override
@@ -98,6 +102,8 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
   List<double?>? _dailyEmaLong;
   List<double?>? _weeklyEmaShort;
   List<double?>? _weeklyEmaLong;
+  CandleColorResolver? _dailyPowerSystemColorResolver;
+  CandleColorResolver? _weeklyPowerSystemColorResolver;
 
   bool _isLoadingKLine = false;
   bool _isLoadingRatio = false;
@@ -284,19 +290,20 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     required List<KLine> daily,
     required List<KLine> weekly,
   }) async {
-    final store =
-        widget.emaCacheStoreForTest ?? EmaCacheStore();
+    final store = widget.emaCacheStoreForTest ?? EmaCacheStore();
+    final powerStore =
+        widget.powerSystemCacheStoreForTest ?? PowerSystemCacheStore();
     final code = _currentStock.code;
 
-    final results = await Future.wait([
+    final emaResults = await Future.wait([
       store.loadSeries(stockCode: code, dataType: KLineDataType.daily),
       store.loadSeries(stockCode: code, dataType: KLineDataType.weekly),
     ]);
 
     if (!mounted) return;
 
-    final dailySeries = results[0];
-    final weeklySeries = results[1];
+    final dailySeries = emaResults[0] as EmaCacheSeries?;
+    final weeklySeries = emaResults[1] as EmaCacheSeries?;
 
     setState(() {
       if (dailySeries != null) {
@@ -316,6 +323,23 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
         _weeklyEmaLong = null;
       }
     });
+
+    final powerResults = await Future.wait([
+      powerStore.loadSeries(stockCode: code, dataType: KLineDataType.daily),
+      powerStore.loadSeries(stockCode: code, dataType: KLineDataType.weekly),
+    ]);
+    if (!mounted) return;
+
+    final dailyPowerSeries = powerResults[0] as PowerSystemCacheSeries?;
+    final weeklyPowerSeries = powerResults[1] as PowerSystemCacheSeries?;
+    setState(() {
+      _dailyPowerSystemColorResolver = dailyPowerSeries == null
+          ? null
+          : PowerSystemCandleColor.fromSeries(dailyPowerSeries);
+      _weeklyPowerSystemColorResolver = weeklyPowerSeries == null
+          ? null
+          : PowerSystemCandleColor.fromSeries(weeklyPowerSeries);
+    });
   }
 
   /// Aligns EMA points to bars by date. Returns (shortSeries, longSeries),
@@ -328,8 +352,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
     // Build a date-keyed map from EMA points
     final pointMap = <String, EmaPoint>{};
     for (final p in series.points) {
-      final key =
-          '${p.datetime.year}-${p.datetime.month}-${p.datetime.day}';
+      final key = '${p.datetime.year}-${p.datetime.month}-${p.datetime.day}';
       pointMap[key] = p;
     }
 
@@ -866,6 +889,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
           macdCacheStoreForTest: widget.macdCacheStoreForTest,
           adxCacheStoreForTest: widget.adxCacheStoreForTest,
           emaCacheStoreForTest: widget.emaCacheStoreForTest,
+          powerSystemCacheStoreForTest: widget.powerSystemCacheStoreForTest,
         ),
       );
     }
@@ -897,6 +921,9 @@ class _StockDetailScreenState extends State<StockDetailScreen> {
       emaLongSeries: _chartMode == ChartMode.daily
           ? _dailyEmaLong
           : _weeklyEmaLong,
+      candleColorResolver: _chartMode == ChartMode.daily
+          ? _dailyPowerSystemColorResolver
+          : _weeklyPowerSystemColorResolver,
       subCharts: [
         MacdSubChart(
           key: ValueKey('stock_detail_macd_${_chartMode.name}'),

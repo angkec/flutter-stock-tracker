@@ -30,6 +30,7 @@ import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
+import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
 import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/audit/services/audit_service.dart';
@@ -244,6 +245,22 @@ class MyApp extends StatelessWidget {
           },
           update: (_, repository, previous) => previous!,
         ),
+        ChangeNotifierProxyProvider<
+          DataRepository,
+          PowerSystemIndicatorService
+        >(
+          create: (context) {
+            final repository = context.read<DataRepository>();
+            final emaService = context.read<EmaIndicatorService>();
+            final macdService = context.read<MacdIndicatorService>();
+            return PowerSystemIndicatorService(
+              repository: repository,
+              emaService: emaService,
+              macdService: macdService,
+            );
+          },
+          update: (_, repository, previous) => previous!,
+        ),
         ChangeNotifierProvider(
           create: (_) {
             final service = BacktestService();
@@ -278,6 +295,8 @@ class MyApp extends StatelessWidget {
             final macdService = context.read<MacdIndicatorService>();
             final adxService = context.read<AdxIndicatorService>();
             final emaService = context.read<EmaIndicatorService>();
+            final powerSystemService = context
+                .read<PowerSystemIndicatorService>();
             final dailyCacheStore = context.read<DailyKlineCacheStore>();
             final dailyCheckpointStore = context
                 .read<DailyKlineCheckpointStore>();
@@ -298,6 +317,7 @@ class MyApp extends StatelessWidget {
             provider.setMacdService(macdService);
             provider.setAdxService(adxService);
             provider.setEmaService(emaService);
+            provider.setPowerSystemService(powerSystemService);
             provider.loadFromCache();
             return provider;
           },
@@ -314,6 +334,8 @@ class MyApp extends StatelessWidget {
               ) {
                 final adxService = context.read<AdxIndicatorService>();
                 final emaService = context.read<EmaIndicatorService>();
+                final powerSystemService = context
+                    .read<PowerSystemIndicatorService>();
                 breakoutService.setHistoricalKlineService(
                   historicalKlineService,
                 );
@@ -322,6 +344,7 @@ class MyApp extends StatelessWidget {
                 previous.setMacdService(macdService);
                 previous.setAdxService(adxService);
                 previous.setEmaService(emaService);
+                previous.setPowerSystemService(powerSystemService);
                 return previous;
               },
         ),

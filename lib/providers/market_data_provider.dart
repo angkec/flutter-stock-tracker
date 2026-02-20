@@ -21,6 +21,7 @@ import 'package:stock_rtwatcher/services/breakout_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
+import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
 
 /// 在隔离线程中解析股票监控数据 JSON
 List<StockMonitorData> _parseMarketDataJson(String jsonStr) {
@@ -51,6 +52,7 @@ class MarketDataProvider extends ChangeNotifier {
   MacdIndicatorService? _macdService;
   AdxIndicatorService? _adxService;
   EmaIndicatorService? _emaService;
+  PowerSystemIndicatorService? _powerSystemService;
 
   List<StockMonitorData> _allData = [];
   bool _isLoading = false;
@@ -172,8 +174,7 @@ class MarketDataProvider extends ChangeNotifier {
       _lastDailySyncCompletenessState;
   String get lastDailySyncCompletenessStateWire =>
       _lastDailySyncCompletenessState.wireValue;
-  DailyKlineReadReport? get lastDailySyncReadReport =>
-      _lastDailySyncReadReport;
+  DailyKlineReadReport? get lastDailySyncReadReport => _lastDailySyncReadReport;
   String get minuteDataCacheSize => _formatSize(_minuteDataCount * 240 * 40);
   String? get industryDataCacheSize => _industryService.isLoaded
       ? _formatSize(_estimateIndustryDataSize())
@@ -278,6 +279,11 @@ class MarketDataProvider extends ChangeNotifier {
   /// 设置EMA指标服务（用于日/周线EMA计算与缓存）
   void setEmaService(EmaIndicatorService service) {
     _emaService = service;
+  }
+
+  /// 设置Power System指标服务（用于日/周线状态缓存）
+  void setPowerSystemService(PowerSystemIndicatorService service) {
+    _powerSystemService = service;
   }
 
   void _updateProgress(RefreshStage stage, int current, int total) {
@@ -533,6 +539,14 @@ class MarketDataProvider extends ChangeNotifier {
           }
         }
 
+        if (_powerSystemService != null && _dailyBarsCache.isNotEmpty) {
+          try {
+            await _prewarmDailyPowerSystem();
+          } catch (e) {
+            debugPrint('Power System prewarm failed: $e');
+          }
+        }
+
         if (!silent) {
           _updateProgress(RefreshStage.analyzing, 0, 0);
         }
@@ -661,6 +675,14 @@ class MarketDataProvider extends ChangeNotifier {
           await _prewarmDailyEma();
         } catch (e) {
           debugPrint('EMA prewarm failed: $e');
+        }
+      }
+
+      if (_powerSystemService != null && _dailyBarsCache.isNotEmpty) {
+        try {
+          await _prewarmDailyPowerSystem();
+        } catch (e) {
+          debugPrint('Power System prewarm failed: $e');
         }
       }
 
@@ -1171,6 +1193,43 @@ class MarketDataProvider extends ChangeNotifier {
     );
   }
 
+  Future<void> _prewarmDailyPowerSystem({
+    Set<String>? stockCodes,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (_powerSystemService == null || _dailyBarsCache.isEmpty) {
+      if (kDebugMode) {
+        debugPrint(
+          '[DailyPrewarm][PowerSystem] skip: service=${_powerSystemService != null} '
+          'cacheSize=${_dailyBarsCache.length}',
+        );
+      }
+      return;
+    }
+
+    final payload = <String, List<KLine>>{};
+    for (final entry in _dailyBarsCache.entries) {
+      if (stockCodes != null && !stockCodes.contains(entry.key)) {
+        continue;
+      }
+      if (entry.value.isNotEmpty) {
+        payload[entry.key] = entry.value;
+      }
+    }
+    if (payload.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[DailyPrewarm][PowerSystem] payload empty');
+      }
+      return;
+    }
+
+    await _powerSystemService!.prewarmFromBars(
+      dataType: KLineDataType.daily,
+      barsByStockCode: payload,
+      onProgress: onProgress,
+    );
+  }
+
   Future<void> _prewarmDailyIndicatorsConcurrently({
     Set<String>? stockCodes,
     void Function(int current, int total)? onProgress,
@@ -1178,15 +1237,17 @@ class MarketDataProvider extends ChangeNotifier {
     final hasMacd = _macdService != null && _dailyBarsCache.isNotEmpty;
     final hasAdx = _adxService != null && _dailyBarsCache.isNotEmpty;
     final hasEma = _emaService != null && _dailyBarsCache.isNotEmpty;
+    final hasPowerSystem =
+        _powerSystemService != null && _dailyBarsCache.isNotEmpty;
     if (kDebugMode) {
       debugPrint(
         '[DailyPrewarm] start '
-        'hasMacd=$hasMacd hasAdx=$hasAdx hasEma=$hasEma '
+        'hasMacd=$hasMacd hasAdx=$hasAdx hasEma=$hasEma hasPowerSystem=$hasPowerSystem '
         'cacheSize=${_dailyBarsCache.length} '
         'stockCodes=${stockCodes?.length ?? 0}',
       );
     }
-    if (!hasMacd && !hasAdx && !hasEma) {
+    if (!hasMacd && !hasAdx && !hasEma && !hasPowerSystem) {
       if (kDebugMode) {
         debugPrint('[DailyPrewarm] skip: no indicators available');
       }
@@ -1199,12 +1260,18 @@ class MarketDataProvider extends ChangeNotifier {
     var adxTotal = 0;
     var emaCurrent = 0;
     var emaTotal = 0;
+    var powerCurrent = 0;
+    var powerTotal = 0;
 
     void emitProgress() {
       final safeMacdTotal = hasMacd ? (macdTotal <= 0 ? 1 : macdTotal) : 0;
       final safeAdxTotal = hasAdx ? (adxTotal <= 0 ? 1 : adxTotal) : 0;
       final safeEmaTotal = hasEma ? (emaTotal <= 0 ? 1 : emaTotal) : 0;
-      final total = safeMacdTotal + safeAdxTotal + safeEmaTotal;
+      final safePowerTotal = hasPowerSystem
+          ? (powerTotal <= 0 ? 1 : powerTotal)
+          : 0;
+      final total =
+          safeMacdTotal + safeAdxTotal + safeEmaTotal + safePowerTotal;
       if (total <= 0) {
         onProgress?.call(1, 1);
         return;
@@ -1212,7 +1279,8 @@ class MarketDataProvider extends ChangeNotifier {
       final current =
           macdCurrent.clamp(0, safeMacdTotal) +
           adxCurrent.clamp(0, safeAdxTotal) +
-          emaCurrent.clamp(0, safeEmaTotal);
+          emaCurrent.clamp(0, safeEmaTotal) +
+          powerCurrent.clamp(0, safePowerTotal);
       onProgress?.call(current.clamp(0, total), total);
     }
 
@@ -1248,6 +1316,18 @@ class MarketDataProvider extends ChangeNotifier {
           onProgress: (current, total) {
             emaCurrent = current;
             emaTotal = total;
+            emitProgress();
+          },
+        ),
+      );
+    }
+    if (hasPowerSystem) {
+      jobs.add(
+        _prewarmDailyPowerSystem(
+          stockCodes: stockCodes,
+          onProgress: (current, total) {
+            powerCurrent = current;
+            powerTotal = total;
             emitProgress();
           },
         ),

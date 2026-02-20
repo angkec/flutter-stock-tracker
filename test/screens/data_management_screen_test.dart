@@ -27,6 +27,7 @@ import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
+import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
@@ -447,6 +448,35 @@ class _FakeEmaIndicatorService extends EmaIndicatorService {
   }
 }
 
+class _FakePowerSystemIndicatorService extends PowerSystemIndicatorService {
+  _FakePowerSystemIndicatorService({
+    required super.repository,
+    required super.emaService,
+    required super.macdService,
+  });
+
+  int prewarmFromRepositoryCount = 0;
+  final List<KLineDataType> prewarmDataTypes = <KLineDataType>[];
+  final List<List<String>> prewarmStockCodeBatches = <List<String>>[];
+
+  @override
+  Future<void> prewarmFromRepository({
+    required List<String> stockCodes,
+    required KLineDataType dataType,
+    required DateRange dateRange,
+    bool forceRecompute = false,
+    bool ignoreSnapshot = false,
+    int? fetchBatchSize,
+    int? maxConcurrentPersistWrites,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    prewarmFromRepositoryCount++;
+    prewarmDataTypes.add(dataType);
+    prewarmStockCodeBatches.add(List<String>.from(stockCodes, growable: false));
+    onProgress?.call(stockCodes.length, stockCodes.length);
+  }
+}
+
 List<KLine> _buildBarsForDate(DateTime day, int count) {
   final start = DateTime(day.year, day.month, day.day, 9, 30);
   return List.generate(count, (index) {
@@ -488,6 +518,7 @@ void main() {
     MacdIndicatorService? macdService,
     AdxIndicatorService? adxService,
     EmaIndicatorService? emaService,
+    PowerSystemIndicatorService? powerSystemService,
     AuditService? auditService,
   }) async {
     final effectiveMacdService =
@@ -496,6 +527,13 @@ void main() {
         adxService ?? _FakeAdxIndicatorService(repository: repository);
     final effectiveEmaService =
         emaService ?? _FakeEmaIndicatorService(repository: repository);
+    final effectivePowerSystemService =
+        powerSystemService ??
+        _FakePowerSystemIndicatorService(
+          repository: repository,
+          emaService: effectiveEmaService,
+          macdService: effectiveMacdService,
+        );
     final effectiveAuditService =
         auditService ??
         (() {
@@ -535,6 +573,9 @@ void main() {
           ),
           ChangeNotifierProvider<EmaIndicatorService>.value(
             value: effectiveEmaService,
+          ),
+          ChangeNotifierProvider<PowerSystemIndicatorService>.value(
+            value: effectivePowerSystemService,
           ),
           ChangeNotifierProvider<AuditService>.value(
             value: effectiveAuditService,
@@ -2530,6 +2571,114 @@ void main() {
     klineService.dispose();
     trendService.dispose();
     rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets(
+    'daily/weekly power system settings cards are shown in data management',
+    (tester) async {
+      final repository = _FakeDataRepository();
+      final klineService = HistoricalKlineService(repository: repository);
+      final trendService = _FakeIndustryTrendService();
+      final rankService = _FakeIndustryRankService();
+      final macdService = _FakeMacdIndicatorService(repository: repository);
+      final emaService = _FakeEmaIndicatorService(repository: repository);
+      await macdService.load();
+      await emaService.load();
+      final powerSystemService = _FakePowerSystemIndicatorService(
+        repository: repository,
+        emaService: emaService,
+        macdService: macdService,
+      );
+      final provider = _FakeMarketDataProvider(data: _buildStocks(1));
+
+      await pumpDataManagement(
+        tester,
+        repository: repository,
+        marketDataProvider: provider,
+        klineService: klineService,
+        trendService: trendService,
+        rankService: rankService,
+        macdService: macdService,
+        emaService: emaService,
+        powerSystemService: powerSystemService,
+      );
+
+      await scrollToText(tester, '日线Power System设置');
+      expect(find.text('日线Power System设置'), findsOneWidget);
+      expect(find.text('周线Power System设置'), findsOneWidget);
+
+      provider.dispose();
+      klineService.dispose();
+      trendService.dispose();
+      rankService.dispose();
+      macdService.dispose();
+      emaService.dispose();
+      powerSystemService.dispose();
+      await repository.dispose();
+    },
+  );
+
+  testWidgets('weekly sync also prewarms power system cache', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final macdService = _FakeMacdIndicatorService(repository: repository);
+    final emaService = _FakeEmaIndicatorService(repository: repository);
+    await macdService.load();
+    await emaService.load();
+    final powerSystemService = _FakePowerSystemIndicatorService(
+      repository: repository,
+      emaService: emaService,
+      macdService: macdService,
+    );
+    final provider = _FakeMarketDataProvider(data: _buildStocks(2));
+
+    repository.fetchMissingDataResult = FetchResult(
+      totalStocks: 2,
+      successCount: 2,
+      failureCount: 0,
+      errors: const {},
+      totalRecords: 20,
+      duration: const Duration(milliseconds: 1),
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      macdService: macdService,
+      emaService: emaService,
+      powerSystemService: powerSystemService,
+    );
+
+    await scrollToText(tester, '周K数据');
+    final weeklyCard = find.ancestor(
+      of: find.text('周K数据'),
+      matching: find.byType(Card),
+    );
+    final weeklyFetchButton = find.descendant(
+      of: weeklyCard,
+      matching: find.text('拉取缺失'),
+    );
+    await tester.ensureVisible(weeklyFetchButton);
+    await tester.tap(weeklyFetchButton.hitTestable().first);
+    await tester.pumpAndSettle();
+
+    expect(powerSystemService.prewarmFromRepositoryCount, 1);
+    expect(powerSystemService.prewarmDataTypes, contains(KLineDataType.weekly));
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    macdService.dispose();
+    emaService.dispose();
+    powerSystemService.dispose();
     await repository.dispose();
   });
 }
