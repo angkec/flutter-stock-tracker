@@ -61,15 +61,6 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   static const int _weeklyEmaPersistConcurrency = 8;
   static const int _weeklyPowerSystemFetchBatchSize = 120;
   static const int _weeklyPowerSystemPersistConcurrency = 8;
-  static const List<String> _defaultSwIndexCodes = <String>[
-    '801010.SI',
-    '801030.SI',
-    '801110.SI',
-    '801210.SI',
-    '801730.SI',
-    '801780.SI',
-  ];
-
   void _triggerRefresh() {
     setState(() {
       _refreshKey++;
@@ -489,9 +480,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           extraActionLabel: _isRefreshingSwIndustryMapping
               ? '刷新中...'
               : '刷新行业映射',
-          onExtraAction: hasToken
-              ? () => _refreshSwIndustryMapping(context)
-              : () => _showTushareTokenDialog(context),
+          onExtraAction: () => _refreshSwIndustryMapping(context),
         );
       },
     );
@@ -527,13 +516,17 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
   Future<void> _syncSwIndexIncremental(BuildContext context) async {
     final provider = context.read<SwIndexDataProvider>();
+    final mappingService = context.read<SwIndustryIndexMappingService>();
     final messenger = ScaffoldMessenger.of(context);
     final now = DateTime.now();
     final range = DateRange(now.subtract(const Duration(days: 365)), now);
-    await provider.syncIncremental(
-      tsCodes: _defaultSwIndexCodes,
-      dateRange: range,
-    );
+    final tsCodes = await mappingService.loadAllTsCodes();
+    if (tsCodes.isEmpty) {
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(content: Text('行业映射为空，请先刷新行业映射')));
+      return;
+    }
+    await provider.syncIncremental(tsCodes: tsCodes, dateRange: range);
     if (!mounted) return;
     final error = provider.lastError;
     messenger.showSnackBar(
@@ -550,10 +543,17 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
 
   Future<void> _syncSwIndexForceFull(BuildContext context) async {
     final provider = context.read<SwIndexDataProvider>();
+    final mappingService = context.read<SwIndustryIndexMappingService>();
     final messenger = ScaffoldMessenger.of(context);
     final now = DateTime.now();
     final range = DateRange(now.subtract(const Duration(days: 365)), now);
-    await provider.syncRefetch(tsCodes: _defaultSwIndexCodes, dateRange: range);
+    final tsCodes = await mappingService.loadAllTsCodes();
+    if (tsCodes.isEmpty) {
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(content: Text('行业映射为空，请先刷新行业映射')));
+      return;
+    }
+    await provider.syncRefetch(tsCodes: tsCodes, dateRange: range);
     if (!mounted) return;
     final error = provider.lastError;
     messenger.showSnackBar(

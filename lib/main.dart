@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -220,7 +221,12 @@ class MyApp extends StatelessWidget {
           SwIndustryIndexMappingService
         >(
           update: (_, client, store, __) {
-            return SwIndustryIndexMappingService(client: client, store: store);
+            final service = SwIndustryIndexMappingService(
+              client: client,
+              store: store,
+            );
+            unawaited(service.seedFromBundledAssetIfEmpty());
+            return service;
           },
         ),
         ChangeNotifierProxyProvider<SwIndexRepository, SwIndexDataProvider>(

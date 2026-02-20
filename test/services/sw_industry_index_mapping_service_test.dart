@@ -170,4 +170,67 @@ void main() {
     await expectLater(service.refreshFromTushare(), throwsA(isA<StateError>()));
     expect(await store.loadAll(), isEmpty);
   });
+
+  test(
+    'seedFromBundledAssetIfEmpty saves bundled mapping when store is empty',
+    () async {
+      final client = TushareClient(
+        token: 'token_123',
+        postJson: (_) async => {},
+      );
+      final service = SwIndustryIndexMappingService(
+        client: client,
+        store: store,
+        bundledMappingLoader: () async => const {
+          '半导体': '801080.SI',
+          '银行': '801780.SI',
+        },
+      );
+
+      final seeded = await service.seedFromBundledAssetIfEmpty();
+
+      expect(seeded, const {'半导体': '801080.SI', '银行': '801780.SI'});
+      expect(await store.loadAll(), seeded);
+    },
+  );
+
+  test(
+    'refreshFromTushare falls back to bundled mapping when remote fails',
+    () async {
+      final client = TushareClient(
+        token: 'token_123',
+        postJson: (_) async => {'code': -2001, 'msg': 'invalid token'},
+      );
+      final service = SwIndustryIndexMappingService(
+        client: client,
+        store: store,
+        bundledMappingLoader: () async => const {'银行': '801780.SI'},
+      );
+
+      final mapping = await service.refreshFromTushare();
+
+      expect(mapping, const {'银行': '801780.SI'});
+      expect(await store.loadAll(), const {'银行': '801780.SI'});
+    },
+  );
+
+  test(
+    'resolveTsCodeByIndustry seeds bundled mapping when store is empty',
+    () async {
+      final client = TushareClient(
+        token: 'token_123',
+        postJson: (_) async => {},
+      );
+      final service = SwIndustryIndexMappingService(
+        client: client,
+        store: store,
+        bundledMappingLoader: () async => const {'半导体': '801080.SI'},
+      );
+
+      final resolved = await service.resolveTsCodeByIndustry('半导体');
+
+      expect(resolved, '801080.SI');
+      expect(await store.loadAll(), const {'半导体': '801080.SI'});
+    },
+  );
 }

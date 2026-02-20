@@ -527,13 +527,36 @@ class _FakeSwIndexRepository extends SwIndexRepository {
   Future<SwIndexCacheStats> getCacheStats() async {
     return const SwIndexCacheStats(codeCount: 0, dataVersion: 0);
   }
+
+  List<String> lastSyncMissingTsCodes = const <String>[];
+  List<String> lastRefetchTsCodes = const <String>[];
+
+  @override
+  Future<SwIndexSyncResult> syncMissingDaily({
+    required List<String> tsCodes,
+    required DateRange dateRange,
+  }) async {
+    lastSyncMissingTsCodes = List<String>.from(tsCodes);
+    return SwIndexSyncResult(fetchedCodes: tsCodes, totalBars: 0);
+  }
+
+  @override
+  Future<SwIndexSyncResult> refetchDaily({
+    required List<String> tsCodes,
+    required DateRange dateRange,
+  }) async {
+    lastRefetchTsCodes = List<String>.from(tsCodes);
+    return SwIndexSyncResult(fetchedCodes: tsCodes, totalBars: 0);
+  }
 }
 
 class _FakeSwIndustryIndexMappingService extends SwIndustryIndexMappingService {
   _FakeSwIndustryIndexMappingService({
     Map<String, String>? refreshResult,
     this.refreshCompleter,
+    List<String>? tsCodes,
   }) : _refreshResult = refreshResult ?? <String, String>{'半导体': '801080.SI'},
+       _tsCodes = tsCodes,
        super(
          client: TushareClient(
            token: 'fake-token',
@@ -547,6 +570,7 @@ class _FakeSwIndustryIndexMappingService extends SwIndustryIndexMappingService {
        );
 
   final Map<String, String> _refreshResult;
+  final List<String>? _tsCodes;
   int refreshCallCount = 0;
   String? lastIsNew;
   Object? refreshError;
@@ -564,6 +588,18 @@ class _FakeSwIndustryIndexMappingService extends SwIndustryIndexMappingService {
       throw refreshError!;
     }
     return _refreshResult;
+  }
+
+  @override
+  Future<Map<String, String>> seedFromBundledAssetIfEmpty() async {
+    if (_tsCodes == null || _tsCodes!.isEmpty) {
+      return _refreshResult;
+    }
+    final mapping = <String, String>{};
+    for (var i = 0; i < _tsCodes!.length; i++) {
+      mapping['行业$i'] = _tsCodes![i];
+    }
+    return mapping;
   }
 }
 
@@ -806,7 +842,7 @@ void main() {
     await repository.dispose();
   });
 
-  testWidgets('未配置token时点击行业映射刷新应进入token配置弹窗', (tester) async {
+  testWidgets('未配置token时点击行业映射刷新仍可执行本地映射刷新', (tester) async {
     final repository = _FakeDataRepository();
     final klineService = HistoricalKlineService(repository: repository);
     final trendService = _FakeIndustryTrendService();
@@ -847,8 +883,8 @@ void main() {
     await tester.tap(mappingRefreshButton);
     await tester.pumpAndSettle();
 
-    expect(find.text('配置 Tushare Token'), findsOneWidget);
-    expect(mappingService.refreshCallCount, 0);
+    expect(find.text('配置 Tushare Token'), findsNothing);
+    expect(mappingService.refreshCallCount, 1);
 
     provider.dispose();
     klineService.dispose();
@@ -918,6 +954,67 @@ void main() {
       findsOneWidget,
     );
 
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('申万行业日指数强制全量拉取应使用映射中的全部指数代码', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+    final tokenStorage = _MemoryTokenStorage();
+    await tokenStorage.write('tushare_token', 'test-token');
+    final tokenService = TushareTokenService(storage: tokenStorage);
+    final swRepository = _FakeSwIndexRepository();
+    final swProvider = SwIndexDataProvider(repository: swRepository);
+    final mappedCodes = <String>['801010.SI', '801020.SI', '801030.SI'];
+    final mappingService = _FakeSwIndustryIndexMappingService(
+      tsCodes: mappedCodes,
+    );
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      swIndexProvider: swProvider,
+      tushareTokenService: tokenService,
+      mappingService: mappingService,
+    );
+
+    await scrollToText(tester, '申万行业日指数');
+    final swCard = find.ancestor(
+      of: find.text('申万行业日指数'),
+      matching: find.byType(Card),
+    );
+    final forceButton = find.descendant(
+      of: swCard,
+      matching: find.text('强制全量拉取'),
+    );
+    expect(forceButton, findsOneWidget);
+
+    await tester.ensureVisible(forceButton);
+    await tester.tap(forceButton);
+    await tester.pumpAndSettle();
+
+    expect(swRepository.lastRefetchTsCodes, mappedCodes);
+
+    swProvider.dispose();
     provider.dispose();
     klineService.dispose();
     trendService.dispose();

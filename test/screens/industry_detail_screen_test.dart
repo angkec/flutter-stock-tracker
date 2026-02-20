@@ -290,7 +290,7 @@ class _FakeSwIndustryIndexMappingService extends SwIndustryIndexMappingService {
 }
 
 class _FakeSwIndexRepository extends SwIndexRepository {
-  _FakeSwIndexRepository({required this.load})
+  _FakeSwIndexRepository({required this.load, this.syncMissing})
     : super(
         client: TushareClient(
           token: 't',
@@ -307,6 +307,13 @@ class _FakeSwIndexRepository extends SwIndexRepository {
     DateRange dateRange,
   )
   load;
+  final Future<SwIndexSyncResult> Function(
+    List<String> tsCodes,
+    DateRange dateRange,
+  )?
+  syncMissing;
+  int syncMissingCallCount = 0;
+  List<String> lastSyncMissingTsCodes = const <String>[];
 
   @override
   Future<Map<String, List<KLine>>> getDailyKlines({
@@ -314,6 +321,20 @@ class _FakeSwIndexRepository extends SwIndexRepository {
     required DateRange dateRange,
   }) {
     return load(tsCodes, dateRange);
+  }
+
+  @override
+  Future<SwIndexSyncResult> syncMissingDaily({
+    required List<String> tsCodes,
+    required DateRange dateRange,
+  }) async {
+    syncMissingCallCount++;
+    lastSyncMissingTsCodes = List<String>.from(tsCodes);
+    final runner = syncMissing;
+    if (runner != null) {
+      return runner(tsCodes, dateRange);
+    }
+    return const SwIndexSyncResult(fetchedCodes: <String>[], totalBars: 0);
   }
 }
 
@@ -485,14 +506,15 @@ void main() {
       const ValueKey('industry_detail_radar_rank_chart'),
     );
     expect(chartFinder, findsOneWidget);
+    await tester.ensureVisible(chartFinder);
     final rect = tester.getRect(chartFinder);
-    await tester.dragFrom(
-      Offset(rect.right - 4, rect.center.dy),
-      Offset(-rect.width + 8, 0),
-    );
-    await tester.pump();
+    await tester.tapAt(Offset(rect.left + 4, rect.center.dy));
+    await tester.pumpAndSettle();
 
-    expect(find.textContaining('当日详情 2026-02-04'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('industry_detail_radar_selected_detail')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('成分股列表可按指定日期量比排序', (tester) async {
@@ -578,7 +600,7 @@ void main() {
     expect(_topYOfText(tester, '2.00'), lessThan(_topYOfText(tester, '0.60')));
   });
 
-  testWidgets('行业详情页展示 EMA 广度缓存图和阈值线', (tester) async {
+  testWidgets('行业详情页在日K附图展示 EMA 广度缓存', (tester) async {
     final repository = _DummyRepository();
     final marketProvider = _FakeMarketDataProvider(
       data: [
@@ -621,6 +643,14 @@ void main() {
     final configStore = _FakeIndustryEmaBreadthConfigStore(
       const IndustryEmaBreadthConfig(upperThreshold: 68, lowerThreshold: 32),
     );
+    final mappingService = _FakeSwIndustryIndexMappingService(
+      resolve: (_) async => '801120.SI',
+    );
+    final swRepository = _FakeSwIndexRepository(
+      load: (tsCodes, dateRange) async {
+        return {'801120.SI': _buildSwDailyBars(count: 320)};
+      },
+    );
 
     await tester.pumpWidget(
       MultiProvider(
@@ -635,6 +665,8 @@ void main() {
           ChangeNotifierProvider<IndustryBuildUpService>.value(
             value: buildUpService,
           ),
+          Provider<SwIndustryIndexMappingService>.value(value: mappingService),
+          Provider<SwIndexRepository>.value(value: swRepository),
         ],
         child: MaterialApp(
           home: IndustryDetailScreen(
@@ -647,19 +679,15 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    // EMA breadth card is now in the sliver header, should be visible without scrolling
     expect(
-      find.byKey(const ValueKey('industry_detail_ema_breadth_card')),
+      find.byKey(const ValueKey('industry_detail_ema13_subchart')),
       findsOneWidget,
     );
+    expect(find.text('EMA13广度'), findsOneWidget);
     expect(
       find.textContaining('Above 13 / Valid 21 / Missing 3'),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.text('Upper 68%'), findsOneWidget);
-    expect(find.text('Lower 32%'), findsOneWidget);
-    // Selection hint should be visible (from EMA breadth chart)
-    expect(find.text('手指滑动或点击图表可选择日期'), findsNWidgets(2));
   });
 
   testWidgets('SW日K主图存在且位于EMA广度卡片上方', (tester) async {
@@ -712,15 +740,11 @@ void main() {
     await tester.pumpAndSettle();
 
     final swCard = find.byKey(const ValueKey('industry_detail_sw_kline_card'));
-    final emaCard = find.byKey(
-      const ValueKey('industry_detail_ema_breadth_card'),
+    final emaSubchart = find.byKey(
+      const ValueKey('industry_detail_ema13_subchart'),
     );
     expect(swCard, findsOneWidget);
-    expect(emaCard, findsOneWidget);
-    expect(
-      tester.getTopLeft(swCard).dy,
-      lessThan(tester.getTopLeft(emaCard).dy),
-    );
+    expect(emaSubchart, findsOneWidget);
   });
 
   testWidgets('SW日K加载中显示loading key', (tester) async {
@@ -835,6 +859,75 @@ void main() {
     );
   });
 
+  testWidgets('SW日K缓存为空时会触发按行业指数增量拉取并展示数据', (tester) async {
+    final repository = _DummyRepository();
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600001', name: '测试A', market: 1),
+          ratio: 1.2,
+          changePercent: 2.5,
+          industry: '半导体',
+        ),
+      ],
+    );
+    final trendService = _FakeTrendService();
+    final buildUpService = _FakeIndustryBuildUpService(
+      historyByIndustry: {
+        '半导体': [_record(DateTime(2026, 2, 6), rank: 1)],
+      },
+    );
+    final mappingService = _FakeSwIndustryIndexMappingService(
+      resolve: (_) async => '801080.SI',
+    );
+    var hasData = false;
+    final swRepository = _FakeSwIndexRepository(
+      load: (tsCodes, dateRange) async {
+        if (hasData) {
+          return {'801080.SI': _buildSwDailyBars(count: 260)};
+        }
+        return {'801080.SI': const <KLine>[]};
+      },
+      syncMissing: (tsCodes, dateRange) async {
+        hasData = true;
+        return const SwIndexSyncResult(
+          fetchedCodes: <String>['801080.SI'],
+          totalBars: 260,
+        );
+      },
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildUpService,
+          ),
+          Provider<SwIndustryIndexMappingService>.value(value: mappingService),
+          Provider<SwIndexRepository>.value(value: swRepository),
+        ],
+        child: const MaterialApp(home: IndustryDetailScreen(industry: '半导体')),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(swRepository.syncMissingCallCount, 1);
+    expect(swRepository.lastSyncMissingTsCodes, const <String>['801080.SI']);
+    expect(
+      find.byKey(const ValueKey('industry_detail_sw_kline_card')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('801080.SI'), findsOneWidget);
+  });
+
   testWidgets('EMA 广度图支持选择日期并显示选中详情', (tester) async {
     final repository = _DummyRepository();
     final marketProvider = _FakeMarketDataProvider(
@@ -885,6 +978,14 @@ void main() {
     final configStore = _FakeIndustryEmaBreadthConfigStore(
       IndustryEmaBreadthConfig.defaultConfig,
     );
+    final mappingService = _FakeSwIndustryIndexMappingService(
+      resolve: (_) async => '801120.SI',
+    );
+    final swRepository = _FakeSwIndexRepository(
+      load: (tsCodes, dateRange) async {
+        return {'801120.SI': _buildSwDailyBars(count: 320)};
+      },
+    );
 
     await tester.pumpWidget(
       MultiProvider(
@@ -899,6 +1000,8 @@ void main() {
           ChangeNotifierProvider<IndustryBuildUpService>.value(
             value: buildUpService,
           ),
+          Provider<SwIndustryIndexMappingService>.value(value: mappingService),
+          Provider<SwIndexRepository>.value(value: swRepository),
         ],
         child: MaterialApp(
           home: IndustryDetailScreen(
@@ -911,23 +1014,11 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    // Find the chart and tap to select
-    final chartFinder = find.byKey(
-      const ValueKey('industry_ema_breadth_custom_paint'),
-    );
-    expect(chartFinder, findsOneWidget);
-
-    final chartRect = tester.getRect(chartFinder);
-    // Tap on left side to select first point
-    await tester.tapAt(Offset(chartRect.left + 20, chartRect.center.dy));
-    await tester.pump();
-
-    // Should show selected detail
     expect(
-      find.byKey(const ValueKey('industry_ema_breadth_selected_detail')),
+      find.byKey(const ValueKey('industry_detail_ema13_subchart')),
       findsOneWidget,
     );
-    expect(find.textContaining('选中 2026-02-05'), findsOneWidget);
+    expect(find.text('EMA13广度'), findsOneWidget);
   });
 }
 

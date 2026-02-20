@@ -17,8 +17,8 @@ import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/sw_industry_index_mapping_service.dart';
-import 'package:stock_rtwatcher/widgets/industry_ema_breadth_chart.dart';
-import 'package:stock_rtwatcher/widgets/kline_chart.dart';
+import 'package:stock_rtwatcher/widgets/industry_ema_breadth_subchart.dart';
+import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
 import 'package:stock_rtwatcher/widgets/market_stats_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
@@ -73,7 +73,6 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
   IndustryEmaBreadthSeries? _emaBreadthSeries;
   IndustryEmaBreadthConfig _emaBreadthConfig =
       IndustryEmaBreadthConfig.defaultConfig;
-  bool _isEmaBreadthLoading = false;
   int _emaBreadthRequestToken = 0;
   List<KLine> _swKlines = const [];
   bool _isSwKlineLoading = false;
@@ -131,16 +130,28 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
       final end = DateTime(now.year, now.month, now.day);
       final start = end.subtract(const Duration(days: 400));
       final repository = context.read<SwIndexRepository>();
-      final data = await repository.getDailyKlines(
+      var data = await repository.getDailyKlines(
         tsCodes: [tsCode],
         dateRange: DateRange(start, end),
       );
+      var bars = data[tsCode] ?? const <KLine>[];
+
+      if (bars.isEmpty) {
+        await repository.syncMissingDaily(
+          tsCodes: [tsCode],
+          dateRange: DateRange(start, end),
+        );
+        data = await repository.getDailyKlines(
+          tsCodes: [tsCode],
+          dateRange: DateRange(start, end),
+        );
+        bars = data[tsCode] ?? const <KLine>[];
+      }
 
       if (!mounted || requestToken != _swKlineRequestToken) {
         return;
       }
 
-      final bars = data[tsCode] ?? const <KLine>[];
       final trimmed = bars.length > 260
           ? bars.sublist(bars.length - 260)
           : bars;
@@ -164,7 +175,12 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
     }
   }
 
-  Widget _buildSwKlineCard(BuildContext context, double height) {
+  Widget _buildSwKlineCard(
+    BuildContext context,
+    double mainChartHeight,
+    double emaSubchartHeight,
+  ) {
+    final totalHeight = mainChartHeight + emaSubchartHeight + 40;
     if (_isSwKlineLoading) {
       return Container(
         key: const ValueKey('industry_detail_sw_kline_loading'),
@@ -174,7 +190,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
           borderRadius: BorderRadius.circular(12),
         ),
         child: SizedBox(
-          height: height,
+          height: totalHeight,
           child: Center(
             child: CircularProgressIndicator(
               strokeWidth: 2,
@@ -194,7 +210,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
           borderRadius: BorderRadius.circular(12),
         ),
         child: SizedBox(
-          height: height,
+          height: totalHeight,
           child: Center(
             child: Text(
               _swKlineError ?? '暂无申万日K数据',
@@ -226,7 +242,22 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
               color: Theme.of(context).colorScheme.onSurface,
             ),
           ),
-          KLineChart(bars: _swKlines, height: height - 44),
+          KLineChartWithSubCharts(
+            stockCode: _swTsCode ?? widget.industry,
+            bars: _swKlines,
+            chartHeight: mainChartHeight,
+            subCharts: [
+              IndustryEmaBreadthSubChart(
+                key: const ValueKey('industry_detail_ema13_subchart'),
+                chartKey: const ValueKey(
+                  'industry_detail_ema13_subchart_paint',
+                ),
+                series: _emaBreadthSeries,
+                config: _emaBreadthConfig,
+                height: emaSubchartHeight,
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -234,18 +265,12 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
 
   Future<void> _loadEmaBreadthCard() async {
     final requestToken = ++_emaBreadthRequestToken;
-    setState(() {
-      _isEmaBreadthLoading = true;
-    });
 
     IndustryEmaBreadthConfig config = IndustryEmaBreadthConfig.defaultConfig;
     try {
-      config = await _emaBreadthConfigStore
-          .load(defaults: IndustryEmaBreadthConfig.defaultConfig)
-          .timeout(
-            const Duration(milliseconds: 300),
-            onTimeout: () => IndustryEmaBreadthConfig.defaultConfig,
-          );
+      config = await _emaBreadthConfigStore.load(
+        defaults: IndustryEmaBreadthConfig.defaultConfig,
+      );
     } catch (_) {
       config = IndustryEmaBreadthConfig.defaultConfig;
     }
@@ -256,9 +281,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
           .read<MarketDataProvider>()
           .industryEmaBreadthService;
       if (service != null) {
-        series = await service
-            .getCachedSeries(widget.industry)
-            .timeout(const Duration(milliseconds: 300), onTimeout: () => null);
+        series = await service.getCachedSeries(widget.industry);
       }
     } catch (_) {
       series = null;
@@ -270,7 +293,6 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
     setState(() {
       _emaBreadthConfig = config;
       _emaBreadthSeries = series;
-      _isEmaBreadthLoading = false;
     });
   }
 
@@ -470,20 +492,20 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
         : '0';
 
     // 计算可折叠区域的高度
-    const double chartHeight = 188.0;
+    const double swKlineMainChartHeight = 188.0;
+    const double swEmaSubchartHeight = 126.0;
+    const double swKlineCardHeight =
+        swKlineMainChartHeight + swEmaSubchartHeight + 40;
     const double summaryHeight = 48.0;
     const double buildupCardHeight = 252.0;
-    const double emaBreadthCardHeight = 305.0;
     const double titleHeight = 32.0;
     const double expandedHeight =
         kToolbarHeight +
-        chartHeight +
+        swKlineCardHeight +
         12 +
         summaryHeight +
         10 +
         buildupCardHeight +
-        8 +
-        emaBreadthCardHeight +
         8 +
         titleHeight;
 
@@ -509,7 +531,11 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              _buildSwKlineCard(context, chartHeight),
+                              _buildSwKlineCard(
+                                context,
+                                swKlineMainChartHeight,
+                                swEmaSubchartHeight,
+                              ),
                               const SizedBox(height: 12),
                               // 今日摘要
                               Padding(
@@ -559,39 +585,6 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
                                 isLoading: isHistoryLoading,
                                 height: buildupCardHeight,
                                 tagConfig: tagConfig,
-                              ),
-                              const SizedBox(height: 8),
-                              // EMA13 广度卡片
-                              Container(
-                                key: const ValueKey(
-                                  'industry_detail_ema_breadth_card',
-                                ),
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: _isEmaBreadthLoading
-                                    ? SizedBox(
-                                        height: 180,
-                                        child: Center(
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.primary,
-                                          ),
-                                        ),
-                                      )
-                                    : IndustryEmaBreadthChart(
-                                        series: _emaBreadthSeries,
-                                        config: _emaBreadthConfig,
-                                        height: 164,
-                                      ),
                               ),
                               const SizedBox(height: 8),
                               // 成分股列表标题
