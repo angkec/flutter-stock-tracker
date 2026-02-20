@@ -6,6 +6,9 @@ class IndustryService {
   Map<String, String> _data = {};
   bool _isLoaded = false;
 
+  // Industry -> stockCodes index for O(k) lookups
+  Map<String, List<String>> _industryIndex = {};
+
   /// 是否已加载
   bool get isLoaded => _isLoaded;
 
@@ -15,6 +18,16 @@ class IndustryService {
     final Map<String, dynamic> json = jsonDecode(jsonStr);
     _data = json.map((k, v) => MapEntry(k, v.toString()));
     _isLoaded = true;
+    _rebuildIndex();
+  }
+
+  /// 重建行业->股票索引
+  void _rebuildIndex() {
+    _industryIndex = {};
+    for (final entry in _data.entries) {
+      final industry = entry.value;
+      _industryIndex.putIfAbsent(industry, () => []).add(entry.key);
+    }
   }
 
   /// 根据股票代码获取行业
@@ -25,14 +38,12 @@ class IndustryService {
 
   /// 获取指定行业的所有股票代码
   List<String> getStocksByIndustry(String industry) {
-    return _data.entries
-        .where((e) => e.value == industry)
-        .map((e) => e.key)
-        .toList();
+    return List<String>.from(_industryIndex[industry] ?? []);
   }
 
   /// 仅用于测试
   void setTestData(Map<String, String> data) {
     _data = data;
+    _rebuildIndex();
   }
 }

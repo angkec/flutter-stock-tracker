@@ -37,5 +37,74 @@ void main() {
       expect(industries, contains('房地产'));
       expect(industries, contains('食品饮料'));
     });
+
+    test('getStocksByIndustry returns correct stocks for known industry', () {
+      final service = IndustryService();
+      service.setTestData({
+        '000001': '银行',
+        '000002': '银行',
+        '600519': '食品饮料',
+        '601398': '银行',
+      });
+
+      final bankStocks = service.getStocksByIndustry('银行');
+      final foodStocks = service.getStocksByIndustry('食品饮料');
+
+      expect(bankStocks.length, 3);
+      expect(bankStocks, containsAll(['000001', '000002', '601398']));
+      expect(foodStocks.length, 1);
+      expect(foodStocks, contains('600519'));
+    });
+
+    test('getStocksByIndustry returns empty list for unknown industry', () {
+      final service = IndustryService();
+      service.setTestData({'000001': '银行'});
+
+      final result = service.getStocksByIndustry('不存在的行业');
+
+      expect(result, isEmpty);
+    });
+
+    test('index is rebuilt when setTestData is called', () {
+      final service = IndustryService();
+      // First data set
+      service.setTestData({'000001': '银行', '600519': '食品饮料'});
+      expect(service.getStocksByIndustry('银行'), contains('000001'));
+      expect(service.getStocksByIndustry('食品饮料'), contains('600519'));
+      expect(service.getStocksByIndustry('银行').length, 1);
+
+      // Replace with new data - index should be rebuilt
+      service.setTestData({'000001': '银行', '600000': '银行', '600519': '食品饮料'});
+      // New data should exist - now there are 2 banks
+      final bankStocks = service.getStocksByIndustry('银行');
+      expect(bankStocks.length, 2);
+      expect(bankStocks, containsAll(['000001', '600000']));
+      // Food/beverage should still work
+      expect(service.getStocksByIndustry('食品饮料'), contains('600519'));
+    });
+
+    test(
+      'getStocksByIndustry returns consistent results on repeated calls',
+      () {
+        final service = IndustryService();
+        service.setTestData({
+          '000001': '银行',
+          '000002': '银行',
+          '600519': '食品饮料',
+          '601398': '银行',
+        });
+
+        // Call multiple times - should return same results
+        final result1 = service.getStocksByIndustry('银行');
+        final result2 = service.getStocksByIndustry('银行');
+        final result3 = service.getStocksByIndustry('银行');
+
+        expect(result1.length, 3);
+        expect(result2.length, 3);
+        expect(result3.length, 3);
+        expect(result1, containsAll(result2));
+        expect(result2, containsAll(result3));
+      },
+    );
   });
 }
