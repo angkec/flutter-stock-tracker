@@ -6,12 +6,14 @@ import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/power_system_cache_store.dart';
 import 'package:stock_rtwatcher/models/adx_config.dart';
 import 'package:stock_rtwatcher/models/adx_point.dart';
 import 'package:stock_rtwatcher/models/ema_config.dart';
 import 'package:stock_rtwatcher/models/ema_point.dart';
 import 'package:stock_rtwatcher/models/macd_config.dart';
 import 'package:stock_rtwatcher/models/macd_point.dart';
+import 'package:stock_rtwatcher/models/power_system_point.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/screens/stock_detail_screen.dart';
 import 'package:stock_rtwatcher/services/linked_layout_config_service.dart';
@@ -44,10 +46,7 @@ EmaCacheSeries _buildEmaSeries({
     config: const EmaConfig(shortPeriod: 9, longPeriod: 21),
     sourceSignature: 'test_ema_${stockCode}_${dataType.name}',
     points: dates
-        .map(
-          (date) =>
-              EmaPoint(datetime: date, emaShort: 10.5, emaLong: 10.2),
-        )
+        .map((date) => EmaPoint(datetime: date, emaShort: 10.5, emaLong: 10.2))
         .toList(growable: false),
   );
 }
@@ -73,6 +72,20 @@ class _FakeAdxCacheStore extends AdxCacheStore {
 
   @override
   Future<AdxCacheSeries?> loadSeries({
+    required String stockCode,
+    required KLineDataType dataType,
+  }) async {
+    return _seriesByKey['$stockCode|${dataType.name}'];
+  }
+}
+
+class _FakePowerSystemCacheStore extends PowerSystemCacheStore {
+  _FakePowerSystemCacheStore(this._seriesByKey);
+
+  final Map<String, PowerSystemCacheSeries> _seriesByKey;
+
+  @override
+  Future<PowerSystemCacheSeries?> loadSeries({
     required String stockCode,
     required KLineDataType dataType,
   }) async {
@@ -112,6 +125,21 @@ AdxCacheSeries _buildAdxSeries({
         .map(
           (date) => AdxPoint(datetime: date, adx: 20, plusDi: 25, minusDi: 15),
         )
+        .toList(growable: false),
+  );
+}
+
+PowerSystemCacheSeries _buildPowerSystemSeries({
+  required String stockCode,
+  required KLineDataType dataType,
+  required List<DateTime> dates,
+}) {
+  return PowerSystemCacheSeries(
+    stockCode: stockCode,
+    dataType: dataType,
+    sourceSignature: 'test_power_${stockCode}_${dataType.name}',
+    points: dates
+        .map((date) => PowerSystemPoint(datetime: date, state: 1))
         .toList(growable: false),
   );
 }
@@ -432,6 +460,82 @@ void main() {
     expect(find.textContaining('EMA短'), findsNothing);
     expect(find.textContaining('EMA长'), findsNothing);
   });
+
+  testWidgets(
+    'daily mode wires candle resolver when daily power cache exists',
+    (tester) async {
+      const stockCode = '600000';
+      final dailyBars = buildDailyBars(
+        count: 30,
+        startDate: DateTime(2026, 1, 1),
+      );
+      final powerCacheStore = _FakePowerSystemCacheStore({
+        '$stockCode|daily': _buildPowerSystemSeries(
+          stockCode: stockCode,
+          dataType: KLineDataType.daily,
+          dates: dailyBars.map((b) => b.datetime).toList(growable: false),
+        ),
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StockDetailScreen(
+            stock: stock,
+            skipAutoConnectForTest: true,
+            showWatchlistToggle: false,
+            showIndustryHeatSection: false,
+            initialChartMode: ChartMode.daily,
+            initialDailyBars: dailyBars,
+            initialWeeklyBars: buildWeeklyBars(),
+            emaCacheStoreForTest: _FakeEmaCacheStore(const {}),
+            powerSystemCacheStoreForTest: powerCacheStore,
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final chart = tester.widget<KLineChartWithSubCharts>(
+        find.byType(KLineChartWithSubCharts),
+      );
+      expect(chart.candleColorResolver, isNotNull);
+    },
+  );
+
+  testWidgets(
+    'daily mode keeps candle resolver null when power cache is missing',
+    (tester) async {
+      final dailyBars = buildDailyBars(
+        count: 30,
+        startDate: DateTime(2026, 1, 1),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StockDetailScreen(
+            stock: stock,
+            skipAutoConnectForTest: true,
+            showWatchlistToggle: false,
+            showIndustryHeatSection: false,
+            initialChartMode: ChartMode.daily,
+            initialDailyBars: dailyBars,
+            initialWeeklyBars: buildWeeklyBars(),
+            emaCacheStoreForTest: _FakeEmaCacheStore(const {}),
+            powerSystemCacheStoreForTest: _FakePowerSystemCacheStore(const {}),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final chart = tester.widget<KLineChartWithSubCharts>(
+        find.byType(KLineChartWithSubCharts),
+      );
+      expect(chart.candleColorResolver, isNull);
+    },
+  );
 
   testWidgets(
     'stock detail provides linked layout debug menu and applies updated thresholds',

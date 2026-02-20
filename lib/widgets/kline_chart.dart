@@ -31,6 +31,7 @@ class KLineChart extends StatefulWidget {
   onSelectionChanged; // 选中状态变化回调
   final List<double?>? emaShortSeries; // EMA短周期序列（与bars等长，null表示无值）
   final List<double?>? emaLongSeries; // EMA长周期序列（与bars等长，null表示无值）
+  final Color? Function(KLine bar, int globalIndex)? candleColorResolver;
 
   const KLineChart({
     super.key,
@@ -50,6 +51,7 @@ class KLineChart extends StatefulWidget {
     this.onSelectionChanged,
     this.emaShortSeries,
     this.emaLongSeries,
+    this.candleColorResolver,
   });
 
   @override
@@ -325,6 +327,7 @@ class _KLineChartState extends State<KLineChart> {
                                   endIndex,
                                 )
                               : null,
+                          candleColorResolver: widget.candleColorResolver,
                         ),
                       ),
                     ),
@@ -962,6 +965,7 @@ class _KLinePainter extends CustomPainter {
   final Set<int>? weeklyBoundaryIndices;
   final List<double?>? emaShortSeries; // 可见范围内的EMA短周期值
   final List<double?>? emaLongSeries; // 可见范围内的EMA长周期值
+  final Color? Function(KLine bar, int globalIndex)? candleColorResolver;
 
   _KLinePainter({
     required this.bars,
@@ -977,6 +981,7 @@ class _KLinePainter extends CustomPainter {
     this.weeklyBoundaryIndices,
     this.emaShortSeries,
     this.emaLongSeries,
+    this.candleColorResolver,
   });
 
   @override
@@ -1172,16 +1177,24 @@ class _KLinePainter extends CustomPainter {
       final isSelected = i == selectedIndex;
 
       // 选中的K线使用更亮的颜色
+      final resolvedColor = candleColorResolver?.call(bar, startIndex + i);
+      final candleColor =
+          resolvedColor ?? (bar.close >= bar.open ? kUpColor : kDownColor);
       Paint paint;
       if (isSelected) {
         paint = Paint()
-          ..color = bar.close >= bar.open
-              ? kUpColor.withValues(alpha: 1.0)
-              : kDownColor.withValues(alpha: 1.0)
+          ..color = candleColor.withValues(alpha: 1.0)
           ..strokeWidth = 2
           ..style = PaintingStyle.fill;
       } else {
-        paint = bar.close >= bar.open ? upPaint : downPaint;
+        if (resolvedColor != null) {
+          paint = Paint()
+            ..color = resolvedColor
+            ..strokeWidth = 0.8
+            ..style = PaintingStyle.fill;
+        } else {
+          paint = bar.close >= bar.open ? upPaint : downPaint;
+        }
       }
 
       // === K线 ===
@@ -1366,6 +1379,7 @@ class _KLinePainter extends CustomPainter {
         oldDelegate.forcedMaxPrice != forcedMaxPrice ||
         oldDelegate.weeklyBoundaryIndices != weeklyBoundaryIndices ||
         oldDelegate.emaShortSeries != emaShortSeries ||
-        oldDelegate.emaLongSeries != emaLongSeries;
+        oldDelegate.emaLongSeries != emaLongSeries ||
+        oldDelegate.candleColorResolver != candleColorResolver;
   }
 }

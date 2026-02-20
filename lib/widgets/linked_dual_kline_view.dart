@@ -5,6 +5,7 @@ import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/linked_layout_result.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/power_system_cache_store.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_coordinator.dart';
 import 'package:stock_rtwatcher/widgets/linked_crosshair_models.dart';
 import 'package:stock_rtwatcher/widgets/kline_chart_with_subcharts.dart';
@@ -12,6 +13,7 @@ import 'package:stock_rtwatcher/widgets/adx_subchart.dart';
 import 'package:stock_rtwatcher/widgets/macd_subchart.dart';
 import 'package:stock_rtwatcher/data/storage/adx_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/macd_cache_store.dart';
+import 'package:stock_rtwatcher/widgets/power_system_candle_color.dart';
 
 class LinkedDualKlineView extends StatefulWidget {
   const LinkedDualKlineView({
@@ -24,6 +26,7 @@ class LinkedDualKlineView extends StatefulWidget {
     this.macdCacheStoreForTest,
     this.adxCacheStoreForTest,
     this.emaCacheStoreForTest,
+    this.powerSystemCacheStoreForTest,
   });
 
   final String stockCode;
@@ -34,6 +37,7 @@ class LinkedDualKlineView extends StatefulWidget {
   final MacdCacheStore? macdCacheStoreForTest;
   final AdxCacheStore? adxCacheStoreForTest;
   final EmaCacheStore? emaCacheStoreForTest;
+  final PowerSystemCacheStore? powerSystemCacheStoreForTest;
 
   @override
   State<LinkedDualKlineView> createState() => _LinkedDualKlineViewState();
@@ -46,6 +50,8 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
   List<double?>? _weeklyEmaLong;
   List<double?>? _dailyEmaShort;
   List<double?>? _dailyEmaLong;
+  CandleColorResolver? _weeklyPowerSystemColorResolver;
+  CandleColorResolver? _dailyPowerSystemColorResolver;
 
   @override
   void initState() {
@@ -79,17 +85,19 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
 
   Future<void> _loadEmaOverlays() async {
     final store = widget.emaCacheStoreForTest ?? EmaCacheStore();
+    final powerStore =
+        widget.powerSystemCacheStoreForTest ?? PowerSystemCacheStore();
     final code = widget.stockCode;
 
-    final results = await Future.wait([
+    final emaResults = await Future.wait([
       store.loadSeries(stockCode: code, dataType: KLineDataType.weekly),
       store.loadSeries(stockCode: code, dataType: KLineDataType.daily),
     ]);
 
     if (!mounted) return;
 
-    final weeklySeries = results[0];
-    final dailySeries = results[1];
+    final weeklySeries = emaResults[0] as EmaCacheSeries?;
+    final dailySeries = emaResults[1] as EmaCacheSeries?;
 
     setState(() {
       if (weeklySeries != null) {
@@ -102,6 +110,23 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
         _dailyEmaShort = aligned.$1;
         _dailyEmaLong = aligned.$2;
       }
+    });
+
+    final powerResults = await Future.wait([
+      powerStore.loadSeries(stockCode: code, dataType: KLineDataType.weekly),
+      powerStore.loadSeries(stockCode: code, dataType: KLineDataType.daily),
+    ]);
+    if (!mounted) return;
+
+    final weeklyPowerSeries = powerResults[0] as PowerSystemCacheSeries?;
+    final dailyPowerSeries = powerResults[1] as PowerSystemCacheSeries?;
+    setState(() {
+      _weeklyPowerSystemColorResolver = weeklyPowerSeries == null
+          ? null
+          : PowerSystemCandleColor.fromSeries(weeklyPowerSeries);
+      _dailyPowerSystemColorResolver = dailyPowerSeries == null
+          ? null
+          : PowerSystemCandleColor.fromSeries(dailyPowerSeries);
     });
   }
 
@@ -192,6 +217,7 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
                     subChartSpacing: heights.subChartSpacing,
                     emaShortSeries: _weeklyEmaShort,
                     emaLongSeries: _weeklyEmaLong,
+                    candleColorResolver: _weeklyPowerSystemColorResolver,
                     subCharts: [
                       MacdSubChart(
                         key: const ValueKey('linked_weekly_macd_subchart'),
@@ -235,6 +261,7 @@ class _LinkedDualKlineViewState extends State<LinkedDualKlineView> {
                     subChartSpacing: heights.subChartSpacing,
                     emaShortSeries: _dailyEmaShort,
                     emaLongSeries: _dailyEmaLong,
+                    candleColorResolver: _dailyPowerSystemColorResolver,
                     subCharts: [
                       MacdSubChart(
                         key: const ValueKey('linked_daily_macd_subchart'),

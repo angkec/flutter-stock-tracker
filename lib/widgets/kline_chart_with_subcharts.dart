@@ -39,6 +39,7 @@ class KLineChartWithSubCharts extends StatefulWidget {
     this.subChartSpacing = 10,
     this.emaShortSeries,
     this.emaLongSeries,
+    this.candleColorResolver,
   });
 
   final String stockCode;
@@ -58,6 +59,7 @@ class KLineChartWithSubCharts extends StatefulWidget {
   final double subChartSpacing;
   final List<double?>? emaShortSeries;
   final List<double?>? emaLongSeries;
+  final Color? Function(KLine bar, int globalIndex)? candleColorResolver;
 
   @override
   State<KLineChartWithSubCharts> createState() =>
@@ -105,6 +107,7 @@ class _KLineChartWithSubChartsState extends State<KLineChartWithSubCharts> {
           onSelectionChanged: _handleSelectionChanged,
           emaShortSeries: widget.emaShortSeries,
           emaLongSeries: widget.emaLongSeries,
+          candleColorResolver: widget.candleColorResolver,
         ),
         for (var index = 0; index < widget.subCharts.length; index++) ...[
           SizedBox(height: widget.subChartSpacing),

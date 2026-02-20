@@ -18,12 +18,14 @@ import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/adx_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/ema_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/macd_settings_screen.dart';
+import 'package:stock_rtwatcher/screens/power_system_settings_screen.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/historical_kline_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
+import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
 import 'package:stock_rtwatcher/widgets/data_management_audit_console.dart';
 
 enum _WeeklySyncStage { precheck, fetch, write }
@@ -52,6 +54,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
   static const int _weeklyAdxPersistConcurrency = 8;
   static const int _weeklyEmaFetchBatchSize = 120;
   static const int _weeklyEmaPersistConcurrency = 8;
+  static const int _weeklyPowerSystemFetchBatchSize = 120;
+  static const int _weeklyPowerSystemPersistConcurrency = 8;
 
   void _triggerRefresh() {
     setState(() {
@@ -163,6 +167,14 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               _buildAdxSettingsItem(context, dataType: KLineDataType.weekly),
               _buildEmaSettingsItem(context, dataType: KLineDataType.daily),
               _buildEmaSettingsItem(context, dataType: KLineDataType.weekly),
+              _buildPowerSystemSettingsItem(
+                context,
+                dataType: KLineDataType.daily,
+              ),
+              _buildPowerSystemSettingsItem(
+                context,
+                dataType: KLineDataType.weekly,
+              ),
 
               const SizedBox(height: 10),
               _buildSectionTitle(context, '历史分钟K线'),
@@ -618,6 +630,48 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
         leading: const Icon(Icons.trending_up_rounded),
+        title: Text(title),
+        subtitle: Text(summary),
+        trailing: FilledButton.tonal(
+          onPressed: navigateToSettings,
+          child: const Text('进入'),
+        ),
+        onTap: navigateToSettings,
+      ),
+    );
+  }
+
+  Widget _buildPowerSystemSettingsItem(
+    BuildContext context, {
+    required KLineDataType dataType,
+  }) {
+    final powerSystemService = context.watch<PowerSystemIndicatorService?>();
+    final isWeekly = dataType == KLineDataType.weekly;
+    final title = isWeekly ? '周线Power System设置' : '日线Power System设置';
+    final summary = powerSystemService == null
+        ? '服务未初始化'
+        : 'EMA坡度 + MACD柱体坡度 联合状态缓存';
+
+    Future<void> navigateToSettings() async {
+      if (powerSystemService == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Power System服务未初始化')));
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PowerSystemSettingsScreen(dataType: dataType),
+        ),
+      );
+      _triggerRefresh();
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: const Icon(Icons.candlestick_chart_rounded),
         title: Text(title),
         subtitle: Text(summary),
         trailing: FilledButton.tonal(
@@ -1416,6 +1470,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     final macdService = context.read<MacdIndicatorService?>();
     final adxService = context.read<AdxIndicatorService?>();
     final emaService = context.read<EmaIndicatorService?>();
+    final powerSystemService = context.read<PowerSystemIndicatorService?>();
     final auditService = context.read<AuditService>();
 
     if (marketProvider.allData.isEmpty) {
@@ -1649,7 +1704,10 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           }
 
           final shouldPrewarmWeeklyIndicators =
-              (macdService != null || adxService != null || emaService != null) &&
+              (macdService != null ||
+                  adxService != null ||
+                  emaService != null ||
+                  powerSystemService != null) &&
               (forceRefetch || fetchResult.totalRecords > 0);
           if (shouldPrewarmWeeklyIndicators) {
             final prewarmStockCodes = forceRefetch
@@ -1759,6 +1817,25 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                     dateRange: dateRange,
                     fetchBatchSize: _weeklyEmaFetchBatchSize,
                     maxConcurrentPersistWrites: _weeklyEmaPersistConcurrency,
+                    onProgress: onProgress,
+                  );
+                },
+              );
+            }
+
+            if (powerSystemService != null) {
+              await prewarmWithProgress(
+                preparingLabel: '准备更新周线Power System缓存',
+                workingLabel: '更新周线Power System缓存',
+                stageKey: 'weekly_power_system_prewarm',
+                action: (onProgress) {
+                  return powerSystemService.prewarmFromRepository(
+                    stockCodes: effectivePrewarmStockCodes,
+                    dataType: KLineDataType.weekly,
+                    dateRange: dateRange,
+                    fetchBatchSize: _weeklyPowerSystemFetchBatchSize,
+                    maxConcurrentPersistWrites:
+                        _weeklyPowerSystemPersistConcurrency,
                     onProgress: onProgress,
                   );
                 },
@@ -1974,8 +2051,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 'missing_count': 0,
                 'incomplete_count': readReport.shortageCount,
               });
-              final shortagePercent =
-                  (readReport.shortageRatio * 100).toStringAsFixed(1);
+              final shortagePercent = (readReport.shortageRatio * 100)
+                  .toStringAsFixed(1);
               final details = <String>[];
               if (readReport.missingCount > 0) {
                 details.add('缺失${readReport.missingCount}');
@@ -1986,8 +2063,9 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               if (readReport.insufficientCount > 0) {
                 details.add('不足${readReport.insufficientCount}');
               }
-              final detailLabel =
-                  details.isEmpty ? '' : '（${details.join('，')}）';
+              final detailLabel = details.isEmpty
+                  ? ''
+                  : '（${details.join('，')}）';
               dailyReadWarningMessage =
                   '日K缓存不足: ${readReport.shortageCount}/${readReport.totalStocks} '
                   '(${shortagePercent}%)$detailLabel';
@@ -2014,9 +2092,9 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           SnackBar(content: Text(forceFull ? '日K数据已强制全量拉取' : '日K数据已增量拉取')),
         );
         if (dailyReadWarningMessage != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(dailyReadWarningMessage!)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(dailyReadWarningMessage!)));
         }
         _triggerRefresh();
       }
