@@ -31,9 +31,11 @@ import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/services/sw_industry_index_mapping_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 import 'package:stock_rtwatcher/services/tushare_client.dart';
 import 'package:stock_rtwatcher/services/tushare_token_service.dart';
+import 'package:stock_rtwatcher/data/storage/sw_industry_l1_mapping_store.dart';
 
 class _FakeDataRepository implements DataRepository {
   final StreamController<DataStatus> _statusController =
@@ -527,6 +529,37 @@ class _FakeSwIndexRepository extends SwIndexRepository {
   }
 }
 
+class _FakeSwIndustryIndexMappingService extends SwIndustryIndexMappingService {
+  _FakeSwIndustryIndexMappingService({Map<String, String>? refreshResult})
+    : _refreshResult = refreshResult ?? <String, String>{'半导体': '801080.SI'},
+      super(
+        client: TushareClient(
+          token: 'fake-token',
+          postJson: (_) async => {
+            'code': 0,
+            'msg': '',
+            'data': {'fields': <String>[], 'items': <List<dynamic>>[]},
+          },
+        ),
+        store: SwIndustryL1MappingStore(),
+      );
+
+  final Map<String, String> _refreshResult;
+  int refreshCallCount = 0;
+  String? lastIsNew;
+  Object? refreshError;
+
+  @override
+  Future<Map<String, String>> refreshFromTushare({String isNew = 'Y'}) async {
+    refreshCallCount++;
+    lastIsNew = isNew;
+    if (refreshError != null) {
+      throw refreshError!;
+    }
+    return _refreshResult;
+  }
+}
+
 class _MemoryTokenStorage implements TokenStorage {
   String? _value;
 
@@ -564,6 +597,7 @@ void main() {
     AuditService? auditService,
     SwIndexDataProvider? swIndexProvider,
     TushareTokenService? tushareTokenService,
+    SwIndustryIndexMappingService? mappingService,
   }) async {
     final effectiveMacdService =
         macdService ?? _FakeMacdIndicatorService(repository: repository);
@@ -597,6 +631,8 @@ void main() {
     final effectiveTushareTokenService =
         tushareTokenService ??
         TushareTokenService(storage: _MemoryTokenStorage());
+    final effectiveMappingService =
+        mappingService ?? _FakeSwIndustryIndexMappingService();
     await effectiveMacdService.load();
     await effectiveAdxService.load();
     await effectiveEmaService.load();
@@ -637,6 +673,9 @@ void main() {
           ),
           ChangeNotifierProvider<TushareTokenService>.value(
             value: effectiveTushareTokenService,
+          ),
+          Provider<SwIndustryIndexMappingService>.value(
+            value: effectiveMappingService,
           ),
         ],
         child: const MaterialApp(home: DataManagementScreen()),
@@ -703,6 +742,112 @@ void main() {
 
     await scrollToText(tester, '申万行业日指数');
     expect(find.text('申万行业日指数'), findsOneWidget);
+  });
+
+  testWidgets('已配置token时可触发申万行业映射刷新', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+    final tokenStorage = _MemoryTokenStorage();
+    await tokenStorage.write('tushare_token', 'test-token');
+    final tokenService = TushareTokenService(storage: tokenStorage);
+    final mappingService = _FakeSwIndustryIndexMappingService();
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      tushareTokenService: tokenService,
+      mappingService: mappingService,
+    );
+
+    await scrollToText(tester, '申万行业日指数');
+    final swCard = find.ancestor(
+      of: find.text('申万行业日指数'),
+      matching: find.byType(Card),
+    );
+    final mappingRefreshButton = find.descendant(
+      of: swCard,
+      matching: find.text('刷新行业映射'),
+    );
+    expect(mappingRefreshButton, findsOneWidget);
+
+    await tester.ensureVisible(mappingRefreshButton);
+    await tester.tap(mappingRefreshButton);
+    await tester.pumpAndSettle();
+
+    expect(mappingService.refreshCallCount, 1);
+    expect(mappingService.lastIsNew, 'Y');
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
+  });
+
+  testWidgets('未配置token时点击行业映射刷新应进入token配置弹窗', (tester) async {
+    final repository = _FakeDataRepository();
+    final klineService = HistoricalKlineService(repository: repository);
+    final trendService = _FakeIndustryTrendService();
+    final rankService = _FakeIndustryRankService();
+    final provider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600000', name: '浦发银行', market: 1),
+          ratio: 1.2,
+          changePercent: 0.5,
+        ),
+      ],
+    );
+    final mappingService = _FakeSwIndustryIndexMappingService();
+
+    await pumpDataManagement(
+      tester,
+      repository: repository,
+      marketDataProvider: provider,
+      klineService: klineService,
+      trendService: trendService,
+      rankService: rankService,
+      mappingService: mappingService,
+    );
+
+    await scrollToText(tester, '申万行业日指数');
+    final swCard = find.ancestor(
+      of: find.text('申万行业日指数'),
+      matching: find.byType(Card),
+    );
+    final mappingRefreshButton = find.descendant(
+      of: swCard,
+      matching: find.text('刷新行业映射'),
+    );
+    expect(mappingRefreshButton, findsOneWidget);
+
+    await tester.ensureVisible(mappingRefreshButton);
+    await tester.tap(mappingRefreshButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('配置 Tushare Token'), findsOneWidget);
+    expect(mappingService.refreshCallCount, 0);
+
+    provider.dispose();
+    klineService.dispose();
+    trendService.dispose();
+    rankService.dispose();
+    await repository.dispose();
   });
 
   testWidgets('交易日覆盖率不足时显示最后交易日完整而非样本不足', (tester) async {

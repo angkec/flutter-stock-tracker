@@ -9,6 +9,7 @@ import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_monthly_writer.dart';
 import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/sw_industry_l1_mapping_store.dart';
 import 'package:stock_rtwatcher/config/minute_sync_config.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/screens/main_screen.dart';
@@ -23,6 +24,7 @@ import 'package:stock_rtwatcher/services/ai_analysis_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/tushare_token_service.dart';
 import 'package:stock_rtwatcher/services/tushare_client.dart';
+import 'package:stock_rtwatcher/services/sw_industry_index_mapping_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/backtest_service.dart';
 import 'package:stock_rtwatcher/services/breakout_service.dart';
@@ -150,6 +152,15 @@ class MyApp extends StatelessWidget {
             return service;
           },
         ),
+        Provider(create: (_) => SwIndustryL1MappingStore()),
+        ProxyProvider<TushareTokenService, TushareClient>(
+          update: (_, tokenService, __) {
+            final token = tokenService.token;
+            return TushareClient(
+              token: (token == null || token.isEmpty) ? '__NO_TOKEN__' : token,
+            );
+          },
+        ),
         ChangeNotifierProvider(
           create: (_) {
             final service = PullbackService();
@@ -198,13 +209,18 @@ class MyApp extends StatelessWidget {
           },
           dispose: (_, repo) => repo.dispose(),
         ),
-        ProxyProvider<TushareTokenService, SwIndexRepository>(
-          update: (_, tokenService, __) {
-            final token = tokenService.token;
-            final client = TushareClient(
-              token: (token == null || token.isEmpty) ? '__NO_TOKEN__' : token,
-            );
+        ProxyProvider<TushareClient, SwIndexRepository>(
+          update: (_, client, __) {
             return SwIndexRepository(client: client);
+          },
+        ),
+        ProxyProvider2<
+          TushareClient,
+          SwIndustryL1MappingStore,
+          SwIndustryIndexMappingService
+        >(
+          update: (_, client, store, __) {
+            return SwIndustryIndexMappingService(client: client, store: store);
           },
         ),
         ChangeNotifierProxyProvider<SwIndexRepository, SwIndexDataProvider>(

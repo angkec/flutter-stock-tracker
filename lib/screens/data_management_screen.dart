@@ -28,6 +28,7 @@ import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/industry_rank_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
+import 'package:stock_rtwatcher/services/sw_industry_index_mapping_service.dart';
 import 'package:stock_rtwatcher/services/tushare_token_service.dart';
 import 'package:stock_rtwatcher/widgets/data_management_audit_console.dart';
 
@@ -484,9 +485,29 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           onForceFullFetch: hasToken
               ? () => _syncSwIndexForceFull(context)
               : () => _showTushareTokenDialog(context),
+          extraActionLabel: '刷新行业映射',
+          onExtraAction: hasToken
+              ? () => _refreshSwIndustryMapping(context)
+              : () => _showTushareTokenDialog(context),
         );
       },
     );
+  }
+
+  Future<void> _refreshSwIndustryMapping(BuildContext context) async {
+    final mappingService = context.read<SwIndustryIndexMappingService>();
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final mapping = await mappingService.refreshFromTushare(isNew: 'Y');
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('申万行业映射刷新完成（${mapping.length}个）')),
+      );
+      _triggerRefresh();
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('申万行业映射刷新失败: $e')));
+    }
   }
 
   Future<void> _syncSwIndexIncremental(BuildContext context) async {
@@ -623,6 +644,8 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     required bool isBusy,
     required VoidCallback onIncrementalFetch,
     required VoidCallback onForceFullFetch,
+    String? extraActionLabel,
+    VoidCallback? onExtraAction,
   }) {
     final summary = '$subtitle · ${size ?? '-'} · $statusLabel';
 
@@ -645,6 +668,11 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
               onPressed: isBusy ? null : onForceFullFetch,
               child: const Text('强制全量拉取'),
             ),
+            if (extraActionLabel != null && onExtraAction != null)
+              FilledButton.tonal(
+                onPressed: isBusy ? null : onExtraAction,
+                child: Text(extraActionLabel),
+              ),
           ],
         ),
       ),
