@@ -14,6 +14,7 @@ import 'package:stock_rtwatcher/data/repository/data_repository.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/ema_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/industry_ema_breadth_config_store.dart';
+import 'package:stock_rtwatcher/data/storage/sw_industry_l1_mapping_store.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
 import 'package:stock_rtwatcher/models/industry_ema_breadth.dart';
 import 'package:stock_rtwatcher/models/industry_ema_breadth_config.dart';
@@ -23,12 +24,15 @@ import 'package:stock_rtwatcher/models/quote.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/screens/industry_detail_screen.dart';
+import 'package:stock_rtwatcher/data/repository/sw_index_repository.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/services/industry_ema_breadth_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/services/sw_industry_index_mapping_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
+import 'package:stock_rtwatcher/services/tushare_client.dart';
 
 class _DummyRepository implements DataRepository {
   final _statusController = StreamController<DataStatus>.broadcast();
@@ -260,6 +264,56 @@ class _FakeIndustryEmaBreadthConfigStore extends IndustryEmaBreadthConfigStore {
     IndustryEmaBreadthConfig? defaults,
   }) async {
     return _config;
+  }
+}
+
+class _FakeSwIndustryIndexMappingService extends SwIndustryIndexMappingService {
+  _FakeSwIndustryIndexMappingService({required this.resolve})
+    : super(
+        client: TushareClient(
+          token: 't',
+          postJson: (_) async => {
+            'code': 0,
+            'msg': '',
+            'data': {'fields': <String>[], 'items': <List<dynamic>>[]},
+          },
+        ),
+        store: SwIndustryL1MappingStore(),
+      );
+
+  final Future<String?> Function(String industry) resolve;
+
+  @override
+  Future<String?> resolveTsCodeByIndustry(String industry) {
+    return resolve(industry);
+  }
+}
+
+class _FakeSwIndexRepository extends SwIndexRepository {
+  _FakeSwIndexRepository({required this.load})
+    : super(
+        client: TushareClient(
+          token: 't',
+          postJson: (_) async => {
+            'code': 0,
+            'msg': '',
+            'data': {'fields': <String>[], 'items': <List<dynamic>>[]},
+          },
+        ),
+      );
+
+  final Future<Map<String, List<KLine>>> Function(
+    List<String> tsCodes,
+    DateRange dateRange,
+  )
+  load;
+
+  @override
+  Future<Map<String, List<KLine>>> getDailyKlines({
+    required List<String> tsCodes,
+    required DateRange dateRange,
+  }) {
+    return load(tsCodes, dateRange);
   }
 }
 
@@ -608,6 +662,179 @@ void main() {
     expect(find.text('手指滑动或点击图表可选择日期'), findsNWidgets(2));
   });
 
+  testWidgets('SW日K主图存在且位于EMA广度卡片上方', (tester) async {
+    final repository = _DummyRepository();
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600001', name: '测试A', market: 1),
+          ratio: 1.2,
+          changePercent: 2.5,
+          industry: '半导体',
+        ),
+      ],
+    );
+    final trendService = _FakeTrendService();
+    final buildUpService = _FakeIndustryBuildUpService(
+      historyByIndustry: {
+        '半导体': [_record(DateTime(2026, 2, 6), rank: 1)],
+      },
+    );
+    final mappingService = _FakeSwIndustryIndexMappingService(
+      resolve: (_) async => '801120.SI',
+    );
+    final swRepository = _FakeSwIndexRepository(
+      load: (tsCodes, dateRange) async {
+        return {'801120.SI': _buildSwDailyBars(count: 320)};
+      },
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildUpService,
+          ),
+          Provider<SwIndustryIndexMappingService>.value(value: mappingService),
+          Provider<SwIndexRepository>.value(value: swRepository),
+        ],
+        child: const MaterialApp(home: IndustryDetailScreen(industry: '半导体')),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final swCard = find.byKey(const ValueKey('industry_detail_sw_kline_card'));
+    final emaCard = find.byKey(
+      const ValueKey('industry_detail_ema_breadth_card'),
+    );
+    expect(swCard, findsOneWidget);
+    expect(emaCard, findsOneWidget);
+    expect(
+      tester.getTopLeft(swCard).dy,
+      lessThan(tester.getTopLeft(emaCard).dy),
+    );
+  });
+
+  testWidgets('SW日K加载中显示loading key', (tester) async {
+    final repository = _DummyRepository();
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600001', name: '测试A', market: 1),
+          ratio: 1.2,
+          changePercent: 2.5,
+          industry: '半导体',
+        ),
+      ],
+    );
+    final trendService = _FakeTrendService();
+    final buildUpService = _FakeIndustryBuildUpService(
+      historyByIndustry: {
+        '半导体': [_record(DateTime(2026, 2, 6), rank: 1)],
+      },
+    );
+    final mappingService = _FakeSwIndustryIndexMappingService(
+      resolve: (_) async {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        return '801120.SI';
+      },
+    );
+    final swRepository = _FakeSwIndexRepository(
+      load: (tsCodes, dateRange) async => {
+        '801120.SI': _buildSwDailyBars(count: 10),
+      },
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildUpService,
+          ),
+          Provider<SwIndustryIndexMappingService>.value(value: mappingService),
+          Provider<SwIndexRepository>.value(value: swRepository),
+        ],
+        child: const MaterialApp(home: IndustryDetailScreen(industry: '半导体')),
+      ),
+    );
+
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('industry_detail_sw_kline_loading')),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('缺少SW行业映射时显示空态key', (tester) async {
+    final repository = _DummyRepository();
+    final marketProvider = _FakeMarketDataProvider(
+      data: [
+        StockMonitorData(
+          stock: Stock(code: '600001', name: '测试A', market: 1),
+          ratio: 1.2,
+          changePercent: 2.5,
+          industry: '半导体',
+        ),
+      ],
+    );
+    final trendService = _FakeTrendService();
+    final buildUpService = _FakeIndustryBuildUpService(
+      historyByIndustry: {
+        '半导体': [_record(DateTime(2026, 2, 6), rank: 1)],
+      },
+    );
+    final mappingService = _FakeSwIndustryIndexMappingService(
+      resolve: (_) async => null,
+    );
+    final swRepository = _FakeSwIndexRepository(
+      load: (tsCodes, dateRange) async => const {},
+    );
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<DataRepository>.value(value: repository),
+          ChangeNotifierProvider<MarketDataProvider>.value(
+            value: marketProvider,
+          ),
+          ChangeNotifierProvider<IndustryTrendService>.value(
+            value: trendService,
+          ),
+          ChangeNotifierProvider<IndustryBuildUpService>.value(
+            value: buildUpService,
+          ),
+          Provider<SwIndustryIndexMappingService>.value(value: mappingService),
+          Provider<SwIndexRepository>.value(value: swRepository),
+        ],
+        child: const MaterialApp(home: IndustryDetailScreen(industry: '半导体')),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('industry_detail_sw_kline_empty')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('EMA 广度图支持选择日期并显示选中详情', (tester) async {
     final repository = _DummyRepository();
     final marketProvider = _FakeMarketDataProvider(
@@ -762,4 +989,28 @@ double _topYOfText(WidgetTester tester, String text) {
   final finder = find.text(text);
   expect(finder, findsOneWidget);
   return tester.getTopLeft(finder).dy;
+}
+
+List<KLine> _buildSwDailyBars({required int count}) {
+  final bars = <KLine>[];
+  final baseDate = DateTime(2024, 1, 1);
+  var close = 10.0;
+  for (var i = 0; i < count; i++) {
+    final open = close;
+    close = open + (i.isEven ? 0.2 : -0.1);
+    final high = (open > close ? open : close) + 0.3;
+    final low = (open < close ? open : close) - 0.3;
+    bars.add(
+      KLine(
+        datetime: baseDate.add(Duration(days: i)),
+        open: open,
+        close: close,
+        high: high,
+        low: low,
+        volume: 100000 + i * 100,
+        amount: (100000 + i * 100) * close,
+      ),
+    );
+  }
+  return bars;
 }

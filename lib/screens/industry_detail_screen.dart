@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:stock_rtwatcher/data/models/date_range.dart';
 import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/repository/data_repository.dart';
+import 'package:stock_rtwatcher/data/repository/sw_index_repository.dart';
 import 'package:stock_rtwatcher/data/storage/industry_ema_breadth_config_store.dart';
 import 'package:stock_rtwatcher/models/industry_buildup.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_stage.dart';
@@ -10,12 +11,14 @@ import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
 import 'package:stock_rtwatcher/models/industry_ema_breadth.dart';
 import 'package:stock_rtwatcher/models/industry_ema_breadth_config.dart';
 import 'package:stock_rtwatcher/models/industry_trend.dart';
+import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
 import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/services/sw_industry_index_mapping_service.dart';
 import 'package:stock_rtwatcher/widgets/industry_ema_breadth_chart.dart';
-import 'package:stock_rtwatcher/widgets/industry_trend_chart.dart';
+import 'package:stock_rtwatcher/widgets/kline_chart.dart';
 import 'package:stock_rtwatcher/widgets/market_stats_bar.dart';
 import 'package:stock_rtwatcher/widgets/stock_table.dart';
 
@@ -72,6 +75,11 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
       IndustryEmaBreadthConfig.defaultConfig;
   bool _isEmaBreadthLoading = false;
   int _emaBreadthRequestToken = 0;
+  List<KLine> _swKlines = const [];
+  bool _isSwKlineLoading = false;
+  String? _swKlineError;
+  String? _swTsCode;
+  int _swKlineRequestToken = 0;
 
   IndustryEmaBreadthConfigStore get _emaBreadthConfigStore =>
       widget.emaBreadthConfigStoreForTest ?? IndustryEmaBreadthConfigStore();
@@ -80,6 +88,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
   void initState() {
     super.initState();
     _loadEmaBreadthCard();
+    _loadSwIndustryKline();
   }
 
   @override
@@ -87,7 +96,140 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.industry != widget.industry) {
       _loadEmaBreadthCard();
+      _loadSwIndustryKline();
     }
+  }
+
+  Future<void> _loadSwIndustryKline() async {
+    final requestToken = ++_swKlineRequestToken;
+    setState(() {
+      _isSwKlineLoading = true;
+      _swKlineError = null;
+      _swKlines = const [];
+      _swTsCode = null;
+    });
+
+    try {
+      final mappingService = context.read<SwIndustryIndexMappingService>();
+      final tsCode = await mappingService.resolveTsCodeByIndustry(
+        widget.industry,
+      );
+      if (!mounted || requestToken != _swKlineRequestToken) {
+        return;
+      }
+      if (tsCode == null || tsCode.trim().isEmpty) {
+        setState(() {
+          _isSwKlineLoading = false;
+          _swKlineError = '未找到行业指数映射';
+          _swKlines = const [];
+          _swTsCode = null;
+        });
+        return;
+      }
+
+      final now = DateTime.now();
+      final end = DateTime(now.year, now.month, now.day);
+      final start = end.subtract(const Duration(days: 400));
+      final repository = context.read<SwIndexRepository>();
+      final data = await repository.getDailyKlines(
+        tsCodes: [tsCode],
+        dateRange: DateRange(start, end),
+      );
+
+      if (!mounted || requestToken != _swKlineRequestToken) {
+        return;
+      }
+
+      final bars = data[tsCode] ?? const <KLine>[];
+      final trimmed = bars.length > 260
+          ? bars.sublist(bars.length - 260)
+          : bars;
+
+      setState(() {
+        _swTsCode = tsCode;
+        _swKlines = trimmed;
+        _isSwKlineLoading = false;
+        _swKlineError = trimmed.isEmpty ? '暂无申万日K数据' : null;
+      });
+    } catch (error) {
+      if (!mounted || requestToken != _swKlineRequestToken) {
+        return;
+      }
+      setState(() {
+        _isSwKlineLoading = false;
+        _swKlineError = error.toString();
+        _swKlines = const [];
+        _swTsCode = null;
+      });
+    }
+  }
+
+  Widget _buildSwKlineCard(BuildContext context, double height) {
+    if (_isSwKlineLoading) {
+      return Container(
+        key: const ValueKey('industry_detail_sw_kline_loading'),
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: SizedBox(
+          height: height,
+          child: Center(
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_swKlines.isEmpty) {
+      return Container(
+        key: const ValueKey('industry_detail_sw_kline_empty'),
+        margin: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: SizedBox(
+          height: height,
+          child: Center(
+            child: Text(
+              _swKlineError ?? '暂无申万日K数据',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      key: const ValueKey('industry_detail_sw_kline_card'),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _swTsCode == null ? '申万行业日K' : '申万行业日K $_swTsCode',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+          KLineChart(bars: _swKlines, height: height - 44),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadEmaBreadthCard() async {
@@ -291,7 +433,6 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final marketProvider = context.watch<MarketDataProvider>();
-    final trendService = context.watch<IndustryTrendService>();
     final buildUpService = context.watch<IndustryBuildUpService>();
 
     if (!buildUpService.hasIndustryHistory(widget.industry) &&
@@ -321,13 +462,6 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
         .toList();
     final industryStocks = _buildSortedIndustryStocks(baseIndustryStocks);
 
-    // 计算今日数据
-    final todayTrend = trendService.calculateTodayTrend(marketProvider.allData);
-    final todayPoint = todayTrend[widget.industry];
-
-    // 获取趋势数据
-    final trendData = _getTrendData(trendService, todayPoint);
-
     // 计算今日统计
     final totalStocks = industryStocks.length;
     final ratioAboveCount = industryStocks.where((s) => s.ratio > 1.0).length;
@@ -336,7 +470,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
         : '0';
 
     // 计算可折叠区域的高度
-    const double chartHeight = 150.0;
+    const double chartHeight = 188.0;
     const double summaryHeight = 48.0;
     const double buildupCardHeight = 252.0;
     const double emaBreadthCardHeight = 305.0;
@@ -375,22 +509,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              // 趋势图区域
-                              Container(
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: IndustryTrendChart(
-                                  data: trendData,
-                                  height: chartHeight,
-                                ),
-                              ),
+                              _buildSwKlineCard(context, chartHeight),
                               const SizedBox(height: 12),
                               // 今日摘要
                               Padding(
