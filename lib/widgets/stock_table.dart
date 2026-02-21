@@ -22,7 +22,7 @@ const Color downColor = AppColors.stockDown;
 
 // 列宽定义
 const double _codeWidth = 95;
-const double _nameWidth = 100;
+const double _nameWidth = 130; // 包含动力系统标记显示空间
 const double _changeWidth = 75;
 const double _ratioWidth = 65;
 const double _industryWidth = 135; // 包含行业标签和趋势折线
