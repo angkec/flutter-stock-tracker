@@ -8,6 +8,7 @@ import 'package:stock_rtwatcher/data/models/kline_data_type.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/data/storage/market_snapshot_store.dart';
+import 'package:stock_rtwatcher/data/storage/power_system_cache_store.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/daily_kline_read_service.dart';
@@ -55,6 +56,7 @@ class MarketDataProvider extends ChangeNotifier {
   EmaIndicatorService? _emaService;
   PowerSystemIndicatorService? _powerSystemService;
   IndustryEmaBreadthService? _industryEmaBreadthService;
+  PowerSystemCacheStore? _powerSystemCacheStore;
 
   List<StockMonitorData> _allData = [];
   bool _isLoading = false;
@@ -118,6 +120,7 @@ class MarketDataProvider extends ChangeNotifier {
           cacheStore: _dailyKlineCacheStore,
           fetcher: _fetchDailyBarsFromPool,
         );
+    _powerSystemCacheStore = PowerSystemCacheStore();
   }
 
   Future<Map<String, List<KLine>>> _fetchDailyBarsFromPool({
@@ -1041,6 +1044,7 @@ class MarketDataProvider extends ChangeNotifier {
     );
 
     _applyPullbackDetection();
+    await _applyPowerSystemUpDetection();
   }
 
   Future<void> _persistDailyBarsToFile(
@@ -1441,6 +1445,13 @@ class MarketDataProvider extends ChangeNotifier {
     return null;
   }
 
+  /// 重新计算动力系统双涨标记
+  Future<void> recalculatePowerSystemUp({
+    void Function(int current, int total)? onProgress,
+  }) async {
+    await _applyPowerSystemUpDetection(onProgress: onProgress);
+  }
+
   /// 应用回踩检测逻辑
   void _applyPullbackDetection() {
     if (_pullbackService == null) return;
@@ -1457,6 +1468,57 @@ class MarketDataProvider extends ChangeNotifier {
       updatedData.add(
         data.copyWith(isPullback: isPullback, isBreakout: data.isBreakout),
       );
+    }
+
+    _allData = updatedData;
+    notifyListeners();
+  }
+
+  /// 应用动力系统双涨检测
+  /// 检测日K和周K的最后状态都是上涨(state=1)的股票
+  Future<void> _applyPowerSystemUpDetection({
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (_powerSystemCacheStore == null || _allData.isEmpty) {
+      return;
+    }
+
+    final updatedData = List<StockMonitorData>.from(_allData, growable: false);
+    final total = updatedData.length;
+    var completed = 0;
+
+    for (var i = 0; i < total; i++) {
+      final data = updatedData[i];
+      final stockCode = data.stock.code;
+
+      final dailyFuture = _powerSystemCacheStore!.loadSeries(
+        stockCode: stockCode,
+        dataType: KLineDataType.daily,
+      );
+      final weeklyFuture = _powerSystemCacheStore!.loadSeries(
+        stockCode: stockCode,
+        dataType: KLineDataType.weekly,
+      );
+
+      final results = await Future.wait<PowerSystemCacheSeries?>([
+        dailyFuture,
+        weeklyFuture,
+      ]);
+      final dailySeries = results[0];
+      final weeklySeries = results[1];
+
+      var isPowerSystemUp = false;
+      if (dailySeries != null && dailySeries.points.isNotEmpty) {
+        if (weeklySeries != null && weeklySeries.points.isNotEmpty) {
+          final dailyLastState = dailySeries.points.last.state;
+          final weeklyLastState = weeklySeries.points.last.state;
+          isPowerSystemUp = (dailyLastState == 1) && (weeklyLastState == 1);
+        }
+      }
+
+      updatedData[i] = data.copyWith(isPowerSystemUp: isPowerSystemUp);
+      completed++;
+      onProgress?.call(completed, total);
     }
 
     _allData = updatedData;
