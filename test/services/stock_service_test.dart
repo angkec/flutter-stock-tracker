@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/models/power_system_point.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -182,17 +183,57 @@ void main() {
         expect(updated.isPullback, original.isPullback);
       });
 
+      test('copyWith updates powerSystemStates', () {
+        final original = StockMonitorData(
+          stock: stock,
+          ratio: 1.2,
+          changePercent: 2.5,
+        );
+        final states = <PowerSystemDayState>[
+          PowerSystemDayState(
+            state: PowerSystemDailyState.bullish,
+            date: DateTime(2026, 2, 20),
+            dailyState: 1,
+            weeklyState: 1,
+          ),
+        ];
+
+        final updated = original.copyWith(powerSystemStates: states);
+
+        expect(updated.powerSystemStates, hasLength(1));
+        expect(
+          updated.powerSystemStates.first.state,
+          PowerSystemDailyState.bullish,
+        );
+      });
+
       test('toJson/fromJson persists isPowerSystemUp', () {
+        final states = <PowerSystemDayState>[
+          PowerSystemDayState(
+            state: PowerSystemDailyState.bearish,
+            date: DateTime(2026, 2, 19),
+            dailyState: -1,
+            weeklyState: -1,
+          ),
+        ];
         final original = StockMonitorData(
           stock: stock,
           ratio: 1.5,
           changePercent: 3.0,
           isPowerSystemUp: true,
+          powerSystemStates: states,
         );
 
         final restored = StockMonitorData.fromJson(original.toJson());
 
         expect(restored.isPowerSystemUp, isTrue);
+        expect(restored.powerSystemStates, hasLength(1));
+        expect(
+          restored.powerSystemStates.first.state,
+          PowerSystemDailyState.bearish,
+        );
+        expect(restored.powerSystemStates.first.dailyState, -1);
+        expect(restored.powerSystemStates.first.weeklyState, -1);
         expect(restored.stock.code, original.stock.code);
         expect(restored.ratio, original.ratio);
       });
@@ -212,6 +253,7 @@ void main() {
         final restored = StockMonitorData.fromJson(json);
 
         expect(restored.isPowerSystemUp, isFalse);
+        expect(restored.powerSystemStates, isEmpty);
       });
     });
 

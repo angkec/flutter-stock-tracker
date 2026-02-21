@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/models/power_system_point.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/china_trading_calendar_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
@@ -18,6 +19,7 @@ class StockMonitorData {
   final double upVolume; // 上涨K线成交量之和
   final double downVolume; // 下跌K线成交量之和
   final bool isPowerSystemUp; // 动力系统双涨标记
+  final List<PowerSystemDayState> powerSystemStates; // 最近5天状态
 
   StockMonitorData({
     required this.stock,
@@ -29,6 +31,7 @@ class StockMonitorData {
     this.upVolume = 0,
     this.downVolume = 0,
     this.isPowerSystemUp = false,
+    this.powerSystemStates = const [],
   });
 
   /// 创建带有回踩标记的副本
@@ -38,6 +41,7 @@ class StockMonitorData {
     double? upVolume,
     double? downVolume,
     bool? isPowerSystemUp,
+    List<PowerSystemDayState>? powerSystemStates,
   }) {
     return StockMonitorData(
       stock: stock,
@@ -49,6 +53,7 @@ class StockMonitorData {
       upVolume: upVolume ?? this.upVolume,
       downVolume: downVolume ?? this.downVolume,
       isPowerSystemUp: isPowerSystemUp ?? this.isPowerSystemUp,
+      powerSystemStates: powerSystemStates ?? this.powerSystemStates,
     );
   }
 
@@ -62,20 +67,46 @@ class StockMonitorData {
     'upVolume': upVolume,
     'downVolume': downVolume,
     'isPowerSystemUp': isPowerSystemUp,
+    'powerSystemStates': powerSystemStates
+        .map(
+          (s) => {
+            'state': s.state.index,
+            'date': s.date.toIso8601String(),
+            'dailyState': s.dailyState,
+            'weeklyState': s.weeklyState,
+          },
+        )
+        .toList(),
   };
 
-  factory StockMonitorData.fromJson(Map<String, dynamic> json) =>
-      StockMonitorData(
-        stock: Stock.fromJson(json['stock'] as Map<String, dynamic>),
-        ratio: (json['ratio'] as num).toDouble(),
-        changePercent: (json['changePercent'] as num).toDouble(),
-        industry: json['industry'] as String?,
-        isPullback: json['isPullback'] as bool? ?? false,
-        isBreakout: json['isBreakout'] as bool? ?? false,
-        upVolume: (json['upVolume'] as num?)?.toDouble() ?? 0,
-        downVolume: (json['downVolume'] as num?)?.toDouble() ?? 0,
-        isPowerSystemUp: json['isPowerSystemUp'] as bool? ?? false,
-      );
+  factory StockMonitorData.fromJson(Map<String, dynamic> json) {
+    final statesJson = json['powerSystemStates'] as List<dynamic>?;
+    final states =
+        statesJson
+            ?.map(
+              (s) => PowerSystemDayState(
+                state: PowerSystemDailyState.values[s['state'] as int],
+                date: DateTime.parse(s['date'] as String),
+                dailyState: s['dailyState'] as int,
+                weeklyState: s['weeklyState'] as int,
+              ),
+            )
+            .toList() ??
+        <PowerSystemDayState>[];
+
+    return StockMonitorData(
+      stock: Stock.fromJson(json['stock'] as Map<String, dynamic>),
+      ratio: (json['ratio'] as num).toDouble(),
+      changePercent: (json['changePercent'] as num).toDouble(),
+      industry: json['industry'] as String?,
+      isPullback: json['isPullback'] as bool? ?? false,
+      isBreakout: json['isBreakout'] as bool? ?? false,
+      upVolume: (json['upVolume'] as num?)?.toDouble() ?? 0,
+      downVolume: (json['downVolume'] as num?)?.toDouble() ?? 0,
+      isPowerSystemUp: json['isPowerSystemUp'] as bool? ?? false,
+      powerSystemStates: states,
+    );
+  }
 }
 
 /// 监控数据结果（包含数据日期）
