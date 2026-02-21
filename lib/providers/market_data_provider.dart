@@ -10,6 +10,7 @@ import 'package:stock_rtwatcher/data/storage/daily_kline_cache_store.dart';
 import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/data/storage/market_snapshot_store.dart';
 import 'package:stock_rtwatcher/data/storage/power_system_cache_store.dart';
+import 'package:stock_rtwatcher/data/storage/power_system_marker_store.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/power_system_point.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
@@ -62,6 +63,7 @@ class MarketDataProvider extends ChangeNotifier {
   PowerSystemIndicatorService? _powerSystemService;
   IndustryEmaBreadthService? _industryEmaBreadthService;
   PowerSystemCacheStore? _powerSystemCacheStore;
+  PowerSystemMarkerStore? _powerSystemMarkerStore;
 
   List<StockMonitorData> _allData = [];
   bool _isLoading = false;
@@ -132,6 +134,7 @@ class MarketDataProvider extends ChangeNotifier {
           fetcher: _fetchDailyBarsFromPool,
         );
     _powerSystemCacheStore = PowerSystemCacheStore();
+    _powerSystemMarkerStore = PowerSystemMarkerStore();
   }
 
   Future<Map<String, List<KLine>>> _fetchDailyBarsFromPool({
@@ -395,6 +398,32 @@ class MarketDataProvider extends ChangeNotifier {
 
       await _restoreDailyBarsForCachedData();
       await _refreshDailyBarsDiskStats(notifyIfChanged: true);
+
+      // 加载标记数据并应用到缓存数据
+      if (_powerSystemMarkerStore != null && _allData.isNotEmpty) {
+        try {
+          final markers = await _powerSystemMarkerStore!.loadAll();
+          if (markers.isNotEmpty) {
+            final markerMap = {for (var m in markers) m.stockCode: m};
+            _allData = _allData.map((data) {
+              final marker = markerMap[data.stock.code];
+              if (marker != null) {
+                return data.copyWith(
+                  isPowerSystemUp: marker.isPowerSystemUp,
+                  powerSystemStates: marker.states,
+                );
+              }
+              return data.copyWith(
+                isPowerSystemUp: false,
+                powerSystemStates: [],
+              );
+            }).toList();
+            notifyListeners();
+          }
+        } catch (e) {
+          // 忽略加载错误
+        }
+      }
     } catch (e) {
       debugPrint('Failed to load cache: $e');
     }
@@ -1588,6 +1617,21 @@ class MarketDataProvider extends ChangeNotifier {
       );
       completed++;
       onProgress?.call(completed, total);
+    }
+
+    // 持久化标记数据
+    if (_powerSystemMarkerStore != null) {
+      final markers = updatedData
+          .where((d) => d.isPowerSystemUp)
+          .map(
+            (d) => PowerSystemMarkerData(
+              stockCode: d.stock.code,
+              isPowerSystemUp: d.isPowerSystemUp,
+              states: d.powerSystemStates,
+            ),
+          )
+          .toList();
+      await _powerSystemMarkerStore!.saveAll(markers);
     }
 
     _allData = updatedData;
