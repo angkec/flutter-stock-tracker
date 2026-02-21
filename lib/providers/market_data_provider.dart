@@ -11,6 +11,7 @@ import 'package:stock_rtwatcher/data/storage/daily_kline_checkpoint_store.dart';
 import 'package:stock_rtwatcher/data/storage/market_snapshot_store.dart';
 import 'package:stock_rtwatcher/data/storage/power_system_cache_store.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/models/power_system_point.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/daily_kline_read_service.dart';
 import 'package:stock_rtwatcher/services/daily_kline_sync_service.dart';
@@ -1545,16 +1546,46 @@ class MarketDataProvider extends ChangeNotifier {
       final dailySeries = results[0];
       final weeklySeries = results[1];
 
+      // 计算最近5天状态
+      List<PowerSystemDayState> powerSystemStates = [];
       var isPowerSystemUp = false;
-      if (dailySeries != null && dailySeries.points.isNotEmpty) {
-        if (weeklySeries != null && weeklySeries.points.isNotEmpty) {
-          final dailyLastState = dailySeries.points.last.state;
-          final weeklyLastState = weeklySeries.points.last.state;
-          isPowerSystemUp = (dailyLastState == 1) && (weeklyLastState == 1);
+
+      if (dailySeries != null &&
+          dailySeries.points.isNotEmpty &&
+          weeklySeries != null &&
+          weeklySeries.points.isNotEmpty) {
+        final dailyPoints = dailySeries.points;
+        final weeklyPoints = weeklySeries.points;
+
+        // 获取最近5天（取较小值）
+        final count = math.min(
+          5,
+          math.min(dailyPoints.length, weeklyPoints.length),
+        );
+
+        for (var j = 0; j < count; j++) {
+          // 从最新往回取
+          final dailyPoint = dailyPoints[dailyPoints.length - 1 - j];
+          final weeklyPoint = weeklyPoints[weeklyPoints.length - 1 - j];
+
+          final dayState = PowerSystemDayState.fromStates(
+            date: dailyPoint.datetime,
+            dailyState: dailyPoint.state,
+            weeklyState: weeklyPoint.state,
+          );
+          powerSystemStates.add(dayState);
+
+          // 如果任意一天是双涨，标记该股票
+          if (dayState.state == PowerSystemDailyState.bullish) {
+            isPowerSystemUp = true;
+          }
         }
       }
 
-      updatedData[i] = data.copyWith(isPowerSystemUp: isPowerSystemUp);
+      updatedData[i] = data.copyWith(
+        isPowerSystemUp: isPowerSystemUp,
+        powerSystemStates: powerSystemStates,
+      );
       completed++;
       onProgress?.call(completed, total);
     }
