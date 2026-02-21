@@ -872,7 +872,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
     final markedCount = provider.allData.where((d) => d.isPowerSystemUp).length;
     final totalCount = provider.allData.length;
     const title = '动力系统标注管理';
-    final summary = '日线+周线双涨标记: $markedCount/$totalCount 只';
+    final summary = '日线+周线有双涨记录: $markedCount/$totalCount 只';
 
     Future<void> navigateToManagement() async {
       await Navigator.of(context).push(
