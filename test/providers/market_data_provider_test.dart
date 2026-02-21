@@ -31,6 +31,7 @@ import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/macd_indicator_service.dart';
 import 'package:stock_rtwatcher/services/pullback_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/services/china_trading_calendar_service.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
 
 class _ReconnectableFakePool extends TdxPool {
@@ -74,6 +75,93 @@ class _ReconnectableFakePool extends TdxPool {
       final stock = stocks[index];
       onStockBars(index, dailyBarsByCode[stock.code] ?? const <KLine>[]);
     }
+  }
+}
+
+class _FailIfFetchedStockService extends StockService {
+  _FailIfFetchedStockService(super.pool);
+
+  int getAllStocksCalls = 0;
+  int batchGetMonitorDataCalls = 0;
+
+  @override
+  Future<List<Stock>> getAllStocks() async {
+    getAllStocksCalls++;
+    throw StateError('Unexpected network fetch via getAllStocks');
+  }
+
+  @override
+  Future<MonitorDataResult> batchGetMonitorData(
+    List<Stock> stocks, {
+    IndustryService? industryService,
+    void Function(int current, int total)? onProgress,
+    void Function(List<StockMonitorData> results)? onData,
+    void Function(String code, List<KLine> bars)? onBarsData,
+  }) async {
+    batchGetMonitorDataCalls++;
+    throw StateError('Unexpected network fetch via batchGetMonitorData');
+  }
+}
+
+class _SpyTradingCalendarService extends ChinaTradingCalendarService {
+  _SpyTradingCalendarService({
+    this.throwOnLoad = false,
+    this.throwOnRefresh = false,
+    this.isTradingDayOverride,
+    this.latestTradingDayOverride,
+  }) : super(officialClosedDates: const <String>{});
+
+  final bool throwOnLoad;
+  final bool throwOnRefresh;
+  final bool? isTradingDayOverride;
+  final DateTime? latestTradingDayOverride;
+  int loadCachedCalendarCalls = 0;
+  int refreshRemoteCalendarCalls = 0;
+
+  @override
+  Future<bool> loadCachedCalendar() async {
+    loadCachedCalendarCalls++;
+    if (throwOnLoad) {
+      throw StateError('load cached failed');
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> refreshRemoteCalendar() async {
+    refreshRemoteCalendarCalls++;
+    if (throwOnRefresh) {
+      throw StateError('remote refresh failed');
+    }
+    return true;
+  }
+
+  @override
+  bool isTradingDay(DateTime day, {Iterable<DateTime>? inferredTradingDates}) {
+    final override = isTradingDayOverride;
+    if (override != null) {
+      return override;
+    }
+    return super.isTradingDay(day, inferredTradingDates: inferredTradingDates);
+  }
+
+  @override
+  DateTime? latestTradingDayOnOrBefore(
+    DateTime anchorDay, {
+    Iterable<DateTime>? availableTradingDates,
+    bool includeAnchor = false,
+    int maxLookbackDays = 40,
+  }) {
+    final override = latestTradingDayOverride;
+    if (override != null) {
+      return override;
+    }
+    return super.latestTradingDayOnOrBefore(
+      anchorDay,
+      availableTradingDates: availableTradingDates,
+      includeAnchor: includeAnchor,
+      maxLookbackDays: maxLookbackDays,
+    );
   }
 }
 
@@ -1037,6 +1125,134 @@ void main() {
     expect(secondPool.batchFetchCalls, 0);
   });
 
+  test(
+    'loadFromCache should best-effort load cached trading calendar',
+    () async {
+      final tradingDay = DateTime(2026, 2, 15);
+      final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+      final monitorData = StockMonitorData(
+        stock: stock,
+        ratio: 1.2,
+        changePercent: 0.5,
+      );
+
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode([monitorData.toJson()]),
+        'market_data_date': tradingDay.toIso8601String(),
+        'minute_data_date': tradingDay.toIso8601String(),
+        'minute_data_cache_v1': 1,
+      });
+
+      final calendarService = _SpyTradingCalendarService(throwOnLoad: true);
+      final pool = _ReconnectableFakePool(
+        dailyBarsByCode: const <String, List<KLine>>{},
+        throwOnBatchFetch: true,
+      );
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: _FailIfFetchedStockService(pool),
+        industryService: IndustryService(),
+        tradingCalendarService: calendarService,
+        nowProvider: () => DateTime(2026, 2, 16, 10),
+      );
+
+      await provider.loadFromCache();
+
+      expect(calendarService.loadCachedCalendarCalls, 1);
+      expect(provider.allData, isNotEmpty);
+    },
+  );
+
+  test(
+    'refresh should reuse cache on holiday weekday without minute refetch',
+    () async {
+      final holidayDate = DateTime(2026, 10, 6, 10, 0); // National Day break
+      final lastTradingDay = DateTime(2026, 10, 6);
+
+      final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+      final monitorData = StockMonitorData(
+        stock: stock,
+        ratio: 1.2,
+        changePercent: 0.5,
+      );
+
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode([monitorData.toJson()]),
+        'market_data_date': lastTradingDay.toIso8601String(),
+        'minute_data_date': lastTradingDay.toIso8601String(),
+        'minute_data_cache_v1': 1,
+      });
+
+      final pool = _ReconnectableFakePool(
+        dailyBarsByCode: const <String, List<KLine>>{},
+        throwOnBatchFetch: true,
+      );
+      final stockService = _FailIfFetchedStockService(pool);
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: stockService,
+        industryService: IndustryService(),
+        nowProvider: () => holidayDate,
+        tradingCalendarService: const ChinaTradingCalendarService(),
+      );
+
+      await provider.loadFromCache();
+      await provider.refresh(silent: true);
+
+      expect(stockService.getAllStocksCalls, 0);
+      expect(stockService.batchGetMonitorDataCalls, 0);
+      expect(provider.errorMessage, isNull);
+      expect(provider.allData, isNotEmpty);
+    },
+  );
+
+  test(
+    'refresh should trigger best-effort remote trading calendar sync',
+    () async {
+      final holidayDate = DateTime(2026, 10, 6, 10, 0);
+      final lastTradingDay = DateTime(2026, 9, 30);
+
+      final stock = Stock(code: '600000', name: '浦发银行', market: 1);
+      final monitorData = StockMonitorData(
+        stock: stock,
+        ratio: 1.2,
+        changePercent: 0.5,
+      );
+
+      SharedPreferences.setMockInitialValues({
+        'market_data_cache': jsonEncode([monitorData.toJson()]),
+        'market_data_date': lastTradingDay.toIso8601String(),
+        'minute_data_date': lastTradingDay.toIso8601String(),
+        'minute_data_cache_v1': 1,
+      });
+
+      final calendarService = _SpyTradingCalendarService(
+        throwOnRefresh: true,
+        isTradingDayOverride: false,
+        latestTradingDayOverride: lastTradingDay,
+      );
+      final pool = _ReconnectableFakePool(
+        dailyBarsByCode: const <String, List<KLine>>{},
+        throwOnBatchFetch: true,
+      );
+      final stockService = _FailIfFetchedStockService(pool);
+      final provider = MarketDataProvider(
+        pool: pool,
+        stockService: stockService,
+        industryService: IndustryService(),
+        nowProvider: () => holidayDate,
+        tradingCalendarService: calendarService,
+      );
+
+      await provider.loadFromCache();
+      await provider.refresh(silent: true);
+
+      expect(calendarService.refreshRemoteCalendarCalls, 1);
+      expect(stockService.getAllStocksCalls, 0);
+      expect(provider.errorMessage, isNull);
+    },
+  );
+
   test('loadFromCache should show daily cache size from disk stats', () async {
     final tempDir = await Directory.systemTemp.createTemp(
       'daily-bars-disk-stats-restore-',
@@ -1299,47 +1515,44 @@ void main() {
     },
   );
 
-  test(
-    'daily sync should not fail when daily bars are insufficient',
-    () async {
-      final stockA = Stock(code: '600000', name: '浦发银行', market: 1);
-      final stockB = Stock(code: '600001', name: '邯郸钢铁', market: 1);
-      final monitorData = [
-        StockMonitorData(stock: stockA, ratio: 1.1, changePercent: 0.3),
-        StockMonitorData(stock: stockB, ratio: 1.0, changePercent: 0.1),
-      ];
-      SharedPreferences.setMockInitialValues({
-        'market_data_cache': jsonEncode(
-          monitorData.map((data) => data.toJson()).toList(),
-        ),
-        'market_data_date': DateTime(2026, 2, 17).toIso8601String(),
-        'minute_data_date': DateTime(2026, 2, 17).toIso8601String(),
-        'minute_data_cache_v1': 2,
-      });
+  test('daily sync should not fail when daily bars are insufficient', () async {
+    final stockA = Stock(code: '600000', name: '浦发银行', market: 1);
+    final stockB = Stock(code: '600001', name: '邯郸钢铁', market: 1);
+    final monitorData = [
+      StockMonitorData(stock: stockA, ratio: 1.1, changePercent: 0.3),
+      StockMonitorData(stock: stockB, ratio: 1.0, changePercent: 0.1),
+    ];
+    SharedPreferences.setMockInitialValues({
+      'market_data_cache': jsonEncode(
+        monitorData.map((data) => data.toJson()).toList(),
+      ),
+      'market_data_date': DateTime(2026, 2, 17).toIso8601String(),
+      'minute_data_date': DateTime(2026, 2, 17).toIso8601String(),
+      'minute_data_cache_v1': 2,
+    });
 
-      final pool = _ReconnectableFakePool(dailyBarsByCode: const {});
-      final syncService = _FakeDailyKlineSyncService();
-      final readService = _FakeDailyKlineReadService()
-        ..readError = const DailyKlineReadException(
-          stockCode: '600001',
-          reason: DailyKlineReadFailureReason.insufficientBars,
-          message: 'insufficient',
-        );
-
-      final provider = MarketDataProvider(
-        pool: pool,
-        stockService: StockService(pool),
-        industryService: IndustryService(),
-        dailyKlineReadService: readService,
-        dailyKlineSyncService: syncService,
+    final pool = _ReconnectableFakePool(dailyBarsByCode: const {});
+    final syncService = _FakeDailyKlineSyncService();
+    final readService = _FakeDailyKlineReadService()
+      ..readError = const DailyKlineReadException(
+        stockCode: '600001',
+        reason: DailyKlineReadFailureReason.insufficientBars,
+        message: 'insufficient',
       );
 
-      await provider.loadFromCache();
-      await provider.syncDailyBarsForceFull();
+    final provider = MarketDataProvider(
+      pool: pool,
+      stockService: StockService(pool),
+      industryService: IndustryService(),
+      dailyKlineReadService: readService,
+      dailyKlineSyncService: syncService,
+    );
 
-      expect(syncService.syncCallCount, 1);
-    },
-  );
+    await provider.loadFromCache();
+    await provider.syncDailyBarsForceFull();
+
+    expect(syncService.syncCallCount, 1);
+  });
 
   test(
     'refresh should not trigger daily sync unless explicit action is called',

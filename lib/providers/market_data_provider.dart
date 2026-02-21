@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:math' as math;
@@ -24,6 +25,7 @@ import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
 import 'package:stock_rtwatcher/services/power_system_indicator_service.dart';
 import 'package:stock_rtwatcher/services/industry_ema_breadth_service.dart';
+import 'package:stock_rtwatcher/services/china_trading_calendar_service.dart';
 
 /// 在隔离线程中解析股票监控数据 JSON
 List<StockMonitorData> _parseMarketDataJson(String jsonStr) {
@@ -45,6 +47,8 @@ class MarketDataProvider extends ChangeNotifier {
   final TdxPool _pool;
   final StockService _stockService;
   final IndustryService _industryService;
+  final ChinaTradingCalendarService _tradingCalendarService;
+  final DateTime Function() _nowProvider;
   final DailyKlineCacheStore _dailyKlineCacheStore;
   final MarketSnapshotStore _marketSnapshotStore;
   late final DailyKlineReadService _dailyKlineReadService;
@@ -79,6 +83,7 @@ class MarketDataProvider extends ChangeNotifier {
   static const int _breakoutDetectMaxConcurrency = 6;
   static const String _minuteDataCacheKey = 'minute_data_cache_v1';
   static const String _minuteDataDateKey = 'minute_data_date';
+  static const Duration _calendarRemoteRefreshTimeout = Duration(seconds: 3);
 
   // Watchlist codes for priority sorting
   Set<String> _watchlistCodes = {};
@@ -103,9 +108,14 @@ class MarketDataProvider extends ChangeNotifier {
     DailyKlineReadService? dailyKlineReadService,
     DailyKlineSyncService? dailyKlineSyncService,
     MarketSnapshotStore? marketSnapshotStore,
+    ChinaTradingCalendarService? tradingCalendarService,
+    DateTime Function()? nowProvider,
   }) : _pool = pool,
        _stockService = stockService,
        _industryService = industryService,
+       _tradingCalendarService =
+           tradingCalendarService ?? const ChinaTradingCalendarService(),
+       _nowProvider = nowProvider ?? DateTime.now,
        _dailyKlineCacheStore = dailyBarsFileStorage ?? DailyKlineCacheStore(),
        _marketSnapshotStore = marketSnapshotStore ?? MarketSnapshotStore() {
     final checkpointStore =
@@ -325,6 +335,8 @@ class MarketDataProvider extends ChangeNotifier {
 
   /// 从缓存加载数据
   Future<void> loadFromCache() async {
+    await _loadCachedTradingCalendarBestEffort();
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final timeStr = prefs.getString('market_data_time');
@@ -478,6 +490,8 @@ class MarketDataProvider extends ChangeNotifier {
       '[MarketDataProvider.refresh] Called at ${DateTime.now()}, isLoading=$_isLoading',
     );
     if (_isLoading) return;
+
+    unawaited(_refreshRemoteTradingCalendarBestEffort());
 
     _isLoading = true;
     _errorMessage = null;
@@ -994,7 +1008,7 @@ class MarketDataProvider extends ChangeNotifier {
       return false;
     }
 
-    final now = DateTime.now();
+    final now = _nowProvider();
     final today = DateTime(now.year, now.month, now.day);
     final dataDate = DateTime(
       _dataDate!.year,
@@ -1007,8 +1021,14 @@ class MarketDataProvider extends ChangeNotifier {
       return true;
     }
 
-    // 非交易日（周末）：允许复用最近一个工作日的缓存
-    if (now.weekday == DateTime.saturday || now.weekday == DateTime.sunday) {
+    // 非交易日（周末/节假日）：允许复用最近一个交易日缓存。
+    if (!_tradingCalendarService.isTradingDay(today)) {
+      final latestTradingDay = _tradingCalendarService
+          .latestTradingDayOnOrBefore(today);
+      if (latestTradingDay != null && dataDate == latestTradingDay) {
+        return true;
+      }
+
       final lastWeekday = _latestWeekday(today);
       return dataDate == lastWeekday;
     }
@@ -1027,6 +1047,24 @@ class MarketDataProvider extends ChangeNotifier {
       cursor = cursor.subtract(const Duration(days: 1));
     }
     return cursor;
+  }
+
+  Future<void> _loadCachedTradingCalendarBestEffort() async {
+    try {
+      await _tradingCalendarService.loadCachedCalendar();
+    } catch (e) {
+      debugPrint('Failed to load cached trading calendar: $e');
+    }
+  }
+
+  Future<void> _refreshRemoteTradingCalendarBestEffort() async {
+    try {
+      await _tradingCalendarService.refreshRemoteCalendar().timeout(
+        _calendarRemoteRefreshTimeout,
+      );
+    } catch (e) {
+      debugPrint('Failed to refresh remote trading calendar: $e');
+    }
   }
 
   /// 检测高质量回踩（只读日K文件缓存，不触发网络）

@@ -22,6 +22,7 @@ import 'package:stock_rtwatcher/data/repository/minute_sync_planner.dart';
 import 'package:stock_rtwatcher/data/repository/minute_sync_writer.dart';
 import 'package:stock_rtwatcher/data/models/minute_sync_state.dart';
 import 'package:stock_rtwatcher/config/minute_sync_config.dart';
+import 'package:stock_rtwatcher/services/china_trading_calendar_service.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -411,6 +412,7 @@ void main() {
   late KLineMetadataManager manager;
   late MarketDatabase database;
   late KLineFileStorage fileStorage;
+  late KLineFileStorageV2 dailyFileStorage;
   late Directory testDir;
 
   setUpAll(() {
@@ -429,7 +431,7 @@ void main() {
       fileStorage = KLineFileStorage();
       fileStorage.setBaseDirPathForTesting(testDir.path);
       await fileStorage.initialize();
-      final dailyFileStorage = KLineFileStorageV2();
+      dailyFileStorage = KLineFileStorageV2();
       dailyFileStorage.setBaseDirPathForTesting(testDir.path);
       await dailyFileStorage.initialize();
 
@@ -859,6 +861,39 @@ void main() {
         expect(freshness['000011'], isA<Fresh>());
 
         await holidayAwareRepository.dispose();
+      },
+    );
+
+    test(
+      'should treat holiday-only unchecked range as fresh using authoritative calendar even without local baseline',
+      () async {
+        final fixedNow = DateTime(2026, 10, 8, 10, 0); // National Day break
+        final latestCheckedDate = DateTime(2026, 9, 30);
+
+        final dateCheckStorage = DateCheckStorage(database: database);
+        await dateCheckStorage.saveCheckStatus(
+          stockCode: '000013',
+          dataType: KLineDataType.oneMinute,
+          date: latestCheckedDate,
+          status: DayDataStatus.complete,
+          barCount: 230,
+        );
+
+        final repository = MarketDataRepository(
+          metadataManager: manager,
+          dateCheckStorage: dateCheckStorage,
+          nowProvider: () => fixedNow,
+          tradingCalendarService: const ChinaTradingCalendarService(),
+        );
+
+        final freshness = await repository.checkFreshness(
+          stockCodes: const ['000013'],
+          dataType: KLineDataType.oneMinute,
+        );
+
+        expect(freshness['000013'], isA<Fresh>());
+
+        await repository.dispose();
       },
     );
 
@@ -4011,41 +4046,42 @@ void main() {
       expect(result.errors['000003'], 'persist failed: timeout');
     });
 
-    test('propagates fetch-side errors into final FetchResult errors', () async {
-      final tradingDay = DateTime(2026, 2, 13);
+    test(
+      'propagates fetch-side errors into final FetchResult errors',
+      () async {
+        final tradingDay = DateTime(2026, 2, 13);
 
-      fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
-        stockCode: '000001',
-        mode: MinuteSyncMode.bootstrap,
-        datesToFetch: [tradingDay],
-      );
-      fakePlanner.plansByStock['000002'] = MinuteFetchPlan(
-        stockCode: '000002',
-        mode: MinuteSyncMode.bootstrap,
-        datesToFetch: [tradingDay],
-      );
+        fakePlanner.plansByStock['000001'] = MinuteFetchPlan(
+          stockCode: '000001',
+          mode: MinuteSyncMode.bootstrap,
+          datesToFetch: [tradingDay],
+        );
+        fakePlanner.plansByStock['000002'] = MinuteFetchPlan(
+          stockCode: '000002',
+          mode: MinuteSyncMode.bootstrap,
+          datesToFetch: [tradingDay],
+        );
 
-      fakeAdapter.barsToReturn = {
-        '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
-        '000002': const [],
-      };
-      fakeAdapter.errorsToReturn = {
-        '000002': 'fetch failed: timeout',
-      };
-      fakeWriter.resultToReturn = const MinuteWriteResult(
-        updatedStocks: ['000001'],
-        totalRecords: 1,
-      );
+        fakeAdapter.barsToReturn = {
+          '000001': [buildMinuteBar(DateTime(2026, 2, 13, 9, 30))],
+          '000002': const [],
+        };
+        fakeAdapter.errorsToReturn = {'000002': 'fetch failed: timeout'};
+        fakeWriter.resultToReturn = const MinuteWriteResult(
+          updatedStocks: ['000001'],
+          totalRecords: 1,
+        );
 
-      final result = await repository.fetchMissingData(
-        stockCodes: ['000001', '000002'],
-        dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
-        dataType: KLineDataType.oneMinute,
-      );
+        final result = await repository.fetchMissingData(
+          stockCodes: ['000001', '000002'],
+          dateRange: DateRange(tradingDay, DateTime(2026, 2, 13, 23, 59, 59)),
+          dataType: KLineDataType.oneMinute,
+        );
 
-      expect(result.successCount, 1);
-      expect(result.failureCount, 1);
-      expect(result.errors['000002'], 'fetch failed: timeout');
-    });
+        expect(result.successCount, 1);
+        expect(result.failureCount, 1);
+        expect(result.errors['000002'], 'fetch failed: timeout');
+      },
+    );
   });
 }

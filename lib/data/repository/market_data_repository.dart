@@ -14,6 +14,7 @@ import '../storage/minute_sync_state_storage.dart';
 import '../../config/minute_sync_config.dart';
 import '../../models/kline.dart';
 import '../../models/quote.dart';
+import '../../services/china_trading_calendar_service.dart';
 import '../../services/tdx_client.dart';
 import 'data_repository.dart';
 import 'kline_fetch_adapter.dart';
@@ -34,6 +35,7 @@ class MarketDataRepository implements DataRepository {
   late final MinuteSyncConfig _minuteSyncConfig;
   late int _runtimeMinuteWriteConcurrency;
   final DateTime Function() _nowProvider;
+  final ChinaTradingCalendarService _tradingCalendarService;
   final StreamController<DataStatus> _statusController =
       StreamController<DataStatus>.broadcast();
   final StreamController<DataUpdatedEvent> _dataUpdatedController =
@@ -65,10 +67,13 @@ class MarketDataRepository implements DataRepository {
     MinuteSyncWriter? minuteSyncWriter,
     MinuteSyncConfig? minuteSyncConfig,
     DateTime Function()? nowProvider,
+    ChinaTradingCalendarService? tradingCalendarService,
   }) : _metadataManager = metadataManager ?? KLineMetadataManager(),
        _tdxClient = tdxClient ?? TdxClient(),
        _dateCheckStorage = dateCheckStorage ?? DateCheckStorage(),
-       _nowProvider = nowProvider ?? DateTime.now {
+       _nowProvider = nowProvider ?? DateTime.now,
+       _tradingCalendarService =
+           tradingCalendarService ?? const ChinaTradingCalendarService() {
     final resolvedMinuteFetchAdapter =
         minuteFetchAdapter ?? _LegacyMinuteFetchAdapter(client: _tdxClient);
     _minuteSyncStateStorage =
@@ -286,7 +291,10 @@ class MarketDataRepository implements DataRepository {
         continue;
       }
 
-      if (_isWeekendOnlyRange(uncheckedStart, uncheckedEndDay)) {
+      if (_tradingCalendarService.isNonTradingRange(
+        uncheckedStart,
+        uncheckedEndDay,
+      )) {
         result[stockCode] = const Fresh();
         continue;
       }
@@ -295,6 +303,14 @@ class MarketDataRepository implements DataRepository {
       final uncheckedTradingDates = await getTradingDates(uncheckedRange);
 
       if (uncheckedTradingDates.isEmpty) {
+        if (_tradingCalendarService.isNonTradingRange(
+          uncheckedStart,
+          uncheckedEndDay,
+        )) {
+          result[stockCode] = const Fresh();
+          continue;
+        }
+
         final hasReliableTradingContext = await _hasReliableTradingContext(
           uncheckedStartDay: uncheckedStart,
           uncheckedEndDay: uncheckedEndDay,
@@ -1464,8 +1480,9 @@ class MarketDataRepository implements DataRepository {
     required KLineDataType dataType,
   }) async {
     final isIndex = _isIndexCode(stockCode);
-    final market =
-        isIndex ? _mapIndexCodeToMarket(stockCode) : _mapCodeToMarket(stockCode);
+    final market = isIndex
+        ? _mapIndexCodeToMarket(stockCode)
+        : _mapCodeToMarket(stockCode);
     final category = _mapDataTypeToCategory(dataType);
 
     const batchSize = 800; // 每批数量
@@ -1656,23 +1673,6 @@ class MarketDataRepository implements DataRepository {
     return tradingDates.length >= minExpectedTradingDates;
   }
 
-  bool _isWeekendOnlyRange(DateTime startDay, DateTime endDay) {
-    if (startDay.isAfter(endDay)) return false;
-
-    var cursor = DateTime(startDay.year, startDay.month, startDay.day);
-    final normalizedEnd = DateTime(endDay.year, endDay.month, endDay.day);
-
-    while (!cursor.isAfter(normalizedEnd)) {
-      final weekday = cursor.weekday;
-      if (weekday != DateTime.saturday && weekday != DateTime.sunday) {
-        return false;
-      }
-      cursor = cursor.add(const Duration(days: 1));
-    }
-
-    return true;
-  }
-
   List<DateTime> _buildFallbackTradingDatesForMinutePlan({
     required DateRange dateRange,
     required DateTime today,
@@ -1694,16 +1694,19 @@ class MarketDataRepository implements DataRepository {
       return const [];
     }
 
-    final candidatesInRange = _buildWeekdayDates(startDay, endDay);
+    final candidatesInRange = _buildCalendarTradingDates(startDay, endDay);
     if (candidatesInRange.isNotEmpty) {
       return candidatesInRange;
     }
 
     final fallbackStart = endDay.subtract(const Duration(days: 7));
-    return _buildWeekdayDates(fallbackStart, endDay);
+    return _buildCalendarTradingDates(fallbackStart, endDay);
   }
 
-  List<DateTime> _buildWeekdayDates(DateTime startDay, DateTime endDay) {
+  List<DateTime> _buildCalendarTradingDates(
+    DateTime startDay,
+    DateTime endDay,
+  ) {
     if (startDay.isAfter(endDay)) {
       return const [];
     }
@@ -1713,8 +1716,7 @@ class MarketDataRepository implements DataRepository {
     final normalizedEnd = DateTime(endDay.year, endDay.month, endDay.day);
 
     while (!cursor.isAfter(normalizedEnd)) {
-      if (cursor.weekday >= DateTime.monday &&
-          cursor.weekday <= DateTime.friday) {
+      if (_tradingCalendarService.isTradingDay(cursor)) {
         days.add(cursor);
       }
       cursor = cursor.add(const Duration(days: 1));
