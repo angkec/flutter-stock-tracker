@@ -103,6 +103,10 @@ class _PowerSystemSettingsScreenState extends State<PowerSystemSettingsScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('$_scopeLabel Power System重算完成')));
+
+      // 重算完成后自动刷新列表数据
+      final provider = context.read<MarketDataProvider>();
+      await provider.refresh();
     } catch (e) {
       if (!mounted) return;
       Navigator.of(context).pop();
