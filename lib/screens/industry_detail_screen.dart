@@ -10,11 +10,9 @@ import 'package:stock_rtwatcher/models/industry_buildup_stage.dart';
 import 'package:stock_rtwatcher/models/industry_buildup_tag_config.dart';
 import 'package:stock_rtwatcher/models/industry_ema_breadth.dart';
 import 'package:stock_rtwatcher/models/industry_ema_breadth_config.dart';
-import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/providers/market_data_provider.dart';
 import 'package:stock_rtwatcher/services/industry_buildup_service.dart';
-import 'package:stock_rtwatcher/services/industry_trend_service.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/services/sw_industry_index_mapping_service.dart';
 import 'package:stock_rtwatcher/widgets/industry_ema_breadth_subchart.dart';
@@ -52,11 +50,15 @@ class _StickyHeaderDelegate extends SliverPersistentHeaderDelegate {
 /// 行业详情页
 class IndustryDetailScreen extends StatefulWidget {
   final String industry;
+  final List<String>? industryList;
+  final int initialIndex;
   final IndustryEmaBreadthConfigStore? emaBreadthConfigStoreForTest;
 
   const IndustryDetailScreen({
     super.key,
     required this.industry,
+    this.industryList,
+    this.initialIndex = 0,
     this.emaBreadthConfigStoreForTest,
   });
 
@@ -65,6 +67,10 @@ class IndustryDetailScreen extends StatefulWidget {
 }
 
 class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
+  late List<String> _industries;
+  late int _currentIndex;
+  late String _currentIndustry;
+  PageController? _pageController;
   DateTime? _ratioSortDate;
   Map<String, double> _ratioSortValues = const {};
   bool _isRatioSortLoading = false;
@@ -86,17 +92,60 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _initializeIndustryContext();
     _loadEmaBreadthCard();
     _loadSwIndustryKline();
+  }
+
+  void _initializeIndustryContext() {
+    final industries =
+        (widget.industryList == null || widget.industryList!.isEmpty)
+        ? <String>[widget.industry]
+        : widget.industryList!;
+    _industries = industries;
+    _currentIndex = widget.initialIndex.clamp(0, _industries.length - 1);
+    _currentIndustry = _industries[_currentIndex];
+    if (_industries.length > 1) {
+      _pageController = PageController(initialPage: _currentIndex);
+    }
   }
 
   @override
   void didUpdateWidget(covariant IndustryDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.industry != widget.industry) {
+    if (oldWidget.industry != widget.industry ||
+        oldWidget.industryList != widget.industryList ||
+        oldWidget.initialIndex != widget.initialIndex) {
+      _pageController?.dispose();
+      _pageController = null;
+      _initializeIndustryContext();
+      _ratioSortDate = null;
+      _ratioSortValues = const {};
+      _ratioSortError = null;
       _loadEmaBreadthCard();
       _loadSwIndustryKline();
     }
+  }
+
+  @override
+  void dispose() {
+    _pageController?.dispose();
+    super.dispose();
+  }
+
+  void _switchToIndustry(int index) {
+    if (index < 0 || index >= _industries.length || index == _currentIndex) {
+      return;
+    }
+    setState(() {
+      _currentIndex = index;
+      _currentIndustry = _industries[index];
+      _ratioSortDate = null;
+      _ratioSortValues = const {};
+      _ratioSortError = null;
+    });
+    _loadEmaBreadthCard();
+    _loadSwIndustryKline();
   }
 
   Future<void> _loadSwIndustryKline() async {
@@ -111,7 +160,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
     try {
       final mappingService = context.read<SwIndustryIndexMappingService>();
       final tsCode = await mappingService.resolveTsCodeByIndustry(
-        widget.industry,
+        _currentIndustry,
       );
       if (!mounted || requestToken != _swKlineRequestToken) {
         return;
@@ -243,7 +292,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
             ),
           ),
           KLineChartWithSubCharts(
-            stockCode: _swTsCode ?? widget.industry,
+            stockCode: _swTsCode ?? _currentIndustry,
             bars: _swKlines,
             chartHeight: mainChartHeight,
             subCharts: [
@@ -265,6 +314,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
 
   Future<void> _loadEmaBreadthCard() async {
     final requestToken = ++_emaBreadthRequestToken;
+    final marketProvider = context.read<MarketDataProvider>();
 
     IndustryEmaBreadthConfig config = IndustryEmaBreadthConfig.defaultConfig;
     try {
@@ -277,11 +327,9 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
 
     IndustryEmaBreadthSeries? series;
     try {
-      final service = context
-          .read<MarketDataProvider>()
-          .industryEmaBreadthService;
+      final service = marketProvider.industryEmaBreadthService;
       if (service != null) {
-        series = await service.getCachedSeries(widget.industry);
+        series = await service.getCachedSeries(_currentIndustry);
       }
     } catch (_) {
       series = null;
@@ -294,27 +342,6 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
       _emaBreadthConfig = config;
       _emaBreadthSeries = series;
     });
-  }
-
-  /// 获取行业趋势数据（历史 + 今日）
-  List<DailyRatioPoint> _getTrendData(
-    IndustryTrendService trendService,
-    DailyRatioPoint? todayPoint,
-  ) {
-    final historicalData = trendService.getTrend(widget.industry);
-    final points = <DailyRatioPoint>[];
-
-    // 添加历史数据（最近30天）
-    if (historicalData != null && historicalData.points.isNotEmpty) {
-      points.addAll(historicalData.points);
-    }
-
-    // 添加今日数据
-    if (todayPoint != null) {
-      points.add(todayPoint);
-    }
-
-    return points;
   }
 
   Future<void> _onRatioSortDateSelected(
@@ -454,22 +481,92 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final hasIndustryList = _industries.length > 1;
+
+    return hasIndustryList
+        ? PageView.builder(
+            controller: _pageController,
+            itemCount: _industries.length,
+            onPageChanged: _switchToIndustry,
+            itemBuilder: (context, index) {
+              if (index == _currentIndex) {
+                return _buildDetailScaffold(context);
+              }
+              return _buildSwipePlaceholder(context, _industries[index]);
+            },
+          )
+        : _buildDetailScaffold(context);
+  }
+
+  Widget _buildSwipePlaceholder(BuildContext context, String industryName) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: const ValueKey('industry_detail_swipe_placeholder'),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [scheme.surface, scheme.surfaceContainer],
+        ),
+      ),
+      child: Center(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0.0, end: 1.0),
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          builder: (context, value, child) {
+            return Opacity(
+              opacity: 0.55 + value * 0.45,
+              child: Transform.scale(scale: 0.96 + value * 0.04, child: child),
+            );
+          },
+          child: Container(
+            key: const ValueKey('industry_detail_swipe_placeholder_card'),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: scheme.outlineVariant),
+              boxShadow: [
+                BoxShadow(
+                  color: scheme.shadow.withValues(alpha: 0.08),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Text(
+              '即将进入 $industryName',
+              style: TextStyle(
+                fontSize: 12,
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailScaffold(BuildContext context) {
     final marketProvider = context.watch<MarketDataProvider>();
     final buildUpService = context.watch<IndustryBuildUpService>();
+    final hasIndustryList = _industries.length > 1;
 
-    if (!buildUpService.hasIndustryHistory(widget.industry) &&
-        !buildUpService.isIndustryHistoryLoading(widget.industry)) {
+    if (!buildUpService.hasIndustryHistory(_currentIndustry) &&
+        !buildUpService.isIndustryHistoryLoading(_currentIndustry)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (context.mounted) {
           context.read<IndustryBuildUpService>().loadIndustryHistory(
-            widget.industry,
+            _currentIndustry,
           );
         }
       });
     }
-    final buildUpHistory = buildUpService.getIndustryHistory(widget.industry);
+    final buildUpHistory = buildUpService.getIndustryHistory(_currentIndustry);
     final isHistoryLoading = buildUpService.isIndustryHistoryLoading(
-      widget.industry,
+      _currentIndustry,
     );
     final tagConfig = buildUpService.tagConfig;
     final ratioSortDates = _buildRatioSortDates(
@@ -480,7 +577,7 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
 
     // 筛选该行业的股票
     final baseIndustryStocks = marketProvider.allData
-        .where((data) => data.industry == widget.industry)
+        .where((data) => data.industry == _currentIndustry)
         .toList();
     final industryStocks = _buildSortedIndustryStocks(baseIndustryStocks);
 
@@ -520,7 +617,20 @@ class _IndustryDetailScreenState extends State<IndustryDetailScreen> {
                   floating: false,
                   pinned: true,
                   forceElevated: innerBoxIsScrolled,
-                  title: Text(widget.industry),
+                  title: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_currentIndustry),
+                      if (hasIndustryList)
+                        Text(
+                          '${_currentIndex + 1} / ${_industries.length}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.normal,
+                          ),
+                        ),
+                    ],
+                  ),
                   flexibleSpace: FlexibleSpaceBar(
                     collapseMode: CollapseMode.pin,
                     background: SafeArea(

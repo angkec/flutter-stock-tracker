@@ -664,6 +664,7 @@ class _IndustryScreenState extends State<IndustryScreen>
                 context,
                 filteredStats[index],
                 index,
+                filteredStats,
                 trendService,
                 todayTrend,
               ),
@@ -678,6 +679,7 @@ class _IndustryScreenState extends State<IndustryScreen>
     BuildContext context,
     IndustryStats stats,
     int index,
+    List<IndustryStats> filteredStats,
     IndustryTrendService trendService,
     Map<String, DailyRatioPoint> todayTrend,
   ) {
@@ -688,9 +690,16 @@ class _IndustryScreenState extends State<IndustryScreen>
 
     return GestureDetector(
       onTap: () {
+        final industryList = filteredStats
+            .map((item) => item.name)
+            .toList(growable: false);
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => IndustryDetailScreen(industry: stats.name),
+            builder: (_) => IndustryDetailScreen(
+              industry: stats.name,
+              industryList: industryList,
+              initialIndex: index,
+            ),
           ),
         );
       },

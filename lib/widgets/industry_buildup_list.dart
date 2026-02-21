@@ -214,10 +214,15 @@ class _IndustryBuildupListState extends State<IndustryBuildupList> {
 
                 return GestureDetector(
                   onTap: () {
+                    final industryList = trendRows
+                        .map((row) => row.record.industry)
+                        .toList(growable: false);
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => IndustryDetailScreen(
                           industry: item.record.industry,
+                          industryList: industryList,
+                          initialIndex: index,
                         ),
                       ),
                     );
@@ -402,10 +407,16 @@ class _IndustryBuildupListState extends State<IndustryBuildupList> {
               final interpretation = _interpretRecord(record, tagConfig);
               return GestureDetector(
                 onTap: () {
+                  final industryList = rows
+                      .map((row) => row.record.industry)
+                      .toList(growable: false);
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) =>
-                          IndustryDetailScreen(industry: record.industry),
+                      builder: (_) => IndustryDetailScreen(
+                        industry: record.industry,
+                        industryList: industryList,
+                        initialIndex: index,
+                      ),
                     ),
                   );
                 },
@@ -678,10 +689,15 @@ class _BuildupOverviewPanel extends StatelessWidget {
                                     : '${record.rankArrow}${record.rankChange.abs()}';
                                 return GestureDetector(
                                   onTap: () {
+                                    final industryList = board
+                                        .map((row) => row.record.industry)
+                                        .toList(growable: false);
                                     Navigator.of(context).push(
                                       MaterialPageRoute(
                                         builder: (_) => IndustryDetailScreen(
                                           industry: record.industry,
+                                          industryList: industryList,
+                                          initialIndex: index,
                                         ),
                                       ),
                                     );

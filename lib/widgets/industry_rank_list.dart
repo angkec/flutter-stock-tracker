@@ -39,10 +39,7 @@ class IndustryRankList extends StatelessWidget {
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
             const SizedBox(height: 16),
-            Text(
-              '暂无排名数据',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('暂无排名数据', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
               '请先在数据管理页面拉取历史K线数据',
@@ -61,7 +58,9 @@ class IndustryRankList extends StatelessWidget {
       );
     }
 
-    final displayHistories = fullHeight ? histories : histories.take(20).toList();
+    final displayHistories = fullHeight
+        ? histories
+        : histories.take(20).toList();
 
     return Column(
       children: [
@@ -71,18 +70,23 @@ class IndustryRankList extends StatelessWidget {
           child: Row(
             children: [
               if (!fullHeight)
-                const Text('排名趋势', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                const Text(
+                  '排名趋势',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
               const Spacer(),
-              ..._dayOptions.map((days) => Padding(
-                padding: const EdgeInsets.only(left: 4),
-                child: _DayChip(
-                  days: days,
-                  isSelected: config.displayDays == days,
-                  onTap: () => rankService.updateConfig(
-                    config.copyWith(displayDays: days),
+              ..._dayOptions.map(
+                (days) => Padding(
+                  padding: const EdgeInsets.only(left: 4),
+                  child: _DayChip(
+                    days: days,
+                    isSelected: config.displayDays == days,
+                    onTap: () => rankService.updateConfig(
+                      config.copyWith(displayDays: days),
+                    ),
                   ),
                 ),
-              )),
+              ),
             ],
           ),
         ),
@@ -91,13 +95,24 @@ class IndustryRankList extends StatelessWidget {
           height: 28,
           padding: const EdgeInsets.symmetric(horizontal: 8),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            color: Theme.of(
+              context,
+            ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
           ),
           child: const Row(
             children: [
-              SizedBox(width: 28, child: Text('排名', style: TextStyle(fontSize: 10))),
-              SizedBox(width: 56, child: Text('行业', style: TextStyle(fontSize: 10))),
-              SizedBox(width: 40, child: Text('量比', style: TextStyle(fontSize: 10))),
+              SizedBox(
+                width: 28,
+                child: Text('排名', style: TextStyle(fontSize: 10)),
+              ),
+              SizedBox(
+                width: 56,
+                child: Text('行业', style: TextStyle(fontSize: 10)),
+              ),
+              SizedBox(
+                width: 40,
+                child: Text('量比', style: TextStyle(fontSize: 10)),
+              ),
               Spacer(),
               SizedBox(
                 width: 64,
@@ -121,12 +136,19 @@ class IndustryRankList extends StatelessWidget {
               itemExtent: 36,
               itemBuilder: (context, index) {
                 final history = displayHistories[index];
+                final industryList = displayHistories
+                    .map((item) => item.industryName)
+                    .toList(growable: false);
                 return _RankRow(
                   history: history,
                   config: config,
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => IndustryDetailScreen(industry: history.industryName),
+                      builder: (_) => IndustryDetailScreen(
+                        industry: history.industryName,
+                        industryList: industryList,
+                        initialIndex: index,
+                      ),
                     ),
                   ),
                 );
@@ -214,8 +236,8 @@ class _RankRow extends StatelessWidget {
               color: isHot
                   ? Colors.orange
                   : isRecovery
-                      ? Colors.cyan
-                      : Colors.transparent,
+                  ? Colors.cyan
+                  : Colors.transparent,
               width: 3,
             ),
           ),
@@ -250,15 +272,14 @@ class _RankRow extends StatelessWidget {
                 ratio.toStringAsFixed(2),
                 style: TextStyle(
                   fontSize: 11,
-                  color: ratio >= 1.0 ? const Color(0xFFFF4444) : const Color(0xFF00AA00),
+                  color: ratio >= 1.0
+                      ? const Color(0xFFFF4444)
+                      : const Color(0xFF00AA00),
                 ),
               ),
             ),
             // 排名变化标记
-            SizedBox(
-              width: 28,
-              child: _ChangeIndicator(change: change),
-            ),
+            SizedBox(width: 28, child: _ChangeIndicator(change: change)),
             // Sparkline
             Expanded(
               child: Align(
@@ -269,7 +290,10 @@ class _RankRow extends StatelessWidget {
                         width: 56,
                         height: 20,
                       )
-                    : const Text('-', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    : const Text(
+                        '-',
+                        style: TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
               ),
             ),
           ],
@@ -287,7 +311,10 @@ class _ChangeIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (change == 0) {
-      return const Text('→', style: TextStyle(fontSize: 10, color: Colors.grey));
+      return const Text(
+        '→',
+        style: TextStyle(fontSize: 10, color: Colors.grey),
+      );
     }
 
     final isUp = change > 0;

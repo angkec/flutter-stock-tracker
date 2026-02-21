@@ -366,6 +366,135 @@ IndustryBuildupDailyRecord _record(
 }
 
 void main() {
+  testWidgets(
+    'supports horizontal swipe between industries when list context is provided',
+    (tester) async {
+      final repository = _DummyRepository();
+      final marketProvider = _FakeMarketDataProvider(
+        data: [
+          StockMonitorData(
+            stock: Stock(code: '600001', name: '测试A', market: 1),
+            ratio: 1.2,
+            changePercent: 2.5,
+            industry: '半导体',
+          ),
+          StockMonitorData(
+            stock: Stock(code: '600002', name: '测试B', market: 1),
+            ratio: 0.8,
+            changePercent: -1.0,
+            industry: '证券',
+          ),
+        ],
+      );
+      final trendService = _FakeTrendService();
+      final buildUpService = _FakeIndustryBuildUpService(
+        historyByIndustry: {
+          '半导体': [_record(DateTime(2026, 2, 6), rank: 1)],
+          '证券': [_record(DateTime(2026, 2, 6), rank: 1)],
+        },
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<DataRepository>.value(value: repository),
+            ChangeNotifierProvider<MarketDataProvider>.value(
+              value: marketProvider,
+            ),
+            ChangeNotifierProvider<IndustryTrendService>.value(
+              value: trendService,
+            ),
+            ChangeNotifierProvider<IndustryBuildUpService>.value(
+              value: buildUpService,
+            ),
+          ],
+          child: const MaterialApp(
+            home: IndustryDetailScreen(
+              industry: '半导体',
+              industryList: ['半导体', '证券', '银行'],
+              initialIndex: 0,
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('半导体'), findsWidgets);
+      expect(find.text('证券'), findsNothing);
+
+      await tester.drag(find.byType(PageView).first, const Offset(-120, 0));
+      await tester.pump(const Duration(milliseconds: 120));
+
+      expect(
+        find.byKey(const ValueKey('industry_detail_swipe_placeholder_card')),
+        findsWidgets,
+      );
+      expect(find.text('即将进入 证券'), findsWidgets);
+
+      await tester.fling(
+        find.byType(PageView).first,
+        const Offset(-400, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('证券'), findsWidgets);
+    },
+  );
+
+  testWidgets(
+    'keeps single-industry behavior when industryList is not provided',
+    (tester) async {
+      final repository = _DummyRepository();
+      final marketProvider = _FakeMarketDataProvider(
+        data: [
+          StockMonitorData(
+            stock: Stock(code: '600001', name: '测试A', market: 1),
+            ratio: 1.2,
+            changePercent: 2.5,
+            industry: '半导体',
+          ),
+        ],
+      );
+      final trendService = _FakeTrendService();
+      final buildUpService = _FakeIndustryBuildUpService(
+        historyByIndustry: {
+          '半导体': [_record(DateTime(2026, 2, 6), rank: 1)],
+        },
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<DataRepository>.value(value: repository),
+            ChangeNotifierProvider<MarketDataProvider>.value(
+              value: marketProvider,
+            ),
+            ChangeNotifierProvider<IndustryTrendService>.value(
+              value: trendService,
+            ),
+            ChangeNotifierProvider<IndustryBuildUpService>.value(
+              value: buildUpService,
+            ),
+          ],
+          child: const MaterialApp(home: IndustryDetailScreen(industry: '半导体')),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('半导体'), findsWidgets);
+      await tester.drag(
+        find.byType(NestedScrollView).first,
+        const Offset(-320, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('半导体'), findsWidgets);
+      expect(find.text('证券'), findsNothing);
+    },
+  );
+
   testWidgets('行业详情页显示建仓雷达历史并触发加载', (tester) async {
     final repository = _DummyRepository();
     final marketProvider = _FakeMarketDataProvider(
