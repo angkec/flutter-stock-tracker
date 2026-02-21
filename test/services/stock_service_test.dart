@@ -1,34 +1,44 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
+import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 
 /// 生成指定数量的K线
-List<KLine> generateBars(int upCount, int downCount, {double upVolume = 100, double downVolume = 100}) {
+List<KLine> generateBars(
+  int upCount,
+  int downCount, {
+  double upVolume = 100,
+  double downVolume = 100,
+}) {
   final bars = <KLine>[];
   final now = DateTime.now();
 
   for (var i = 0; i < upCount; i++) {
-    bars.add(KLine(
-      datetime: now,
-      open: 10,
-      close: 11,
-      high: 11,
-      low: 10,
-      volume: upVolume,
-      amount: 0,
-    ));
+    bars.add(
+      KLine(
+        datetime: now,
+        open: 10,
+        close: 11,
+        high: 11,
+        low: 10,
+        volume: upVolume,
+        amount: 0,
+      ),
+    );
   }
 
   for (var i = 0; i < downCount; i++) {
-    bars.add(KLine(
-      datetime: now,
-      open: 11,
-      close: 10,
-      high: 11,
-      low: 10,
-      volume: downVolume,
-      amount: 0,
-    ));
+    bars.add(
+      KLine(
+        datetime: now,
+        open: 11,
+        close: 10,
+        high: 11,
+        low: 10,
+        volume: downVolume,
+        amount: 0,
+      ),
+    );
   }
 
   return bars;
@@ -84,21 +94,101 @@ void main() {
 
         // 8 up bars
         for (var i = 0; i < 8; i++) {
-          bars.add(KLine(datetime: now, open: 10, close: 11, high: 11, low: 10, volume: 100, amount: 0));
+          bars.add(
+            KLine(
+              datetime: now,
+              open: 10,
+              close: 11,
+              high: 11,
+              low: 10,
+              volume: 100,
+              amount: 0,
+            ),
+          );
         }
         // 5 flat bars (should be ignored)
         for (var i = 0; i < 5; i++) {
-          bars.add(KLine(datetime: now, open: 11, close: 11, high: 11, low: 11, volume: 50, amount: 0));
+          bars.add(
+            KLine(
+              datetime: now,
+              open: 11,
+              close: 11,
+              high: 11,
+              low: 11,
+              volume: 50,
+              amount: 0,
+            ),
+          );
         }
         // 7 down bars
         for (var i = 0; i < 7; i++) {
-          bars.add(KLine(datetime: now, open: 11, close: 10, high: 11, low: 10, volume: 100, amount: 0));
+          bars.add(
+            KLine(
+              datetime: now,
+              open: 11,
+              close: 10,
+              high: 11,
+              low: 10,
+              volume: 100,
+              amount: 0,
+            ),
+          );
         }
 
         // upVolume = 800, downVolume = 700
         final ratio = StockService.calculateRatio(bars);
         expect(ratio, isNotNull);
         expect(ratio, closeTo(800 / 700, 0.001));
+      });
+    });
+
+    group('StockMonitorData serialization', () {
+      final stock = Stock(code: '000001', name: 'PingAn', market: 0);
+
+      test('copyWith updates isPowerSystemUp', () {
+        final original = StockMonitorData(
+          stock: stock,
+          ratio: 1.2,
+          changePercent: 2.5,
+        );
+
+        final updated = original.copyWith(isPowerSystemUp: true);
+
+        expect(updated.isPowerSystemUp, isTrue);
+        expect(updated.isBreakout, original.isBreakout);
+        expect(updated.isPullback, original.isPullback);
+      });
+
+      test('toJson/fromJson persists isPowerSystemUp', () {
+        final original = StockMonitorData(
+          stock: stock,
+          ratio: 1.5,
+          changePercent: 3.0,
+          isPowerSystemUp: true,
+        );
+
+        final restored = StockMonitorData.fromJson(original.toJson());
+
+        expect(restored.isPowerSystemUp, isTrue);
+        expect(restored.stock.code, original.stock.code);
+        expect(restored.ratio, original.ratio);
+      });
+
+      test('fromJson defaults isPowerSystemUp to false', () {
+        final json = {
+          'stock': stock.toJson(),
+          'ratio': 1.0,
+          'changePercent': 0.5,
+          'industry': null,
+          'isPullback': false,
+          'isBreakout': false,
+          'upVolume': 0,
+          'downVolume': 0,
+        };
+
+        final restored = StockMonitorData.fromJson(json);
+
+        expect(restored.isPowerSystemUp, isFalse);
       });
     });
   });
