@@ -100,124 +100,148 @@ class StatusBar extends StatelessWidget {
     final marketStatus = getCurrentMarketStatus();
     final statusColor = getMarketStatusColor(marketStatus);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border(
-          bottom: BorderSide(
-            color: Theme.of(context).colorScheme.outlineVariant,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onLongPress: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const DataManagementScreen()),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          border: Border(
+            bottom: BorderSide(
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
           ),
         ),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isNarrow = constraints.maxWidth < 400;
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isNarrow = constraints.maxWidth < 400;
 
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 第一行: 标题 + 状态 + 时间 + 刷新/进度
-              Row(
-                children: [
-                  // 市场状态指示点
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // 标题
-                  Text(
-                    isNarrow ? '涨跌量比' : 'A股涨跌量比监控',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const Spacer(),
-                  // 更新时间
-                  if (provider.updateTime != null && !provider.isLoading) ...[
-                    Builder(
-                      builder: (context) {
-                        final isHistorical = _isHistoricalData(provider.dataDate);
-                        if (isHistorical) {
-                          // 历史数据：显示带标签的日期
-                          return Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: AppColors.statusPreMarket.withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(4),
-                                  border: Border.all(color: AppColors.statusPreMarket, width: 0.5),
-                                ),
-                                child: Text(
-                                  '历史',
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        color: AppColors.statusPreMarket,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${provider.dataDate!.month}/${provider.dataDate!.day}',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: AppColors.statusPreMarket,
-                                      fontFamily: 'monospace',
-                                    ),
-                              ),
-                            ],
-                          );
-                        }
-                        return Text(
-                          provider.updateTime!,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                fontFamily: 'monospace',
-                              ),
-                        );
-                      },
-                    ),
-                  ],
-                  const SizedBox(width: 8),
-                  // 右上角：刷新按钮 或 进度指示器
-                  _buildRefreshArea(context, provider),
-                ],
-              ),
-              // 第二行: 错误信息
-              if (provider.errorMessage != null && !provider.isLoading) ...[
-                const SizedBox(height: 4),
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 第一行: 标题 + 状态 + 时间 + 刷新/进度
                 Row(
                   children: [
-                    Icon(
-                      Icons.error_outline,
-                      color: Theme.of(context).colorScheme.error,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(
-                        provider.errorMessage!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontSize: 12,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                    // 市场状态指示点
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    // 标题
+                    Text(
+                      isNarrow ? '涨跌量比' : 'A股涨跌量比监控',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    // 更新时间
+                    if (provider.updateTime != null && !provider.isLoading) ...[
+                      Builder(
+                        builder: (context) {
+                          final isHistorical = _isHistoricalData(
+                            provider.dataDate,
+                          );
+                          if (isHistorical) {
+                            // 历史数据：显示带标签的日期
+                            return Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.statusPreMarket.withValues(
+                                      alpha: 0.2,
+                                    ),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: AppColors.statusPreMarket,
+                                      width: 0.5,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    '历史',
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: AppColors.statusPreMarket,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${provider.dataDate!.month}/${provider.dataDate!.day}',
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(
+                                        color: AppColors.statusPreMarket,
+                                        fontFamily: 'monospace',
+                                      ),
+                                ),
+                              ],
+                            );
+                          }
+                          return Text(
+                            provider.updateTime!,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                  fontFamily: 'monospace',
+                                ),
+                          );
+                        },
+                      ),
+                    ],
+                    const SizedBox(width: 8),
+                    // 右上角：刷新按钮 或 进度指示器
+                    _buildRefreshArea(context, provider),
                   ],
                 ),
+                // 第二行: 错误信息
+                if (provider.errorMessage != null && !provider.isLoading) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        color: Theme.of(context).colorScheme.error,
+                        size: 14,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          provider.errorMessage!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
-            ],
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -242,11 +266,12 @@ class StatusBar extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             Text(
-              provider.stageDescription ?? '${provider.progress}/${provider.total}',
+              provider.stageDescription ??
+                  '${provider.progress}/${provider.total}',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontFamily: 'monospace',
-                    fontSize: 10,
-                  ),
+                fontFamily: 'monospace',
+                fontSize: 10,
+              ),
             ),
           ],
         ),
@@ -266,11 +291,7 @@ class StatusBar extends StatelessWidget {
           child: IconButton(
             padding: EdgeInsets.zero,
             onPressed: () => provider.refresh(),
-            icon: const Icon(
-              Icons.refresh,
-              size: 20,
-              color: Colors.orange,
-            ),
+            icon: const Icon(Icons.refresh, size: 20, color: Colors.orange),
             tooltip: '重试',
           ),
         ),
@@ -290,9 +311,7 @@ class StatusBar extends StatelessWidget {
               MaterialPageRoute(builder: (_) => const DataManagementScreen()),
             );
           },
-          child: const Center(
-            child: Icon(Icons.refresh, size: 20),
-          ),
+          child: const Center(child: Icon(Icons.refresh, size: 20)),
         ),
       );
     }
