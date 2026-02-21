@@ -20,6 +20,7 @@ import 'package:stock_rtwatcher/screens/adx_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/ema_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/industry_ema_breadth_settings_screen.dart';
 import 'package:stock_rtwatcher/screens/macd_settings_screen.dart';
+import 'package:stock_rtwatcher/screens/power_system_cache_management_screen.dart';
 import 'package:stock_rtwatcher/screens/power_system_settings_screen.dart';
 import 'package:stock_rtwatcher/services/adx_indicator_service.dart';
 import 'package:stock_rtwatcher/services/ema_indicator_service.dart';
@@ -181,6 +182,7 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
                 dataType: KLineDataType.weekly,
               ),
               _buildIndustryEmaBreadthSettingsItem(context),
+              _buildPowerSystemCacheManagementItem(context),
 
               const SizedBox(height: 10),
               _buildSectionTitle(context, '历史分钟K线'),
@@ -861,6 +863,37 @@ class _DataManagementScreenState extends State<DataManagementScreen> {
           child: const Text('进入'),
         ),
         onTap: navigateToSettings,
+      ),
+    );
+  }
+
+  Widget _buildPowerSystemCacheManagementItem(BuildContext context) {
+    final provider = context.watch<MarketDataProvider>();
+    final markedCount = provider.allData.where((d) => d.isPowerSystemUp).length;
+    final totalCount = provider.allData.length;
+    const title = '动力系统标注管理';
+    final summary = '日线+周线双涨标记: $markedCount/$totalCount 只';
+
+    Future<void> navigateToManagement() async {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const PowerSystemCacheManagementScreen(),
+        ),
+      );
+      _triggerRefresh();
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ListTile(
+        leading: const Icon(Icons.label_rounded),
+        title: const Text(title),
+        subtitle: Text(summary),
+        trailing: FilledButton.tonal(
+          onPressed: navigateToManagement,
+          child: const Text('进入'),
+        ),
+        onTap: navigateToManagement,
       ),
     );
   }
