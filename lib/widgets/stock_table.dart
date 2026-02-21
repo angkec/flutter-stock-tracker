@@ -379,7 +379,8 @@ class _StockTableState extends State<StockTable> {
                           ),
                         ),
                       // 动力系统双涨标记 - 显示最近5天状态
-                      if (data.powerSystemStates.isNotEmpty)
+                      if (data.isPowerSystemUp &&
+                          data.powerSystemStates.isNotEmpty)
                         WidgetSpan(
                           child: Padding(
                             padding: const EdgeInsets.only(left: 4),
