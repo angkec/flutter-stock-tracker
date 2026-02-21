@@ -2,6 +2,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
+import 'package:stock_rtwatcher/services/tdx_pool.dart';
+
+class _StreamingFakePool extends TdxPool {
+  _StreamingFakePool({required this.barsByStockCode}) : super(poolSize: 1);
+
+  final Map<String, List<KLine>> barsByStockCode;
+
+  @override
+  Future<void> batchGetSecurityBarsStreaming({
+    required List<Stock> stocks,
+    required int category,
+    required int start,
+    required int count,
+    required void Function(int stockIndex, List<KLine> bars) onStockBars,
+  }) async {
+    for (var index = 0; index < stocks.length; index++) {
+      onStockBars(
+        index,
+        barsByStockCode[stocks[index].code] ?? const <KLine>[],
+      );
+    }
+  }
+}
 
 /// 生成指定数量的K线
 List<KLine> generateBars(
@@ -190,6 +213,118 @@ void main() {
 
         expect(restored.isPowerSystemUp, isFalse);
       });
+    });
+
+    group('batchGetMonitorData fallback', () {
+      test(
+        'should fallback to latest available date when fallbackDates is empty',
+        () async {
+          final today = DateTime.now();
+          final nineBarsToday = List<KLine>.generate(9, (index) {
+            return KLine(
+              datetime: DateTime(
+                today.year,
+                today.month,
+                today.day,
+                9,
+                30 + index,
+              ),
+              open: 10,
+              close: 11,
+              high: 11,
+              low: 10,
+              volume: 100,
+              amount: 0,
+            );
+          });
+
+          final validBarsToday = List<KLine>.generate(20, (index) {
+            final isUp = index.isEven;
+            return KLine(
+              datetime: DateTime(today.year, today.month, today.day, 10, index),
+              open: isUp ? 10 : 11,
+              close: isUp ? 11 : 10,
+              high: 11,
+              low: 10,
+              volume: 100,
+              amount: 0,
+            );
+          });
+
+          final stocks = List<Stock>.generate(
+            20,
+            (index) => Stock(
+              code: index == 0
+                  ? '000001'
+                  : '000${(index + 1).toString().padLeft(3, '0')}',
+              name: 'Stock$index',
+              market: 0,
+            ),
+          );
+
+          final pool = _StreamingFakePool(
+            barsByStockCode: {
+              '000001': validBarsToday,
+              '000002': nineBarsToday,
+            },
+          );
+          final service = StockService(pool);
+
+          final result = await service.batchGetMonitorData(stocks);
+
+          expect(result.data, isNotEmpty);
+          expect(result.dataDate.year, today.year);
+          expect(result.dataDate.month, today.month);
+          expect(result.dataDate.day, today.day);
+        },
+      );
+
+      test(
+        'should fallback per stock latest bars when target date missing',
+        () async {
+          final today = DateTime.now();
+          final yesterday = today.subtract(const Duration(days: 1));
+
+          List<KLine> mixedBarsFor(DateTime day) {
+            return List<KLine>.generate(20, (index) {
+              final isUp = index.isEven;
+              return KLine(
+                datetime: DateTime(day.year, day.month, day.day, 10, index),
+                open: isUp ? 10 : 11,
+                close: isUp ? 11 : 10,
+                high: 11,
+                low: 10,
+                volume: 100,
+                amount: 0,
+              );
+            });
+          }
+
+          final stocks = List<Stock>.generate(
+            20,
+            (index) => Stock(
+              code: '00${(index + 1).toString().padLeft(4, '0')}',
+              name: 'Stock$index',
+              market: 0,
+            ),
+          );
+
+          final barsByStockCode = <String, List<KLine>>{};
+          for (var i = 0; i < 20; i++) {
+            barsByStockCode[stocks[i].code] = i == 0
+                ? mixedBarsFor(yesterday)
+                : mixedBarsFor(today);
+          }
+
+          final pool = _StreamingFakePool(barsByStockCode: barsByStockCode);
+          final service = StockService(pool);
+
+          final result = await service.batchGetMonitorData(stocks);
+
+          expect(result.data, isNotEmpty);
+          expect(result.data.length, greaterThan(10));
+        },
+      );
     });
   });
 }

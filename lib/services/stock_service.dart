@@ -2,6 +2,7 @@ import 'dart:developer' as developer;
 import 'package:stock_rtwatcher/models/daily_ratio.dart';
 import 'package:stock_rtwatcher/models/kline.dart';
 import 'package:stock_rtwatcher/models/stock.dart';
+import 'package:stock_rtwatcher/services/china_trading_calendar_service.dart';
 import 'package:stock_rtwatcher/services/industry_service.dart';
 import 'package:stock_rtwatcher/services/tdx_client.dart';
 import 'package:stock_rtwatcher/services/tdx_pool.dart';
@@ -88,8 +89,16 @@ class MonitorDataResult {
 /// 股票服务
 class StockService {
   final TdxPool _pool;
+  final ChinaTradingCalendarService _tradingCalendarService;
+  final DateTime Function() _nowProvider;
 
-  StockService(this._pool);
+  StockService(
+    this._pool, {
+    ChinaTradingCalendarService? tradingCalendarService,
+    DateTime Function()? nowProvider,
+  }) : _tradingCalendarService =
+           tradingCalendarService ?? const ChinaTradingCalendarService(),
+       _nowProvider = nowProvider ?? DateTime.now;
 
   // 最大有效量比阈值 (超过此值认为是涨停/跌停/异常)
   static const double maxValidRatio = 50.0;
@@ -222,7 +231,7 @@ class StockService {
       '[batchGetMonitorData] Called with ${stocks.length} stocks at ${DateTime.now()}',
     );
 
-    final today = DateTime.now();
+    final today = _nowProvider();
     final todayKey = _formatDate(today);
     final allDates = <String>{}; // 收集所有日期
     final stockBarsMap = <int, List<KLine>>{}; // 暂存所有K线
@@ -318,13 +327,29 @@ class StockService {
       developer.log(
         '[batchGetMonitorData] sortedDates=${sortedDates.take(5)}, fallbackDates=${fallbackDates.take(5)}',
       );
-      if (fallbackDates.isEmpty) {
-        // 没有历史数据可用
-        print('🔍 [batchGetMonitorData] No fallback dates available!');
-        developer.log('[batchGetMonitorData] No fallback dates available!');
-        return MonitorDataResult(data: [], dataDate: today);
+      if (fallbackDates.isNotEmpty) {
+        targetDate = fallbackDates.first;
+      } else {
+        final availableTradingDays = sortedDates.map(_parseDate).toList();
+        final latestFallbackDay = _tradingCalendarService
+            .latestTradingDayOnOrBefore(
+              today,
+              availableTradingDates: availableTradingDays,
+              includeAnchor: false,
+            );
+
+        if (latestFallbackDay != null) {
+          targetDate = _formatDate(latestFallbackDay);
+        } else if (sortedDates.isNotEmpty) {
+          // 在极端场景下（仅当日有数据且阈值误判）至少使用最新可用日期，避免整批为空。
+          targetDate = sortedDates.first;
+        } else {
+          print('🔍 [batchGetMonitorData] No fallback dates available!');
+          developer.log('[batchGetMonitorData] No fallback dates available!');
+          return MonitorDataResult(data: [], dataDate: today);
+        }
       }
-      targetDate = fallbackDates.first;
+
       resultDate = _parseDate(targetDate);
       print('🔍 [batchGetMonitorData] Using fallback date: $targetDate');
       developer.log('[batchGetMonitorData] Using fallback date: $targetDate');
@@ -344,15 +369,23 @@ class StockService {
       final index = entry.key;
       final bars = entry.value;
 
-      final targetBars = bars
+      var selectedBars = bars
           .where((bar) => _formatDate(bar.datetime) == targetDate)
           .toList();
-      if (targetBars.isEmpty) {
+
+      if (selectedBars.isEmpty && useFallback && bars.isNotEmpty) {
+        final stockLatestDate = _formatDate(bars.first.datetime);
+        selectedBars = bars
+            .where((bar) => _formatDate(bar.datetime) == stockLatestDate)
+            .toList();
+      }
+
+      if (selectedBars.isEmpty) {
         emptyTargetBars++;
         continue;
       }
 
-      final result = calculateRatioWithVolumes(targetBars);
+      final result = calculateRatioWithVolumes(selectedBars);
       if (result == null) {
         nullRatioCount++;
         continue;
@@ -360,7 +393,7 @@ class StockService {
 
       processedCount++;
       final changePercent = calculateChangePercent(
-        targetBars,
+        selectedBars,
         stocks[index].preClose,
       );
 
