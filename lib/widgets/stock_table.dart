@@ -4,6 +4,7 @@ import 'package:stock_rtwatcher/models/industry_trend.dart';
 import 'package:stock_rtwatcher/screens/stock_detail_screen.dart';
 import 'package:stock_rtwatcher/services/stock_service.dart';
 import 'package:stock_rtwatcher/theme/theme.dart';
+import 'package:stock_rtwatcher/widgets/power_system_state_indicator.dart';
 import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 
 /// 排序列枚举
@@ -377,14 +378,15 @@ class _StockTableState extends State<StockTable> {
                             fontSize: 13,
                           ),
                         ),
-                      // 动力系统双涨标记
-                      if (data.isPowerSystemUp)
-                        const TextSpan(
-                          text: ' ▲',
-                          style: TextStyle(
-                            color: Colors.purple,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 11,
+                      // 动力系统双涨标记 - 显示最近5天状态
+                      if (data.powerSystemStates.isNotEmpty)
+                        WidgetSpan(
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: PowerSystemStateIndicator(
+                              states: data.powerSystemStates,
+                              iconSize: 10,
+                            ),
                           ),
                         ),
                     ],
