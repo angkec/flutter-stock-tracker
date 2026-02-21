@@ -8,11 +8,11 @@ import 'package:stock_rtwatcher/widgets/sparkline_chart.dart';
 
 /// 排序列枚举
 enum SortColumn {
-  code,      // 代码
-  name,      // 名称
-  change,    // 涨跌幅
-  ratio,     // 量比
-  industry,  // 行业
+  code, // 代码
+  name, // 名称
+  change, // 涨跌幅
+  ratio, // 量比
+  industry, // 行业
 }
 
 /// A股风格颜色 - 红涨绿跌
@@ -89,16 +89,16 @@ class StockTable extends StatefulWidget {
   State<StockTable> createState() => _StockTableState();
 
   /// 构建独立的表头组件（用于外部固定表头）
-  static Widget buildStandaloneHeader(BuildContext context, {bool showIndustry = true}) {
+  static Widget buildStandaloneHeader(
+    BuildContext context, {
+    bool showIndustry = true,
+  }) {
     return Container(
       height: _rowHeight,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         border: Border(
-          bottom: BorderSide(
-            color: Theme.of(context).dividerColor,
-            width: 1,
-          ),
+          bottom: BorderSide(color: Theme.of(context).dividerColor, width: 1),
         ),
       ),
       child: Row(
@@ -107,13 +107,19 @@ class StockTable extends StatefulWidget {
           _buildStaticHeaderCell(context, '名称', _nameWidth),
           _buildStaticHeaderCell(context, '涨跌幅', _changeWidth, numeric: true),
           _buildStaticHeaderCell(context, '量比', _ratioWidth, numeric: true),
-          if (showIndustry) _buildStaticHeaderCell(context, '行业', _industryWidth),
+          if (showIndustry)
+            _buildStaticHeaderCell(context, '行业', _industryWidth),
         ],
       ),
     );
   }
 
-  static Widget _buildStaticHeaderCell(BuildContext context, String text, double width, {bool numeric = false}) {
+  static Widget _buildStaticHeaderCell(
+    BuildContext context,
+    String text,
+    double width, {
+    bool numeric = false,
+  }) {
     return SizedBox(
       width: width,
       child: Padding(
@@ -129,7 +135,11 @@ class StockTable extends StatefulWidget {
 
   /// 获取表格总宽度
   static double getTotalWidth({bool showIndustry = true}) {
-    return _codeWidth + _nameWidth + _changeWidth + _ratioWidth + (showIndustry ? _industryWidth : 0);
+    return _codeWidth +
+        _nameWidth +
+        _changeWidth +
+        _ratioWidth +
+        (showIndustry ? _industryWidth : 0);
   }
 }
 
@@ -186,7 +196,12 @@ class _StockTableState extends State<StockTable> {
     );
   }
 
-  Widget _buildHeaderCell(String text, double width, SortColumn column, {bool numeric = false}) {
+  Widget _buildHeaderCell(
+    String text,
+    double width,
+    SortColumn column, {
+    bool numeric = false,
+  }) {
     final isActive = _sortColumn == column;
     final color = isActive ? Theme.of(context).colorScheme.primary : null;
 
@@ -197,7 +212,9 @@ class _StockTableState extends State<StockTable> {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
-            mainAxisAlignment: numeric ? MainAxisAlignment.end : MainAxisAlignment.start,
+            mainAxisAlignment: numeric
+                ? MainAxisAlignment.end
+                : MainAxisAlignment.start,
             children: [
               Text(
                 text,
@@ -227,32 +244,42 @@ class _StockTableState extends State<StockTable> {
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
         border: Border(
-          bottom: BorderSide(
-            color: Theme.of(context).dividerColor,
-            width: 1,
-          ),
+          bottom: BorderSide(color: Theme.of(context).dividerColor, width: 1),
         ),
       ),
       child: Row(
         children: [
           _buildHeaderCell('代码', _codeWidth, SortColumn.code),
           _buildHeaderCell('名称', _nameWidth, SortColumn.name),
-          _buildHeaderCell('涨跌幅', _changeWidth, SortColumn.change, numeric: true),
+          _buildHeaderCell(
+            '涨跌幅',
+            _changeWidth,
+            SortColumn.change,
+            numeric: true,
+          ),
           _buildHeaderCell('量比', _ratioWidth, SortColumn.ratio, numeric: true),
-          if (withIndustry) _buildHeaderCell('行业', _industryWidth, SortColumn.industry),
+          if (withIndustry)
+            _buildHeaderCell('行业', _industryWidth, SortColumn.industry),
         ],
       ),
     );
   }
 
-  Widget _buildRow(BuildContext context, StockMonitorData data, int index, List<StockMonitorData> displayStocks) {
+  Widget _buildRow(
+    BuildContext context,
+    StockMonitorData data,
+    int index,
+    List<StockMonitorData> displayStocks,
+  ) {
     final ratio = _ratioFor(data);
     final ratioColor = ratio >= 1 ? upColor : downColor;
     final changeColor = data.changePercent >= 0 ? upColor : downColor;
     final isHighlighted = widget.highlightCodes.contains(data.stock.code);
 
     return GestureDetector(
-      onLongPress: widget.onLongPress != null ? () => widget.onLongPress!(data) : null,
+      onLongPress: widget.onLongPress != null
+          ? () => widget.onLongPress!(data)
+          : null,
       onTap: () {
         // 构建股票列表用于左右滑动切换
         final stockList = displayStocks.map((s) => s.stock).toList();
@@ -267,171 +294,188 @@ class _StockTableState extends State<StockTable> {
         );
       },
       child: Container(
-      height: _rowHeight,
-      decoration: BoxDecoration(
-        color: isHighlighted
-            ? Colors.amber.withValues(alpha: 0.15)
-            : (index.isOdd
-                ? Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.15)
-                : null),
-        border: Border(
-          bottom: BorderSide(
-            color: Theme.of(context).dividerColor,
-            width: 0.5,
+        height: _rowHeight,
+        decoration: BoxDecoration(
+          color: isHighlighted
+              ? Colors.amber.withValues(alpha: 0.15)
+              : (index.isOdd
+                    ? Theme.of(context).colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.15)
+                    : null),
+          border: Border(
+            bottom: BorderSide(
+              color: Theme.of(context).dividerColor,
+              width: 0.5,
+            ),
           ),
         ),
-      ),
-      child: Row(
-        children: [
-          // 代码列
-          GestureDetector(
-            onTap: () => _copyToClipboard(context, data.stock.code, data.stock.name),
-            child: SizedBox(
-              width: _codeWidth,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        data.stock.code,
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                        overflow: TextOverflow.ellipsis,
+        child: Row(
+          children: [
+            // 代码列
+            GestureDetector(
+              onTap: () =>
+                  _copyToClipboard(context, data.stock.code, data.stock.name),
+              child: SizedBox(
+                width: _codeWidth,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          data.stock.code,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 13,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      Icons.copy,
-                      size: 12,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ],
+                      const SizedBox(width: 2),
+                      Icon(
+                        Icons.copy,
+                        size: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-          // 名称列
-          SizedBox(
-            width: _nameWidth,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text: data.stock.name,
-                      style: TextStyle(
-                        color: data.stock.isST ? Colors.orange : null,
-                        fontSize: 13,
-                      ),
-                    ),
-                    // 多日回踩标记（突破+回踩）- 蓝色星号
-                    if (data.isBreakout)
-                      const TextSpan(
-                        text: '★',
+            // 名称列
+            SizedBox(
+              width: _nameWidth,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: data.stock.name,
                         style: TextStyle(
-                          color: Colors.cyan,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11,
-                        ),
-                      ),
-                    // 单日回踩标记 - 红色星号
-                    if (data.isPullback)
-                      const TextSpan(
-                        text: '*',
-                        style: TextStyle(
-                          color: upColor,
-                          fontWeight: FontWeight.bold,
+                          color: data.stock.isST ? Colors.orange : null,
                           fontSize: 13,
                         ),
                       ),
-                  ],
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-          // 涨跌幅列
-          SizedBox(
-            width: _changeWidth,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                formatChangePercent(data.changePercent),
-                style: TextStyle(
-                  color: changeColor,
-                  fontWeight: FontWeight.w500,
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                ),
-                textAlign: TextAlign.right,
-              ),
-            ),
-          ),
-          // 量比列
-          SizedBox(
-            width: _ratioWidth,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                formatRatio(ratio),
-                style: TextStyle(
-                  color: ratioColor,
-                  fontWeight: FontWeight.w500,
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                ),
-                textAlign: TextAlign.right,
-              ),
-            ),
-          ),
-          // 行业列（包含行业标签和趋势折线）
-          if (widget.showIndustry)
-            SizedBox(
-              width: _industryWidth,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: data.industry != null
-                    ? GestureDetector(
-                        onTap: widget.onIndustryTap != null
-                            ? () => widget.onIndustryTap!(data.industry!)
-                            : null,
-                        child: Row(
-                          children: [
-                            // 行业标签
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .secondaryContainer,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                data.industry!,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSecondaryContainer,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            // 趋势折线图
-                            Expanded(
-                              child: _buildTrendSparkline(data.industry),
-                            ),
-                          ],
+                      // 多日回踩标记（突破+回踩）- 蓝色星号
+                      if (data.isBreakout)
+                        const TextSpan(
+                          text: '★',
+                          style: TextStyle(
+                            color: Colors.cyan,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                          ),
                         ),
-                      )
-                    : const Text('-', style: TextStyle(fontSize: 13)),
+                      // 单日回踩标记 - 红色星号
+                      if (data.isPullback)
+                        const TextSpan(
+                          text: '*',
+                          style: TextStyle(
+                            color: upColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                      // 动力系统双涨标记
+                      if (data.isPowerSystemUp)
+                        const TextSpan(
+                          text: ' ▲',
+                          style: TextStyle(
+                            color: Colors.purple,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                          ),
+                        ),
+                    ],
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
-        ],
-      ),
+            // 涨跌幅列
+            SizedBox(
+              width: _changeWidth,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  formatChangePercent(data.changePercent),
+                  style: TextStyle(
+                    color: changeColor,
+                    fontWeight: FontWeight.w500,
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                  ),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ),
+            // 量比列
+            SizedBox(
+              width: _ratioWidth,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  formatRatio(ratio),
+                  style: TextStyle(
+                    color: ratioColor,
+                    fontWeight: FontWeight.w500,
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                  ),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ),
+            // 行业列（包含行业标签和趋势折线）
+            if (widget.showIndustry)
+              SizedBox(
+                width: _industryWidth,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: data.industry != null
+                      ? GestureDetector(
+                          onTap: widget.onIndustryTap != null
+                              ? () => widget.onIndustryTap!(data.industry!)
+                              : null,
+                          child: Row(
+                            children: [
+                              // 行业标签
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.secondaryContainer,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  data.industry!,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSecondaryContainer,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              // 趋势折线图
+                              Expanded(
+                                child: _buildTrendSparkline(data.industry),
+                              ),
+                            ],
+                          ),
+                        )
+                      : const Text('-', style: TextStyle(fontSize: 13)),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -485,34 +529,38 @@ class _StockTableState extends State<StockTable> {
             Text(
               '暂无数据',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               '点击刷新按钮获取数据',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
       );
     }
 
-    final totalWidth = StockTable.getTotalWidth(showIndustry: widget.showIndustry);
+    final totalWidth = StockTable.getTotalWidth(
+      showIndustry: widget.showIndustry,
+    );
 
     // 优先显示突破回踩股票（保持组内相对顺序），然后应用用户排序
     List<StockMonitorData> displayStocks;
     if (_sortColumn != null) {
       // 用户主动排序时，使用用户的排序
       displayStocks = _sortStocks(widget.stocks);
-    } else if (widget.prioritizeBreakout && widget.stocks.any((s) => s.isBreakout)) {
+    } else if (widget.prioritizeBreakout &&
+        widget.stocks.any((s) => s.isBreakout)) {
       // 默认：优先显示突破回踩股票
-      displayStocks = [...widget.stocks]..sort((a, b) {
-        if (a.isBreakout == b.isBreakout) return 0;
-        return a.isBreakout ? -1 : 1;
-      });
+      displayStocks = [...widget.stocks]
+        ..sort((a, b) {
+          if (a.isBreakout == b.isBreakout) return 0;
+          return a.isBreakout ? -1 : 1;
+        });
     } else {
       displayStocks = widget.stocks;
     }
@@ -523,14 +571,20 @@ class _StockTableState extends State<StockTable> {
         width: totalWidth,
         child: Column(
           children: [
-            if (widget.showHeader) _buildHeader(context, withIndustry: widget.showIndustry),
+            if (widget.showHeader)
+              _buildHeader(context, withIndustry: widget.showIndustry),
             Expanded(
               child: ListView.builder(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: EdgeInsets.only(bottom: widget.bottomPadding),
                 itemCount: displayStocks.length,
                 itemExtent: _rowHeight,
-                itemBuilder: (context, index) => _buildRow(context, displayStocks[index], index, displayStocks),
+                itemBuilder: (context, index) => _buildRow(
+                  context,
+                  displayStocks[index],
+                  index,
+                  displayStocks,
+                ),
               ),
             ),
           ],
